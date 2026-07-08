@@ -1,28 +1,31 @@
-// Background shader audio-reactivo de Daino — Bloque 4.
+// Background shader audio-reactivo de Daino — v2 (rediseño visual Jul 2026).
 //
 // Capa 1 del z-stack visual (doc 06 §3): cubre el 100% del viewport, debajo
-// del gameplay y del HUD. Recibe FFT como textura 256x1 (sampler2D uFFT),
-// no como uniforms individuales — saturaría el bus uniform si fueran 1024
-// floats sueltos (doc 07 §D.2, doc 09 §2.4).
+// del scenery pixel-art, del gameplay y del HUD. Estética synthwave: cielo
+// oscuro con estrellas, sol de rejilla sobre el horizonte que late al beat,
+// glow de horizonte alimentado por los graves y espectro FFT que sube desde
+// el suelo. En idle (menú) la escena respira sola con uTime — nunca "nada".
+//
+// Recibe FFT como textura 256x1 (sampler2D uFFT), no como uniforms
+// individuales — saturaría el bus uniform (doc 07 §D.2, doc 09 §2.4).
 //
 // Uniforms agrupados en `audioUniforms` (Pixi v8 los compila a un UBO):
-//   uShaderMode — 0=idle (menú), 1=reactive (en partida con audio). En idle
-//                 el shader IGNORA todos los uniforms de audio (FFT, bands,
-//                 BPM): pinta solo el degradado base + ondas suaves + vignette.
-//                 Hace el reset robusto — al cambiar de modo no dependemos
-//                 de que cada uniform band quede en 0 (Bloque 6 Lote E).
+//   uShaderMode — 0=idle (menú), 1=reactive (partida con audio). En idle el
+//                 shader NO LEE los uniforms de audio: escena base + respiración.
 //   uTime      — segundos de reloj global; siempre avanza, también en idle.
-//   uRMS       — energía total normalizada [0,1].
-//   uBass      — energía banda grave (bins 0..10).
-//   uMid       — energía banda media (bins 10..100).
-//   uHigh      — energía banda aguda (bins 100..256).
-//   uBpmPulse  — pulse cuadrado [0,1] cableado en Bloque 5 al BPM detectado.
-//
-// El shader es deliberadamente sencillo en este bloque — el objetivo es
-// validar el pipeline audio→GPU. La estética se afina luego con HMR (sin
-// recargar el audio gracias a vite-plugin-glsl + import.meta.hot.accept).
+//   uRMS/uBass/uMid/uHigh — energía por bandas [0,1].
+//   uBpmPulse  — exp-decay [0,1] re-disparado en cada beat (lo calcula
+//                GameSession desde el BPM detectado + audioTime).
+//   uHorizon   — Y del horizonte en uv (v=0 arriba). Derivada de
+//                GROUND_OFFSET_PX; el sol, el glow y las barras FFT se anclan
+//                aquí para casar con la línea del suelo pixel-art del scenery.
 
-in vec2 vTextureCoord;
+in vec2 vTextureCoord; // uv sobre la TEXTURA del pool (¡su 1.0 cae fuera de pantalla!)
+in vec2 vFrameCoord;   // uv [0,1] sobre el FRAME VISIBLE — usar este para
+                       // todo lo anclado a pantalla (sol, horizonte, vignette).
+                       // Lo emite background.vert (descubrimiento Jul 2026:
+                       // el shader v1 anclaba a vTextureCoord y los efectos
+                       // cercanos a uv=1 quedaban fuera del viewport).
 out vec4 finalColor;
 
 uniform sampler2D uTexture; // input del filtro (lo inyecta Pixi). Lo ignoramos
@@ -37,38 +40,36 @@ uniform float uMid;
 uniform float uHigh;
 uniform float uBpmPulse;
 uniform float uDebugMode;   // 0=normal, 1=fft crudo, 2=uv coords, 3=uniforms
+uniform float uHorizon;
 
-// Paleta — espejo de los tokens de @theme en main.css (mantener sincronizados).
-const vec3 COLOR_BG_DEEP   = vec3(0.035, 0.035, 0.060);
-const vec3 COLOR_BG_LIFTED = vec3(0.090, 0.060, 0.140);
+// Paleta — espejo de los tokens de @theme en main.css y de PALETTE en
+// assets/pixelart.js (mantener sincronizados).
+const vec3 COLOR_BG_DEEP   = vec3(0.020, 0.022, 0.048);
+const vec3 COLOR_BG_LIFTED = vec3(0.105, 0.070, 0.180);
 const vec3 COLOR_BEAT      = vec3(0.880, 0.220, 0.380);
 const vec3 COLOR_HIGH      = vec3(0.560, 0.880, 1.000);
 
+float hash21(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
 void main(void) {
-    vec2 uv = vTextureCoord;
+    // uv en [0,1] SOBRE EL FRAME VISIBLE (no sobre la textura del pool).
+    vec2 uv = vFrameCoord;
 
     // ---------- MODOS DEBUG (activables con ?debug=N en la URL) ----------
-    // Mode 1 — pinta el sample crudo del uFFT como rojo. Si en idle se ve
-    //   negro: la textura se sampleó como ceros (correcto).
-    //   rojo intenso: la GPU lee basura no-cero (problema de init/format).
-    //   rayas verticales: el FFT tiene picos puntuales pero la base es 0.
+    // Mode 1 — sample crudo del uFFT como rojo (diagnóstico de textura).
     if (uDebugMode > 0.5 && uDebugMode < 1.5) {
         float bin = texture(uFFT, vec2(uv.x, 0.5)).r;
         finalColor = vec4(bin, bin * 0.4, 0.0, 1.0);
         return;
     }
-    // Mode 2 — pinta uv.x en rojo, uv.y en verde. Esquina sup-izq debe ser
-    //   negra (uv≈0,0), sup-der roja (uv.x≈1), inf-izq verde, inf-der amarilla.
-    //   Si uv.y está flipped (esq sup-izq verde), el shader tiene la Y al revés
-    //   y muchos cálculos de gradiente/FFT van invertidos.
+    // Mode 2 — uv.x rojo, uv.y verde (orientación de coordenadas).
     if (uDebugMode > 1.5 && uDebugMode < 2.5) {
         finalColor = vec4(uv.x, uv.y, 0.0, 1.0);
         return;
     }
-    // Mode 3 — pinta los uniforms escalares como bandas verticales.
-    //   Banda 0..0.2 = uTime/10 (cíclico), 0.2..0.4 = uRMS, 0.4..0.6 = uBass,
-    //   0.6..0.8 = uMid, 0.8..1.0 = uHigh. Sirve para ver que los uniforms
-    //   llegan al shader.
+    // Mode 3 — uniforms escalares como bandas verticales.
     if (uDebugMode > 2.5) {
         float v = 0.0;
         if      (uv.x < 0.2) v = mod(uTime, 1.0);
@@ -81,47 +82,79 @@ void main(void) {
     }
     // ---------- /DEBUG ----------
 
-    // ---------- BASE — visible en idle y reactive ----------
-    // Gradiente vertical: deep abajo, lifted arriba.
-    float gradient = smoothstep(0.0, 1.0, uv.y);
-    vec3 base = mix(COLOR_BG_DEEP, COLOR_BG_LIFTED, gradient);
+    // Valores reactivos, forzados a 0 en idle — así la escena base jamás
+    // depende de uniforms de audio cuando no hay partida (invariante Bloque 6).
+    float reactive = step(0.5, uShaderMode);
+    float pulse = uBpmPulse * reactive;
+    float bass  = uBass * reactive;
+    float mid   = uMid * reactive;
+    float high  = uHigh * reactive;
+    float rms   = uRMS * reactive;
 
-    // Ondas senoidales muy tenues con uTime. NO dependen de audio.
-    float wave = sin(uv.x * 16.0 + uTime * 1.2) * 0.5 + 0.5;
-    wave += sin(uv.y * 24.0 - uTime * 0.7) * 0.25;
-    base += vec3(wave) * 0.04;
+    // ---------- Cielo ----------
+    // Muy oscuro arriba, levantándose hacia el horizonte (atardecer synth).
+    float toHorizon = smoothstep(0.05, uHorizon, uv.y);
+    vec3 col = mix(COLOR_BG_DEEP, COLOR_BG_LIFTED, toHorizon * toHorizon);
 
-    // ---------- REACTIVE — solo cuando hay audio atachado ----------
-    // Branching explícito en el shader. Esto hace el reset trivial: al pasar
-    // a idle, basta con bajar uShaderMode a 0 — los uniforms band pueden
-    // quedar con cualquier valor sin contaminar el render.
-    if (uShaderMode > 0.5) {
-        // 1. Bass enriquece el gradiente con tinte beat.
-        base += COLOR_BEAT * uBass * 0.18;
-
-        // 2. uRMS amplifica las ondas senoidales sobre la base ya pintada.
-        base += vec3(wave) * (uRMS * 0.18);
-
-        // 3. Barras FFT desde arriba.
-        float bin = texture(uFFT, vec2(uv.x, 0.5)).r;
-        float barHeight = bin * 0.35;
-        float bar = step(uv.y, barHeight);
-        base = mix(base, COLOR_BEAT, bar * 0.55);
-
-        // 4. Brillo de agudos — destellos sutiles arriba.
-        float topGlow = smoothstep(0.65, 1.0, uv.y) * uHigh * 0.4;
-        base += COLOR_HIGH * topGlow;
-
-        // 5. BPM pulse — todo el frame brilla un instante en cada beat.
-        base *= 1.0 + uBpmPulse * 0.15;
+    // ---------- Estrellas ----------
+    // Grid-hash barato. Titilan con uTime; los agudos las excitan en partida.
+    if (uv.y < uHorizon - 0.02) {
+        vec2 cell = floor(uv * vec2(220.0, 130.0));
+        float n = hash21(cell);
+        float star = smoothstep(0.9972, 1.0, n);
+        float tw = 0.55 + 0.45 * sin(uTime * (1.5 + 3.0 * fract(n * 7.31)) + n * 41.0);
+        col += vec3(0.85, 0.92, 1.0) * star * tw * (0.35 + high * 0.9);
     }
 
+    // ---------- Sol synthwave ----------
+    // Disco con degradado beat→cian y rendijas horizontales en la mitad baja.
+    // Late con el beat en partida; en idle respira lento con uTime.
+    vec2 sunPos = vec2(0.76, uHorizon - 0.30);
+    float breathe = 0.5 + 0.5 * sin(uTime * 0.6);
+    float sunR = 0.095 + pulse * 0.018 + (1.0 - reactive) * breathe * 0.005;
+    float d = distance(uv, sunPos);
+    // OJO: smoothstep exige edge0 < edge1 (edges invertidos = undefined en
+    // GLSL — en ANGLE/D3D devuelve 0 y el disco desaparece). Invertimos con 1-.
+    float disc = 1.0 - smoothstep(sunR - 0.008, sunR, d);
+    // Rendijas: solo por debajo del centro del sol, más densas hacia abajo.
+    float below = step(sunPos.y, uv.y);
+    float slit = 1.0 - below * smoothstep(0.32, 0.5, abs(fract((uv.y - sunPos.y) * 70.0) - 0.5));
+    vec3 sunCol = mix(COLOR_HIGH, COLOR_BEAT, smoothstep(sunPos.y - sunR, sunPos.y + sunR, uv.y));
+    col = mix(col, sunCol, disc * slit * 0.9);
+    // Halo del sol — en partida lo hinchan los graves.
+    col += COLOR_BEAT * exp(-d * 9.0) * (0.10 + 0.05 * breathe + bass * 0.22 + pulse * 0.10);
+
+    // ---------- Glow del horizonte ----------
+    float hd = abs(uv.y - uHorizon);
+    float horizonGlow = exp(-hd * 26.0);
+    col += COLOR_BEAT * horizonGlow * (0.10 + 0.06 * breathe + bass * 0.55 + pulse * 0.30);
+    col += COLOR_HIGH * exp(-hd * 60.0) * (0.06 + high * 0.35);
+
+    // ---------- Ondas senoidales tenues (idle y reactive) ----------
+    float wave = sin(uv.x * 14.0 + uTime * 1.1) * 0.5 + 0.5;
+    wave += sin(uv.y * 22.0 - uTime * 0.6) * 0.25;
+    col += vec3(wave) * (0.018 + mid * 0.10 + rms * 0.06);
+
+    // ---------- Espectro FFT subiendo desde el horizonte (solo partida) ----------
+    if (uShaderMode > 0.5 && uv.y < uHorizon) {
+        float bin = texture(uFFT, vec2(uv.x, 0.5)).r;
+        float h = bin * bin * 0.30;              // ² para que el silencio sea plano
+        float top = uHorizon - h;
+        if (uv.y > top && h > 0.002) {
+            float t = (uHorizon - uv.y) / max(h, 1e-4);   // 0 en la base, 1 en la punta
+            vec3 barCol = mix(COLOR_BEAT, COLOR_HIGH, uv.x);
+            col += barCol * (0.10 + (1.0 - t) * 0.45);
+        }
+    }
+
+    // ---------- Flash global al beat ----------
+    col *= 1.0 + pulse * 0.10;
+
     // Vignette suave para dar foco al gameplay (capa 3 vive encima).
-    // Visible en ambos modos para que el menú también se sienta envolvente.
     float dx = uv.x - 0.5;
     float dy = uv.y - 0.5;
     float vignette = 1.0 - smoothstep(0.4, 0.95, sqrt(dx * dx + dy * dy));
-    base *= mix(0.7, 1.0, vignette);
+    col *= mix(0.72, 1.0, vignette);
 
-    finalColor = vec4(base, 1.0);
+    finalColor = vec4(col, 1.0);
 }

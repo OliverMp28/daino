@@ -16,12 +16,15 @@
 import { computeOnsetEnvelope, pickPeaks } from './SpectralFlux.js';
 import { detectBpm } from './Bpm.js';
 import { Seeded } from './Seed.js';
-import { speedFromBpm, SPAWN_WINDOW_S, OBSTACLE_KIND } from '../config.js';
+import {
+    speedFromBpm, SPAWN_WINDOW_S, OBSTACLE_KIND,
+    KIND_WEIGHTS, PTERO_GRACE_S,
+} from '../config.js';
 
 /**
  * @typedef {Object} ObstacleSpawn
  * @property {number} tAt    Tiempo en segundos donde el obstáculo entra al viewport.
- * @property {string} kind   Clave de OBSTACLE_KIND ('CACTUS_SMALL' | 'CACTUS_WIDE').
+ * @property {string} kind   Clave de OBSTACLE_KIND ('CACTUS_SMALL' | 'CACTUS_WIDE' | 'PTERO').
  */
 
 /**
@@ -62,7 +65,7 @@ export async function generate(audioBuffer, opts = {}) {
     /** @type {ObstacleSpawn[]} */
     const timeline = onsetsFilled.map((t) => ({
         tAt: t,
-        kind: prng.next() < 0.5 ? 'CACTUS_SMALL' : 'CACTUS_WIDE',
+        kind: pickKind(prng, t),
     }));
 
     return {
@@ -81,6 +84,28 @@ export async function generate(audioBuffer, opts = {}) {
 }
 
 // --------------------------- Helpers ---------------------------
+
+/**
+ * Elige el kind del spawn con los pesos de KIND_WEIGHTS. Durante los primeros
+ * PTERO_GRACE_S segundos no salen pteros (el jugador aprende a saltar antes
+ * de conocer el agacharse) — regla determinista: consume exactamente UNA
+ * llamada al PRNG por spawn en todas las ramas, así la misma seed produce
+ * la misma timeline siempre.
+ *
+ * @param {Seeded} prng
+ * @param {number} tAt
+ * @returns {string}
+ */
+function pickKind(prng, tAt) {
+    const r = prng.next();
+    if (tAt < PTERO_GRACE_S) {
+        const total = KIND_WEIGHTS.CACTUS_SMALL + KIND_WEIGHTS.CACTUS_WIDE;
+        return r < KIND_WEIGHTS.CACTUS_SMALL / total ? 'CACTUS_SMALL' : 'CACTUS_WIDE';
+    }
+    if (r < KIND_WEIGHTS.CACTUS_SMALL) return 'CACTUS_SMALL';
+    if (r < KIND_WEIGHTS.CACTUS_SMALL + KIND_WEIGHTS.CACTUS_WIDE) return 'CACTUS_WIDE';
+    return 'PTERO';
+}
 
 /**
  * Elimina onsets que estén a menos de `minGapSec` del último aceptado.
@@ -104,10 +129,12 @@ function filterSpacing(onsets, minGapSec) {
  */
 function fillGaps(onsets, durationSec, maxGapSec) {
     const out = [];
-    // Inicio: si el primer onset está demasiado tarde, mete uno temprano.
-    // Damos un offset inicial de 1.5s para que el user tenga tiempo de
-    // orientarse antes del primer obstáculo.
+    // Inicio: nada spawnea antes de firstSafeTime — canciones que arrancan
+    // con un beat en t=0 generaban un obstáculo inmediato imposible de
+    // reaccionar (visto con el WAV sintético del rediseño Jul 2026). Se
+    // descartan onsets demasiado tempranos Y se garantiza el margen.
     const firstSafeTime = 1.5;
+    onsets = onsets.filter((t) => t >= firstSafeTime);
     if (onsets.length === 0 || onsets[0] > firstSafeTime + maxGapSec) {
         out.push(firstSafeTime);
     }

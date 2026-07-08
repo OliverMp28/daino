@@ -1,17 +1,22 @@
 // Engine — núcleo PixiJS de Daino.
 //
-// Responsabilidades en Bloque 4:
+// Responsabilidades (ampliadas en el rediseño visual Jul 2026):
 //   - Crear la Application en `<div id="app">` o `document.body`.
-//   - Apilar las 4 capas visuales del doc 06 §3 (bg, gameplay, particles, hud).
+//   - Apilar las capas visuales del doc 06 §3 + scenery:
+//       bg (shader) → scenery (suelo/nubes/montañas parallax) → game →
+//       particles → hud.
 //   - Montar el Filter audio-reactivo sobre un sprite full-viewport en la
-//     capa de fondo. En idle (sin AudioEngine atachado) el shader solo lee
-//     uTime; al atachar audio empieza a alimentarse de FFT/RMS/bands.
+//     capa de fondo, con uHorizon anclado a la línea del suelo.
+//   - Scrollear el scenery SIEMPRE (menú a SCENERY.menuSpeed, partida a
+//     gameSpeed vía setWorldSpeed) — el mundo nunca está muerto.
+//   - Animar las motas de la particleLayer (energy = RMS en partida, 0 idle).
 //   - Pausar el ticker cuando el AudioContext esté `suspended` (doc 07 §C.3).
-//   - Si `prefers-reduced-motion`, no instancia el filter — el body muestra
-//     el degradado CSS estático y el canvas queda transparente sobre él.
+//   - Si `prefers-reduced-motion`: sin filter, sin motas, scenery estático —
+//     el body muestra el degradado CSS y el canvas pinta la escena quieta.
 //
-// Se devuelve una API mínima para el resto del módulo: `attachAudio()` y
-// `getCanvas()`. El upload.js llama a `attachAudio` tras el primer drop.
+// API para el resto del módulo: attachAudio/detachAudio, getLayers, getTicker,
+// setWorldSpeed (scroll del scenery), setBeatPulse (uniform uBpmPulse del
+// shader — GameSession lo calcula del BPM detectado + audioTime).
 
 import {
     Application,
@@ -23,6 +28,8 @@ import {
 import { createAudioFilter, FFT_BINS } from './shaders/audioFilter.js';
 import { computeBands } from './audio/features.js';
 import { createParticleLayer } from './entities/ParticleLayer.js';
+import { createScenery } from './entities/Scenery.js';
+import { GROUND_OFFSET_PX, SCENERY } from './config.js';
 
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const DEBUG_MODE = (() => {
@@ -37,13 +44,15 @@ let app = null;
 let audio = null;          // AudioEngine atachado (o null)
 let audioFilter = null;    // resultado de createAudioFilter()
 let bgSprite = null;
+let scenery = null;        // resultado de createScenery()
 let isPaused = false;
 let timeAccum = 0;         // segundos desde init — siempre avanza salvo pausa
+let worldSpeed = SCENERY.menuSpeed;  // px/s del scroll del scenery
 
 // Layers expuestos a module-scope para que `getApi().getLayers()` pueda
-// devolver referencias estables sin filtrar internals (lo consume Bloque 5
-// para añadir Dino/Obstacle al gameLayer y BitmapText al hudLayer).
+// devolver referencias estables sin filtrar internals.
 let bgLayer = null;
+let sceneryLayer = null;
 let gameLayer = null;
 let particleLayer = null;
 let hudLayer = null;
@@ -70,45 +79,55 @@ export async function startEngine(mountTarget = document.body) {
 
     mountTarget.appendChild(app.canvas);  // OJO: app.canvas en v8 (no app.view).
 
-    // Layers — 4 contenedores apilados, mismo orden que doc 06 §3.
-    bgLayer       = new Container({ label: 'bg' });
-    gameLayer     = new Container({ label: 'game' });
-    particleLayer = createParticleLayer({
-        width: window.innerWidth,
-        height: window.innerHeight,
-    });
-    hudLayer      = new Container({ label: 'hud' });
-    app.stage.addChild(bgLayer, gameLayer, particleLayer, hudLayer);
+    // Dimensionado con window.innerWidth/Height (no app.screen) porque tras
+    // `await app.init({ resizeTo: window })` el internal resize de Pixi puede
+    // no haber corrido todavía — app.screen reporta defaults (800x600).
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Layers — contenedores apilados, mismo orden que doc 06 §3 + scenery.
+    bgLayer = new Container({ label: 'bg' });
+    scenery = createScenery({ width: vw, height: vh });
+    sceneryLayer = scenery.container;
+    gameLayer = new Container({ label: 'game' });
+    particleLayer = createParticleLayer(
+        { width: vw, height: vh },
+        { reducedMotion: REDUCED_MOTION },
+    );
+    hudLayer = new Container({ label: 'hud' });
+    app.stage.addChild(bgLayer, sceneryLayer, gameLayer, particleLayer, hudLayer);
 
     // Si el user pidió reducir movimiento, no montamos el filter — el body
     // muestra el degradado CSS estático que ya define main.css. El canvas
-    // queda transparente y los bloques siguientes pueden pintar gameplay
-    // encima sin problemas.
+    // pinta scenery + gameplay quietos encima sin problemas.
     if (!REDUCED_MOTION) {
         audioFilter = createAudioFilter();
 
-        // Sprite "vacío" (Texture.WHITE) que ocupa toda la pantalla — sirve de
-        // soporte al Filter, que ignora uTexture y pinta desde cero. Tinta
-        // negra para evitar flash blanco si el filtro tarda un frame en
-        // aplicarse en el primer render.
-        //
-        // Dimensionado con window.innerWidth/Height (no app.screen) porque
-        // tras `await app.init({ resizeTo: window })` el internal resize de
-        // Pixi puede no haber corrido todavía — `app.screen` reporta los
-        // defaults (800x600) y el sprite cubre solo media pantalla. window
-        // sí está fiable inmediatamente.
+        // Sprite "vacío" (Texture.WHITE) que ocupa toda la pantalla — soporte
+        // del Filter, que ignora uTexture y pinta desde cero. Tinta negra
+        // para evitar flash blanco si el filtro tarda un frame en aplicarse.
         bgSprite = new Sprite(Texture.WHITE);
         bgSprite.tint = 0x000000;
         bgSprite.filters = [audioFilter.filter];
         bgLayer.addChild(bgSprite);
-
-        const fitBg = () => {
-            bgSprite.width = window.innerWidth;
-            bgSprite.height = window.innerHeight;
-        };
-        fitBg();
-        window.addEventListener('resize', fitBg);
     }
+
+    const fitViewport = () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        if (bgSprite) {
+            bgSprite.width = w;
+            bgSprite.height = h;
+        }
+        // uHorizon en uv [0,1] (v=0 arriba): la línea del suelo pixel-art.
+        if (audioFilter) {
+            audioFilter.setUniforms({ horizon: (h - GROUND_OFFSET_PX) / h });
+        }
+        scenery.resize(w, h);
+        particleLayer.resize(w, h);
+    };
+    fitViewport();
+    window.addEventListener('resize', fitViewport);
 
     // Pause/resume del ticker basado en el estado del AudioContext.
     // dispatch lo hace AudioEngine cuando recibe `onstatechange`.
@@ -117,38 +136,54 @@ export async function startEngine(mountTarget = document.body) {
 
     app.ticker.add(tick);
 
+    // Hook de debugging SOLO en dev (Vite lo elimina del build de prod):
+    // expone la API del engine en window para poder inspeccionar capas,
+    // forzar worldSpeed, etc. desde la consola del navegador.
+    if (import.meta.env.DEV) {
+        window.__dainoEngine = getApi();
+    }
+
     return getApi();
 }
 
 function tick(ticker) {
     if (isPaused) return;
-    if (!audioFilter) return;
 
-    timeAccum += ticker.deltaMS / 1000;
+    const dt = Math.min(1 / 20, ticker.deltaMS / 1000);
+    timeAccum += dt;
 
-    // uTime y uDebugMode se actualizan SIEMPRE — el shader los respeta tanto
-    // en idle como en reactive (uTime alimenta las ondas senoidales del fondo
-    // base, uDebugMode controla los modos ?debug=N).
-    audioFilter.setUniforms({ time: timeAccum, debugMode: DEBUG_MODE });
+    // Energía de la canción para partículas (0 en idle/menú).
+    let rms = 0;
 
-    // Las bands/rms/FFT solo se actualizan cuando hay audio atachado. En idle
-    // el shader ignora estos uniforms gracias al branch `if (uShaderMode > 0.5)`,
-    // así que ni siquiera necesitamos reset — pero attachAudio/detachAudio
-    // gestionan el setMode declarativo para mantener el invariante simple.
-    if (audio === null) return;
+    // Scenery + motas: siempre vivos (salvo reduced motion).
+    if (!REDUCED_MOTION) {
+        scenery.tick(dt, worldSpeed);
+    }
 
-    const fftSlice = audio.getFrequencyData(FFT_BINS);
-    audioFilter.fftBuffer.set(fftSlice);
-    audioFilter.uploadFft();
+    if (audioFilter) {
+        // uTime y uDebugMode se actualizan SIEMPRE — alimentan la escena idle
+        // (estrellas, respiración del sol) y los modos ?debug=N.
+        audioFilter.setUniforms({ time: timeAccum, debugMode: DEBUG_MODE });
 
-    const bands = computeBands(fftSlice);
-    const rms = audio.getRMS();
-    audioFilter.setUniforms({
-        rms,
-        bass: bands.bass,
-        mid: bands.mid,
-        high: bands.high,
-    });
+        // FFT/bands solo cuando hay audio atachado. En idle el shader fuerza
+        // a 0 los reactivos vía uShaderMode (branch GLSL).
+        if (audio !== null) {
+            const fftSlice = audio.getFrequencyData(FFT_BINS);
+            audioFilter.fftBuffer.set(fftSlice);
+            audioFilter.uploadFft();
+
+            const bands = computeBands(fftSlice);
+            rms = audio.getRMS();
+            audioFilter.setUniforms({
+                rms,
+                bass: bands.bass,
+                mid: bands.mid,
+                high: bands.high,
+            });
+        }
+    }
+
+    if (particleLayer.tick) particleLayer.tick(dt, rms);
 }
 
 /**
@@ -162,14 +197,28 @@ export function attachAudio(audioEngine) {
 }
 
 /**
- * Desconecta el audio y vuelve el shader a idle. Bloque 6 Lote E: el shader
- * tiene un branch `if (uShaderMode > 0.5)` que ignora todos los uniforms
- * audio cuando estamos fuera; setMode('idle') lo activa y además limpia
- * buffers/uniforms band como defensa adicional.
+ * Desconecta el audio y vuelve el shader a idle (el branch GLSL fuerza los
+ * reactivos a 0 — el menú se ve idéntico al primer load, sin contaminación).
  */
 export function detachAudio() {
     audio = null;
     if (audioFilter) audioFilter.setMode('idle');
+}
+
+/**
+ * Velocidad de scroll del scenery en px/s. GameSession la sube a gameSpeed
+ * al arrancar y la devuelve a SCENERY.menuSpeed al parar.
+ */
+export function setWorldSpeed(pxPerSec) {
+    worldSpeed = pxPerSec;
+}
+
+/**
+ * Pulso de beat [0,1] para el shader (uBpmPulse). GameSession lo calcula
+ * cada frame como exp-decay de la fase del beat (BPM detectado + audioTime).
+ */
+export function setBeatPulse(v) {
+    if (audioFilter) audioFilter.setUniforms({ bpmPulse: v });
 }
 
 function getApi() {
@@ -177,11 +226,13 @@ function getApi() {
         app,
         attachAudio,
         detachAudio,
+        setWorldSpeed,
+        setBeatPulse,
         getCanvas: () => app?.canvas ?? null,
-        // Bloque 5: la GameSession monta Dino/Obstacle en gameLayer y HUD en
-        // hudLayer. Devolvemos refs vivas — no copiamos para evitar el
-        // foot-gun de "monté en una copia y nada se ve".
-        getLayers: () => ({ bgLayer, gameLayer, particleLayer, hudLayer }),
+        // GameSession monta Dino/Obstacle en gameLayer, bursts también ahí.
+        // Devolvemos refs vivas — no copiamos para evitar el foot-gun de
+        // "monté en una copia y nada se ve".
+        getLayers: () => ({ bgLayer, sceneryLayer, gameLayer, particleLayer, hudLayer }),
         // Passthrough del ticker. La GameSession registra su tick aquí; no
         // creamos un rAF propio (un solo loop, ya pausa con audio:pause).
         getTicker: () => app?.ticker ?? null,

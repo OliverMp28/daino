@@ -58,6 +58,9 @@ export function createAudioFilter() {
                 uHigh:       { value: 0.0, type: 'f32' },
                 uBpmPulse:   { value: 0.0, type: 'f32' },
                 uDebugMode:  { value: 0.0, type: 'f32' },
+                // Y del horizonte en uv [0,1] (v=0 arriba). El engine la deriva
+                // de GROUND_OFFSET_PX / viewport height y la refresca en resize.
+                uHorizon:    { value: 0.94, type: 'f32' },
             },
             // CRÍTICO: pasar el TextureSource (BufferImageSource extiende de él),
             // no una Texture wrapper. Si pones `Texture` aquí, Pixi v8 deja el
@@ -72,7 +75,7 @@ export function createAudioFilter() {
     // datos y el sample devuelve memoria sin inicializar.
     fftSource.update();
 
-    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode }) {
+    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon }) {
         const u = filter.resources.audioUniforms.uniforms;
         if (time      !== undefined) u.uTime      = time;
         if (rms       !== undefined) u.uRMS       = rms;
@@ -81,6 +84,7 @@ export function createAudioFilter() {
         if (high      !== undefined) u.uHigh      = high;
         if (bpmPulse  !== undefined) u.uBpmPulse  = bpmPulse;
         if (debugMode !== undefined) u.uDebugMode = debugMode;
+        if (horizon   !== undefined) u.uHorizon   = horizon;
     }
 
     /**

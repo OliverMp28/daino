@@ -11,6 +11,9 @@ import {
     GRAVITY,
     GROUND_OFFSET_PX,
     DINO_SIZE,
+    JUMP_CUT_MULTIPLIER,
+    FAST_FALL_MULTIPLIER,
+    COYOTE_TIME_S,
 } from '../config.js';
 
 /**
@@ -23,18 +26,31 @@ export function computeGroundY(viewportHeight) {
 }
 
 /**
- * Integra una unidad de tiempo sobre el Dino: aplica gravedad, mueve, clampa
- * al suelo, recompone el flag `grounded`. Mutación in-place del Dino —
- * ahorramos GC pressure en el frame loop.
+ * Integra una unidad de tiempo sobre el Dino: gravedad variable, movimiento,
+ * clamp al suelo, flag `grounded` y timers de feel (coyote / jump buffer).
+ * Mutación in-place del Dino — ahorramos GC pressure en el frame loop.
  *
- * @param {{ y: number, vy: number, grounded: boolean }} dino
+ * Gravedad variable (rediseño Jul 2026):
+ *   - Subiendo con el botón ya soltado → gravedad × JUMP_CUT_MULTIPLIER
+ *     (soltar pronto = salto corto; mantener = salto completo).
+ *   - fast-fall (↓ en el aire) → gravedad × FAST_FALL_MULTIPLIER, y anula el
+ *     corte de salto (la intención "bajar YA" gana).
+ *
+ * @param {import('../entities/Dino.js').Dino} dino
  * @param {number} dt        Delta time en segundos.
  * @param {number} groundY   Coordenada Y del suelo (= computeGroundY(viewportHeight)).
  */
 export function integrateDino(dino, dt, groundY) {
+    let g = GRAVITY;
+    if (dino.fastFall) {
+        g = GRAVITY * FAST_FALL_MULTIPLIER;
+    } else if (dino.vy < 0 && !dino.jumpHeld) {
+        g = GRAVITY * JUMP_CUT_MULTIPLIER;
+    }
+
     // El "y" del Dino es la esquina superior. La base del Dino está en
     // `dino.y + DINO_SIZE.h`. Cuando esa base toca groundY, el Dino aterriza.
-    dino.vy += GRAVITY * dt;
+    dino.vy += g * dt;
     dino.y += dino.vy * dt;
 
     const baseY = dino.y + DINO_SIZE.h;
@@ -42,8 +58,16 @@ export function integrateDino(dino, dt, groundY) {
         dino.y = groundY - DINO_SIZE.h;
         dino.vy = 0;
         dino.grounded = true;
+        dino.coyoteT = COYOTE_TIME_S;
+        dino.fastFall = false;
     } else {
         dino.grounded = false;
+        dino.coyoteT = Math.max(0, dino.coyoteT - dt);
+    }
+
+    // El jump buffer decae siempre; GameSession lo consume al aterrizar.
+    if (dino.jumpBufferT > 0) {
+        dino.jumpBufferT = Math.max(0, dino.jumpBufferT - dt);
     }
 }
 

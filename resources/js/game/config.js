@@ -19,32 +19,96 @@ export const JUMP_VELOCITY = 900;
 
 // --------------------------- Dino ---------------------------
 
-/** Tamaño visual del Dino en px. Cuadrado para el placeholder de Bloque 5. */
+/** Tamaño del box lógico del Dino de pie en px (21×21 celdas × PIXEL_SCALE 4). */
 export const DINO_SIZE = { w: 84, h: 84 };
 
 /** X fija en pantalla donde vive el Dino (no se mueve horizontalmente). */
 export const DINO_X = 120;
 
 /**
- * Padding del hitbox respecto a los bordes del rectángulo visual. Generoso
+ * Padding del hitbox respecto a los bordes del box visual. Generoso
  * a la derecha (legacy 30px) — hace al juego más "perdonador" cuando el
  * Dino aterriza tarde sobre un cactus pequeño.
  */
 export const DINO_HITBOX_PADDING = { top: 10, right: 30, bottom: 15, left: 20 };
 
+/**
+ * Box lógico del Dino AGACHADO (26×12 celdas × 4). Más ancho y mucho más
+ * bajo que de pie — pasa por debajo del ptero. El box se ancla a la base
+ * del box de pie (los pies no se mueven), centrado horizontalmente.
+ */
+export const DUCK_SIZE = { w: 104, h: 48 };
+
+/** Padding del hitbox agachado. La cola/cabeza sobresalen y no cuentan. */
+export const DUCK_HITBOX_PADDING = { top: 6, right: 30, bottom: 0, left: 16 };
+
+// --------------------------- Feel del salto ---------------------------
+// Estándar de plataformas: el salto responde a CUÁNTO mantienes pulsado y
+// perdona imprecisiones de unos pocos frames. Todo determinista (timers en
+// segundos de juego, no wall-clock).
+
+/**
+ * Multiplicador de gravedad mientras el Dino SUBE y el jugador ya soltó el
+ * botón — corta el salto antes. Soltar rápido = salto corto, mantener =
+ * salto completo.
+ */
+export const JUMP_CUT_MULTIPLIER = 2.6;
+
+/**
+ * Multiplicador de gravedad cuando el jugador pulsa ↓ en el aire (fast-fall,
+ * como el Chrome dino). Permite aterrizar antes para encadenar el siguiente
+ * salto al ritmo.
+ */
+export const FAST_FALL_MULTIPLIER = 2.4;
+
+/** Ventana tras dejar el suelo en la que el salto todavía cuenta (coyote time). */
+export const COYOTE_TIME_S = 0.09;
+
+/** Si pulsas saltar un pelín antes de aterrizar, el salto se guarda y dispara al tocar suelo. */
+export const JUMP_BUFFER_S = 0.12;
+
+// --------------------------- Animación ---------------------------
+
+/**
+ * Periodo del ciclo de carrera (alternancia de patas) a la velocidad de
+ * referencia. Se escala inversamente con gameSpeed: a más velocidad, las
+ * patas alternan más rápido.
+ */
+export const RUN_ANIM = Object.freeze({ periodS: 0.16, refSpeed: 400 });
+
+/** Periodo de aleteo del ptero en segundos por frame. */
+export const PTERO_FLAP_PERIOD_S = 0.18;
+
 // --------------------------- Obstáculos ---------------------------
 
 /**
- * Catálogo de tipos de obstáculo. Tamaños vienen del legacy desktop (juego.css)
- * convertidos a unidades del nuevo viewport. El kind decide cuál se instancia.
+ * Catálogo de tipos de obstáculo. Tamaños = celdas del sprite × PIXEL_SCALE
+ * (ver assets/pixelart.js). `sprites` son los frames de animación (1 = estático).
+ * `altitude` px desde el suelo hasta la BASE del obstáculo: 0 = apoyado en el
+ * suelo (cactus); >0 = volador (ptero — se pasa agachándose o con salto muy
+ * preciso, como el pájaro del Chrome dino).
  */
 export const OBSTACLE_KIND = Object.freeze({
-    CACTUS_SMALL: { w: 46, h: 96, color: 0x6abe45 },
-    CACTUS_WIDE: { w: 98, h: 66, color: 0x4d9e34 },
+    CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'] },
+    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'] },
+    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'] },
 });
 
 /** Padding del hitbox del obstacle (más ajustado que el del Dino). */
 export const OBSTACLE_HITBOX_PADDING = { top: 6, right: 6, bottom: 4, left: 6 };
+
+/**
+ * Segundos iniciales de canción SIN pteros — el jugador aprende el salto
+ * antes de que aparezca la mecánica de agacharse. Regla determinista (misma
+ * seed ⇒ misma timeline), no aleatoria.
+ */
+export const PTERO_GRACE_S = 10;
+
+/**
+ * Pesos del PRNG al asignar kind a cada spawn (deben sumar 1). Dentro del
+ * grace inicial el peso del ptero se reparte a los cactus.
+ */
+export const KIND_WEIGHTS = Object.freeze({ CACTUS_SMALL: 0.40, CACTUS_WIDE: 0.30, PTERO: 0.30 });
 
 // --------------------------- Velocidad por BPM ---------------------------
 
@@ -94,6 +158,35 @@ export const FALLBACK_BPM = 120;
 
 /** Cap del deltaTime en segundos. Evita saltos al volver de background. */
 export const DT_CAP_S = 1 / 30;
+
+// --------------------------- Scenery (parallax) ---------------------------
+
+export const SCENERY = Object.freeze({
+    /** Velocidad de scroll ambiente en px/s cuando NO hay partida (menú). */
+    menuSpeed: 60,
+    /** Factor de parallax de las nubes respecto a la velocidad del mundo. */
+    cloudParallax: 0.25,
+    /** Deriva propia de las nubes en px/s (se mueven aunque el mundo pare). */
+    cloudDriftPxS: 8,
+    /** Factor de parallax de las montañas lejanas. */
+    mountainParallax: 0.12,
+    /** Número de nubes en pantalla. */
+    cloudCount: 4,
+});
+
+// --------------------------- Juice ---------------------------
+
+/** Screen shake al morir: duración total y magnitud inicial en px. */
+export const SHAKE = Object.freeze({ durationS: 0.35, magnitudePx: 14 });
+
+/** Congelación breve del mundo en el frame del impacto (hit-stop). */
+export const HITSTOP_S = 0.09;
+
+/** Flash blanco al morir: alpha inicial y duración del fade. */
+export const DEATH_FLASH = Object.freeze({ alpha: 0.45, durationS: 0.28 });
+
+/** Partículas ambientales (capa 2): cuántas y rango de velocidad base px/s. */
+export const AMBIENT_PARTICLES = Object.freeze({ count: 80, minSpeed: 8, maxSpeed: 26 });
 
 // --------------------------- HUD ---------------------------
 

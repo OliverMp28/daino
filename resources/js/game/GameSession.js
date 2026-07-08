@@ -1,19 +1,29 @@
 // GameSession — orquestador de un run del juego. Recibe el engine (Pixi),
 // el AudioEngine y el Level pre-computado, y conecta todas las piezas:
-// monta Dino + spawner + HUD, suscribe Input, registra el tick en el ticker
-// global de Pixi, escucha pause/resume del audio.
+// monta Dino + spawner + HUD + emisor de bursts, suscribe Input (salto,
+// salto variable, agacharse), registra el tick en el ticker global de Pixi,
+// escucha pause/resume del audio y alimenta el pulso de beat del shader.
 //
 // Una sola sesión activa a la vez. `start()` arranca; `stop({reason})`
-// limpia. Reiniciar = stop() + new GameSession(...). Bloque 6 podrá pulir
-// el "press SPACE to restart" inline; aquí ofrecemos el hook básico.
+// limpia. Reiniciar = stop() + new GameSession(...).
+//
+// Secuencia de muerte (rediseño Jul 2026): impacto → hit-stop (mundo
+// congelado HITSTOP_S, audio cortado en seco, estallido de partículas,
+// flash blanco) → screen shake con decay → _end('collision'). Total ~0.45s
+// de "golpe" antes del game over — el juice que el placeholder no tenía.
 
 import { Dino } from './entities/Dino.js';
 import { createSpawner } from './systems/spawner.js';
+import { createBurstEmitter } from './entities/ParticleLayer.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
 import { computeGroundY, integrateDino, findCollision } from './systems/physics.js';
-import { DT_CAP_S } from './config.js';
+import {
+    DT_CAP_S, DINO_SIZE, JUMP_BUFFER_S,
+    SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY,
+} from './config.js';
 import { request as apiRequest } from '../api/client.js';
+import { Graphics } from 'pixi.js';
 
 export class GameSession {
     /**
@@ -36,7 +46,12 @@ export class GameSession {
         this.dino = null;
         this.spawner = null;
         this.hud = null;
+        this._bursts = null;
+        this._flash = null;
         this._jumpHandler = null;
+        this._jumpEndHandler = null;
+        this._duckStartHandler = null;
+        this._duckEndHandler = null;
         this._pauseHandler = null;
         this._resumeHandler = null;
         this._ticker = null;
@@ -44,6 +59,11 @@ export class GameSession {
         this._isPaused = false;
         this._isRunning = false;
         this._score = 0;
+        this._prevGrounded = true;
+        this._dying = false;
+        this._dieT = 0;
+        this._finalAudioTime = 0;
+        this._beatLenS = 60 / Math.max(1, this.level.bpm ?? 120);
     }
 
     start() {
@@ -56,12 +76,13 @@ export class GameSession {
             throw new Error('GameSession.start: engine sin layers/ticker — ¿startEngine se completó?');
         }
         this._ticker = ticker;
+        this._layers = layers;
 
         const groundY = computeGroundY(window.innerHeight);
 
         // Dino.
         this.dino = new Dino();
-        this.dino.y = groundY - this.dino.height;
+        this.dino.y = groundY - DINO_SIZE.h;
         layers.gameLayer.addChild(this.dino);
 
         // Spawner.
@@ -72,25 +93,44 @@ export class GameSession {
             groundY,
         });
 
-        // HUD ahora vive en DOM (#hud-root) — Bloque 6 Lote D. El layer
-        // hudLayer del canvas se mantiene vacío reservado para flashes
-        // visuales futuros (perfect-beat ring, damage flash).
+        // Bursts (polvo de aterrizaje, estallido de muerte) sobre el gameLayer.
+        this._bursts = createBurstEmitter(layers.gameLayer);
+
+        // HUD DOM (#hud-root). El hudLayer del canvas queda para el flash.
         this.hud = createHud();
         this.hud.update(0, 0, this.level.durationSec);
         if (this.level.sourceName) this.hud.setSong(this.level.sourceName);
 
+        // El mundo scrollea a la velocidad de la canción.
+        this.engine.setWorldSpeed(this.level.gameSpeed);
+
         // Input.
         Input.setup();
         this._jumpHandler = () => {
-            if (!this._isRunning || this._isPaused) return;
-            this.dino.jump();
+            if (!this._isRunning || this._isPaused || this._dying) return;
+            const jumped = this.dino.jump();
+            // Pulsado un pelín antes de aterrizar: se guarda y dispara al tocar
+            // suelo (jump buffer) — perdona el timing humano a BPM alto.
+            if (!jumped && !this.dino.grounded) {
+                this.dino.jumpBufferT = JUMP_BUFFER_S;
+            }
+        };
+        this._jumpEndHandler = () => {
+            if (this.dino) this.dino.jumpEnd();
+        };
+        this._duckStartHandler = () => {
+            if (!this._isRunning || this._isPaused || this._dying) return;
+            this.dino.duckStart();
+        };
+        this._duckEndHandler = () => {
+            if (this.dino) this.dino.duckEnd();
         };
         Input.on('jump', this._jumpHandler);
+        Input.on('jumpEnd', this._jumpEndHandler);
+        Input.on('duckStart', this._duckStartHandler);
+        Input.on('duckEnd', this._duckEndHandler);
 
         // Pausa/resume vienen del AudioEngine (statechange + Page Visibility).
-        // Cuando el contexto suspende, congelamos lógica del juego — el ticker
-        // de Pixi sigue corriendo (el shader del Bloque 4 también lo respeta
-        // internamente), pero nuestro tick del juego ignora el frame.
         this._pauseHandler = () => { this._isPaused = true; };
         this._resumeHandler = () => { this._isPaused = false; };
         window.addEventListener('audio:pause', this._pauseHandler);
@@ -108,31 +148,143 @@ export class GameSession {
         // al Dino bajo el suelo de un salto. DT_CAP_S protege la integración.
         const dt = Math.min(DT_CAP_S, tickerArg.deltaMS / 1000);
 
+        // ---------- Secuencia de muerte (mundo congelado) ----------
+        if (this._dying) {
+            this._dieT += dt;
+
+            // El estallido de partículas sigue animando durante el freeze.
+            this._bursts.tick(dt);
+            this.dino.tickVisual(dt, this.level.gameSpeed);
+
+            // Flash blanco con fade.
+            if (this._flash) {
+                const k = Math.min(1, this._dieT / DEATH_FLASH.durationS);
+                this._flash.alpha = DEATH_FLASH.alpha * (1 - k);
+            }
+
+            // Screen shake tras el hit-stop, con decay lineal.
+            if (this._dieT > HITSTOP_S) {
+                const shakeT = this._dieT - HITSTOP_S;
+                const k = Math.max(0, 1 - shakeT / SHAKE.durationS);
+                const mag = SHAKE.magnitudePx * k;
+                const dx = (Math.random() * 2 - 1) * mag;
+                const dy = (Math.random() * 2 - 1) * mag;
+                this._layers.gameLayer.position.set(dx, dy);
+                this._layers.sceneryLayer.position.set(dx * 0.6, dy * 0.6);
+
+                if (shakeT >= SHAKE.durationS) {
+                    this._layers.gameLayer.position.set(0, 0);
+                    this._layers.sceneryLayer.position.set(0, 0);
+                    this._end('collision');
+                }
+            }
+            return;
+        }
+
+        // ---------- Frame normal ----------
         const audioTime = this.audioEngine.getAudioTime();
 
-        // Físicas del Dino primero (gravedad + clamp al suelo).
+        // Físicas del Dino primero (gravedad variable + clamp al suelo).
         const groundY = computeGroundY(window.innerHeight);
         integrateDino(this.dino, dt, groundY);
+
+        // Aterrizaje: squash + polvo + jump buffer.
+        if (!this._prevGrounded && this.dino.grounded) {
+            this.dino.onLand();
+            this._bursts.burst({
+                x: this.dino.x + DINO_SIZE.w * 0.5,
+                y: groundY,
+                count: 6,
+                color: 0x8b9aff,
+                speedMin: 30,
+                speedMax: 120,
+                gravity: 500,
+                lifeS: 0.35,
+                upBias: 0.4,
+            });
+            if (this.dino.jumpBufferT > 0) {
+                this.dino.jumpBufferT = 0;
+                this.dino.jump();
+            }
+        }
+        this._prevGrounded = this.dino.grounded;
 
         // Spawner: instancia nuevos obstáculos y mueve los activos.
         this.spawner.tick(audioTime, dt, this.level.gameSpeed);
 
+        // Visual del Dino (frames de carrera, squash) y bursts vivos.
+        this.dino.tickVisual(dt, this.level.gameSpeed);
+        this._bursts.tick(dt);
+
+        // Pulso de beat para el shader: exp-decay re-disparado en cada beat.
+        // Es la ÚNICA fuente de uBpmPulse (antes el uniform estaba muerto).
+        if (audioTime >= 0) {
+            const phase = (audioTime % this._beatLenS) / this._beatLenS;
+            this.engine.setBeatPulse(Math.exp(-phase * 4.5));
+        }
+
         // Colisión Dino vs obstáculos activos.
         const hit = findCollision(this.dino, this.spawner.getActive());
         if (hit !== null) {
-            this._end('collision');
+            this._startDeath();
             return;
         }
 
-        // Score: por ahora, score = floor(audioTime * 100). Bloque 6 puede
-        // afinar (combo, BPM, aciertos exactos al beat). Mantengo simple.
+        // Score: por ahora, score = floor(audioTime * 100).
         this._score = Math.floor(audioTime * 100);
         this.hud.update(this._score, audioTime, this.level.durationSec);
 
         // Win condition: la canción terminó.
         if (audioTime >= this.level.durationSec) {
+            this._finalAudioTime = this.level.durationSec;
             this._end('win');
         }
+    }
+
+    /** Impacto: congela el mundo, corta el audio en seco y arma el juice. */
+    _startDeath() {
+        this._dying = true;
+        this._dieT = 0;
+        this._finalAudioTime = this.audioEngine.getAudioTime();
+
+        this.dino.setDead();
+        this.engine.setBeatPulse(0);
+
+        // Silencio inmediato = el impacto se OYE (la canción muere contigo).
+        try {
+            if (this.audioEngine.source) this.audioEngine.source.stop();
+        } catch { /* idempotente */ }
+
+        // Estallido de partículas en el Dino.
+        this._bursts.burst({
+            x: this.dino.x + DINO_SIZE.w * 0.5,
+            y: this.dino.y + DINO_SIZE.h * 0.5,
+            count: 26,
+            color: 0xff5d7e,
+            speedMin: 120,
+            speedMax: 420,
+            gravity: 900,
+            lifeS: 0.6,
+            upBias: 0.5,
+        });
+        this._bursts.burst({
+            x: this.dino.x + DINO_SIZE.w * 0.5,
+            y: this.dino.y + DINO_SIZE.h * 0.5,
+            count: 10,
+            color: 0xf2f5ff,
+            speedMin: 60,
+            speedMax: 260,
+            gravity: 700,
+            lifeS: 0.5,
+            upBias: 0.5,
+        });
+
+        // Flash blanco full-viewport en el hudLayer del canvas.
+        this._flash = new Graphics()
+            .rect(0, 0, window.innerWidth, window.innerHeight)
+            .fill(0xffffff);
+        this._flash.alpha = DEATH_FLASH.alpha;
+        this._layers.hudLayer.addChild(this._flash);
     }
 
     _end(reason) {
@@ -144,11 +296,14 @@ export class GameSession {
             this._ticker.remove(this._tickFn);
         }
 
-        // Detener el audio: el shader sigue, pero la canción se corta. El
-        // user puede soltar otro MP3 para empezar de nuevo.
+        // Detener el audio (idempotente si la muerte ya lo cortó).
         try {
             if (this.audioEngine.source) this.audioEngine.source.stop();
         } catch { /* idempotente */ }
+
+        // El scenery vuelve al scroll ambiente del menú.
+        this.engine.setWorldSpeed(SCENERY.menuSpeed);
+        this.engine.setBeatPulse(0);
 
         const message = reason === 'win'
             ? `WIN  SCORE ${this._score}`
@@ -160,7 +315,7 @@ export class GameSession {
         // debería contar como un intento real. La UI no espera la respuesta;
         // si falla, log a consola — el toast del menú ya muestra el score.
         if (this.levelId !== null && (reason === 'win' || reason === 'collision')) {
-            const audioTime = this.audioEngine.getAudioTime();
+            const audioTime = this._finalAudioTime || this.audioEngine.getAudioTime();
             const percentage = this.level.durationSec > 0
                 ? Math.min(100, Math.max(0, Math.round((audioTime / this.level.durationSec) * 100)))
                 : 0;
@@ -193,10 +348,25 @@ export class GameSession {
         if (this._isRunning) this._end('stopped');
         // Despide listeners.
         if (this._jumpHandler) Input.off('jump', this._jumpHandler);
+        if (this._jumpEndHandler) Input.off('jumpEnd', this._jumpEndHandler);
+        if (this._duckStartHandler) Input.off('duckStart', this._duckStartHandler);
+        if (this._duckEndHandler) Input.off('duckEnd', this._duckEndHandler);
         if (this._pauseHandler) window.removeEventListener('audio:pause', this._pauseHandler);
         if (this._resumeHandler) window.removeEventListener('audio:resume', this._resumeHandler);
 
+        // Restaurar offsets del shake por si el stop llegó a mitad de secuencia.
+        if (this._layers) {
+            this._layers.gameLayer.position.set(0, 0);
+            this._layers.sceneryLayer.position.set(0, 0);
+        }
+        if (this._flash) {
+            this._layers.hudLayer.removeChild(this._flash);
+            this._flash.destroy();
+            this._flash = null;
+        }
+
         if (this.spawner) this.spawner.dispose();
+        if (this._bursts) this._bursts.dispose();
         if (this.hud) this.hud.dispose();
         if (this.dino) {
             const layers = this.engine.getLayers();
@@ -207,5 +377,6 @@ export class GameSession {
         this.dino = null;
         this.spawner = null;
         this.hud = null;
+        this._bursts = null;
     }
 }
