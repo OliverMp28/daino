@@ -73,6 +73,13 @@ El juego tiene dos estados visibles, cambiados con una sola animación:
   - **NIVELES** (lista de niveles guardados + historial de partidas)
   - **RANKING**
   - **PERFIL**
+
+> ⚠️ **Modificado por el doc 10 (Sep 2026), Ola 2.** Obligar a subir un MP3 para poder jugar espanta al jugador nuevo. A partir de la Ola 2:
+> - **JUGAR** abre el **catálogo de niveles** (rejilla de tarjetas grandes, no panel lateral), no el selector de archivos.
+> - **"Subir mi canción"** pasa a ser una acción propia y explícita, separada visualmente, para que nadie pulse JUGAR y se encuentre un diálogo de archivos por sorpresa.
+> - El drag & drop sobre la ventana se mantiene como atajo.
+>
+> El resto de este apartado (shader activo, título centrado, avatar arriba-derecha, sin navbar ni footer) sigue vigente.
 - Esquina superior derecha: avatar + username (clic → perfil/logout).
 - Esquina inferior derecha: indicador sutil de volumen y toggle de música del menú.
 - **No hay navbar ni footer.**

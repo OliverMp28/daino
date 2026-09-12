@@ -23,6 +23,23 @@
 | 7 — Persistencia API (progress, ranking, levels, comments) | ✅ Completo | AuthContext + Validator + Soft/Auth middlewares. Endpoints CRUD para Levels (con upload MP3 multipart, MIME real via finfo + magic-byte fallback para ID3v2 en Alpine), Progress (upsert + recompute Ranking sync), Ranking (top N paginado, JOIN sin N+1), Comments. Frontend: modales NIVELES/RANKING reales reemplazan placeholders, AppController crea Level antes de partida si hay sesión, GameSession persiste progreso fire-and-forget. AuthMiddleware ahora resuelve User vía claim `vout_id` del JWT (Vout actualizó el contrato tras feedback). Bundle 123.74 KB gzipped (+1.88 KB sobre B6) |
 | 8 — Hardening (PHPStan 9, Pest, CSP, bundle budget) | ⏳ Pendiente | — |
 
+### Olas de rediseño (Sep 2026)
+
+Tras retomar el proyecto y jugarlo, se abrió una segunda hoja de ruta que **atraviesa código ya cerrado** (engine, generador de niveles, modales, API de niveles) en lugar de apilar capas nuevas. Por eso se numeran como **olas**, no como bloques. Viven en **`10-Roadmap-Niveles-Rendimiento-UX.md`**, que es la fuente de verdad para ellas.
+
+| Ola | Estado | Resumen |
+|-----|--------|---------|
+| 0 — Quick wins | ⏳ Pendiente | Tabla de twiddle en la FFT (93 % del coste del análisis), `sampleRate` fijo, índice `is_public`, precarga del catálogo, 5 defectos menores |
+| 1 — Perfiles de render por estado | ⏳ Pendiente | Una sola escena, presupuesto declarativo por estado (`maxFPS`, `filter.resolution`, partículas). Tier adaptativo + selector de calidad |
+| 2 — UX: menú y catálogo | ⏳ Pendiente | JUGAR abre el catálogo (rejilla de tarjetas), "Subir mi canción" como acción aparte. **Modifica el doc 06 §4.1** |
+| 3 — Chart + sincronía real | ⏳ Pendiente | **Bisagra.** Arregla el desfase de 3–7 s entre beat y obstáculo, define `chart.json` versionado, persistencia y caché en cliente |
+| 4 — Analizador en servidor | ⏳ Pendiente | Sidecar Python (`librosa`/`madmom`) en docker-compose. Análisis una vez al publicar; el jugador no analiza nunca. Catálogo oficial sembrado |
+| 5 — Charter musical | ⏳ Pendiente | Cuantización a rejilla de beats, patrones, curva de dificultad por secciones, validación de jugabilidad |
+| 6 — Vocabulario de juego ampliado | ⏳ Pendiente | Modos de movimiento en `physics.js`, eventos `mode`/`fx` del chart |
+| 7 — Overrides manuales y editor | ⏳ Pendiente | Capa de ediciones que sobrevive a regeneraciones + editor visual |
+
+> La descripción de generación de niveles del **Bloque 5** queda sustituida por la del doc 10 a partir de la Ola 3.
+
 ---
 
 ## Principios para los bloques
