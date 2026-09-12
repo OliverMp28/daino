@@ -14,7 +14,7 @@
 // son pocas decenas de sprites con vida corta, no necesitan ParticleContainer.
 
 import { Container, Particle, ParticleContainer, Rectangle, Sprite } from 'pixi.js';
-import { AMBIENT_PARTICLES } from '../config.js';
+import { AMBIENT_PARTICLES, MAX_BURST_PARTICLES } from '../config.js';
 import { getTexture } from '../assets/pixelart.js';
 
 /**
@@ -123,6 +123,12 @@ export function createBurstEmitter(parent) {
          * @param {number} [o.upBias=0.6]    0..1 — cuánto favorece salir hacia arriba
          */
         burst({ x, y, count = 8, color = 0xb9c6ea, speedMin = 60, speedMax = 220, gravity = 600, lifeS = 0.45, upBias = 0.6 }) {
+            // Techo global: si ya hay demasiadas partículas vivas (cascada de
+            // muertes/aterrizajes), recorta la emisión en vez de acumular
+            // sprites — protege dispositivos modestos.
+            const room = MAX_BURST_PARTICLES - live.length;
+            if (room <= 0) return;
+            count = Math.min(count, room);
             for (let i = 0; i < count; i++) {
                 const s = new Sprite(tex);
                 s.tint = color;

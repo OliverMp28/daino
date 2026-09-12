@@ -10,7 +10,7 @@
 //                  (o con un salto muy preciso). 2 frames de aleteo.
 
 import { Container, Sprite } from 'pixi.js';
-import { OBSTACLE_KIND, OBSTACLE_HITBOX_PADDING, PTERO_FLAP_PERIOD_S } from '../config.js';
+import { OBSTACLE_KIND, OBSTACLE_HITBOX_PADDING, OBSTACLE_ANIM_PERIOD_S } from '../config.js';
 import { getTexture, PIXEL_SCALE } from '../assets/pixelart.js';
 
 export class Obstacle extends Container {
@@ -29,6 +29,7 @@ export class Obstacle extends Container {
         this._w = data.w;
         this._h = data.h;
         this._frames = data.sprites;
+        this._animPeriod = data.animPeriodS ?? OBSTACLE_ANIM_PERIOD_S;
         this._frameIdx = 0;
         this._flapT = 0;
 
@@ -53,8 +54,8 @@ export class Obstacle extends Container {
 
         if (this._frames.length > 1) {
             this._flapT += dt;
-            if (this._flapT >= PTERO_FLAP_PERIOD_S) {
-                this._flapT -= PTERO_FLAP_PERIOD_S;
+            if (this._flapT >= this._animPeriod) {
+                this._flapT -= this._animPeriod;
                 this._frameIdx = (this._frameIdx + 1) % this._frames.length;
                 this._sprite.texture = getTexture(this._frames[this._frameIdx]);
             }

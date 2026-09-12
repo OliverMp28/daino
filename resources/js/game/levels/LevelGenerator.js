@@ -16,10 +16,7 @@
 import { computeOnsetEnvelope, pickPeaks } from './SpectralFlux.js';
 import { detectBpm } from './Bpm.js';
 import { Seeded } from './Seed.js';
-import {
-    speedFromBpm, SPAWN_WINDOW_S, OBSTACLE_KIND,
-    KIND_WEIGHTS, PTERO_GRACE_S,
-} from '../config.js';
+import { speedFromBpm, SPAWN_WINDOW_S, OBSTACLE_KIND } from '../config.js';
 
 /**
  * @typedef {Object} ObstacleSpawn
@@ -86,11 +83,15 @@ export async function generate(audioBuffer, opts = {}) {
 // --------------------------- Helpers ---------------------------
 
 /**
- * Elige el kind del spawn con los pesos de KIND_WEIGHTS. Durante los primeros
- * PTERO_GRACE_S segundos no salen pteros (el jugador aprende a saltar antes
- * de conocer el agacharse) — regla determinista: consume exactamente UNA
- * llamada al PRNG por spawn en todas las ramas, así la misma seed produce
- * la misma timeline siempre.
+ * Elige el kind del spawn iterando el REGISTRO OBSTACLE_KIND: filtra los
+ * kinds disponibles a ese tAt (`availableFromS` — p. ej. el ptero no sale
+ * hasta que el jugador ha aprendido a saltar), normaliza sus `weight` y
+ * hace ruleta acumulativa. Añadir un kind al registro basta para que entre
+ * en la rotación — este código no cambia.
+ *
+ * Determinismo: consume exactamente UNA llamada al PRNG por spawn en todas
+ * las ramas, y el orden de iteración del registro es estable (insertion
+ * order de Object.freeze), así la misma seed produce la misma timeline.
  *
  * @param {Seeded} prng
  * @param {number} tAt
@@ -98,13 +99,20 @@ export async function generate(audioBuffer, opts = {}) {
  */
 function pickKind(prng, tAt) {
     const r = prng.next();
-    if (tAt < PTERO_GRACE_S) {
-        const total = KIND_WEIGHTS.CACTUS_SMALL + KIND_WEIGHTS.CACTUS_WIDE;
-        return r < KIND_WEIGHTS.CACTUS_SMALL / total ? 'CACTUS_SMALL' : 'CACTUS_WIDE';
+
+    const available = Object.entries(OBSTACLE_KIND)
+        .filter(([, def]) => tAt >= (def.availableFromS ?? 0));
+    if (available.length === 0) return Object.keys(OBSTACLE_KIND)[0];
+
+    let total = 0;
+    for (const [, def] of available) total += def.weight ?? 1;
+
+    let acc = 0;
+    for (const [key, def] of available) {
+        acc += def.weight ?? 1;
+        if (r < acc / total) return key;
     }
-    if (r < KIND_WEIGHTS.CACTUS_SMALL) return 'CACTUS_SMALL';
-    if (r < KIND_WEIGHTS.CACTUS_SMALL + KIND_WEIGHTS.CACTUS_WIDE) return 'CACTUS_WIDE';
-    return 'PTERO';
+    return available[available.length - 1][0];
 }
 
 /**

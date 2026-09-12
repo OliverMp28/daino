@@ -22,8 +22,10 @@ import { getOrCreateAudioEngine } from './upload.js';
 import {
     getVolume, setVolume,
     getReduceEffects, setReduceEffects,
+    getSkin, setSkin,
     listKeys, clearAll,
 } from './settings.js';
+import { DINO_SKINS, normalizeSkinId } from '../game/assets/pixelart.js';
 
 const MODAL_ROOT_ID = 'modal-root';
 
@@ -653,6 +655,35 @@ export function openSettingsModal(opts = {}) {
     volRow.appendChild(volSlider);
     volRow.appendChild(volValue);
     body.appendChild(volRow);
+
+    // ----- Personaje (skin del dino) -----
+    const skinRow = document.createElement('section');
+    skinRow.className = 'daino-settings__row';
+    const skinLabel = document.createElement('label');
+    skinLabel.className = 'daino-settings__label';
+    skinLabel.htmlFor = 'daino-settings-skin';
+    skinLabel.textContent = 'Personaje';
+    const skinSelect = document.createElement('select');
+    skinSelect.id = 'daino-settings-skin';
+    skinSelect.dataset.interactive = 'true';
+    skinSelect.className = 'daino-settings__select';
+    for (const [id, def] of Object.entries(DINO_SKINS)) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = def.label;
+        skinSelect.appendChild(opt);
+    }
+    skinSelect.value = normalizeSkinId(getSkin());
+    skinSelect.addEventListener('change', () => {
+        setSkin(normalizeSkinId(skinSelect.value));
+    });
+    const skinNote = document.createElement('p');
+    skinNote.className = 'daino-settings__hint';
+    skinNote.textContent = 'El dino del menú cambia al instante; la partida lo usa al empezar.';
+    skinRow.appendChild(skinLabel);
+    skinRow.appendChild(skinSelect);
+    skinRow.appendChild(skinNote);
+    body.appendChild(skinRow);
 
     // ----- Reducir efectos visuales (placeholder funcional para Bloque 8) -----
     const fxRow = document.createElement('section');

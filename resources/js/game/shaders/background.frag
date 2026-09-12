@@ -135,15 +135,27 @@ void main(void) {
     wave += sin(uv.y * 22.0 - uTime * 0.6) * 0.25;
     col += vec3(wave) * (0.018 + mid * 0.10 + rms * 0.06);
 
-    // ---------- Espectro FFT subiendo desde el horizonte (solo partida) ----------
+    // ---------- Ecualizador pixel desde el horizonte (solo partida) ----------
+    // v1 pintaba el espectro bin-a-bin: el ruido entre bins vecinos formaba
+    // un "peine" de púas con bordes claros y centros oscuros que ensuciaba
+    // el horizonte (feedback user Jul 2026). v2: barras DISCRETAS con hueco
+    // entre ellas, 3 taps promediados por barra, altura contenida y alpha
+    // que se desvanece hacia la punta — lee como un EQ retro intencional.
     if (uShaderMode > 0.5 && uv.y < uHorizon) {
-        float bin = texture(uFFT, vec2(uv.x, 0.5)).r;
-        float h = bin * bin * 0.30;              // ² para que el silencio sea plano
+        const float BARS = 40.0;
+        float slot = floor(uv.x * BARS);
+        float cx = (slot + 0.5) / BARS;
+        float b0 = texture(uFFT, vec2(cx, 0.5)).r;
+        float b1 = texture(uFFT, vec2(cx - 1.0 / BARS, 0.5)).r;
+        float b2 = texture(uFFT, vec2(cx + 1.0 / BARS, 0.5)).r;
+        float bin = (b0 * 2.0 + b1 + b2) * 0.25;
+        float h = bin * bin * 0.16;              // ² para que el silencio sea plano
         float top = uHorizon - h;
-        if (uv.y > top && h > 0.002) {
+        float gap = step(fract(uv.x * BARS), 0.68);   // 68% barra, 32% hueco
+        if (uv.y > top && h > 0.004) {
             float t = (uHorizon - uv.y) / max(h, 1e-4);   // 0 en la base, 1 en la punta
-            vec3 barCol = mix(COLOR_BEAT, COLOR_HIGH, uv.x);
-            col += barCol * (0.10 + (1.0 - t) * 0.45);
+            vec3 barCol = mix(COLOR_BEAT, COLOR_HIGH, cx);
+            col += barCol * gap * (1.0 - t) * (0.16 + bass * 0.10);
         }
     }
 

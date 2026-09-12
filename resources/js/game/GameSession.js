@@ -20,7 +20,7 @@ import { Input } from './systems/input.js';
 import { computeGroundY, integrateDino, findCollision } from './systems/physics.js';
 import {
     DT_CAP_S, DINO_SIZE, JUMP_BUFFER_S,
-    SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY,
+    SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -41,6 +41,7 @@ export class GameSession {
         this.audioEngine = cfg.audioEngine;
         this.level = cfg.level;
         this.levelId = cfg.levelId ?? null;
+        this.skinId = cfg.skinId ?? 'classic';
         this.onGameOver = cfg.onGameOver ?? (() => {});
 
         this.dino = null;
@@ -62,6 +63,7 @@ export class GameSession {
         this._prevGrounded = true;
         this._dying = false;
         this._dieT = 0;
+        this._dustT = 0;
         this._finalAudioTime = 0;
         this._beatLenS = 60 / Math.max(1, this.level.bpm ?? 120);
     }
@@ -80,8 +82,8 @@ export class GameSession {
 
         const groundY = computeGroundY(window.innerHeight);
 
-        // Dino.
-        this.dino = new Dino();
+        // Dino (con el skin elegido por el user en AJUSTES).
+        this.dino = new Dino({ skinId: this.skinId });
         this.dino.y = groundY - DINO_SIZE.h;
         layers.gameLayer.addChild(this.dino);
 
@@ -215,6 +217,26 @@ export class GameSession {
         // Visual del Dino (frames de carrera, squash) y bursts vivos.
         this.dino.tickVisual(dt, this.level.gameSpeed);
         this._bursts.tick(dt);
+
+        // Polvo al correr: motita en los pies a intervalo fijo mientras
+        // pisa suelo — vende la velocidad sin coste (1 sprite por emisión).
+        if (this.dino.grounded) {
+            this._dustT += dt;
+            if (this._dustT >= RUN_DUST.periodS) {
+                this._dustT = 0;
+                this._bursts.burst({
+                    x: this.dino.x + 16,
+                    y: groundY - 2,
+                    count: 1,
+                    color: RUN_DUST.color,
+                    speedMin: 15,
+                    speedMax: 55,
+                    gravity: 220,
+                    lifeS: 0.3,
+                    upBias: 0.35,
+                });
+            }
+        }
 
         // Pulso de beat para el shader: exp-decay re-disparado en cada beat.
         // Es la ÚNICA fuente de uBpmPulse (antes el uniform estaba muerto).

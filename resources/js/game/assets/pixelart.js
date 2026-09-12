@@ -260,17 +260,36 @@ const DEFS = {
     ground, cloud, dot,
 };
 
+// --------------------------- Skins (palette-swap) ---------------------------
+// Un skin NO cambia la silueta: solo remapea caracteres de la paleta al
+// rasterizar. Añadir un skin nuevo = una entrada aquí. El selector del modal
+// AJUSTES los lista automáticamente; `daino:skin` en localStorage persiste
+// la elección (ui/settings.js).
+export const DINO_SKINS = Object.freeze({
+    classic: { label: 'Clásico', overrides: null },
+    beat: { label: 'Rosa Beat', overrides: { W: '#ffc9d6', w: '#e8879f', C: '#ffe08a' } },
+    gold: { label: 'Dorado', overrides: { W: '#ffe2a8', w: '#d9a75f', C: '#7fe6ff' } },
+});
+
+/** Skin id saneado: cualquier valor desconocido cae a 'classic'. */
+export function normalizeSkinId(id) {
+    return Object.prototype.hasOwnProperty.call(DINO_SKINS, id) ? id : 'classic';
+}
+
 // --------------------------- Rasterizador ---------------------------
 
-/** @type {Map<string, Texture>} */
+/** @type {Map<string, Texture>} Cache por `${sprite}@${variante}`. */
 const cache = new Map();
 
 /**
  * Rasteriza una def de sprite a canvas 1px-por-celda. Las filas se normalizan
  * al ancho máximo (pad con transparente) — así un pixel de más o de menos al
  * editar el arte a mano no rompe el render, solo se nota y se corrige.
+ *
+ * @param {string[]} rows
+ * @param {Record<string,string> | null} overrides  Remapeo char→color del skin.
  */
-function rasterize(rows) {
+function rasterize(rows, overrides) {
     const h = rows.length;
     const w = Math.max(...rows.map((r) => r.length));
     const canvas = document.createElement('canvas');
@@ -283,7 +302,7 @@ function rasterize(rows) {
         for (let x = 0; x < row.length; x++) {
             const ch = row[x];
             if (ch === '.' || ch === ' ') continue;
-            const color = PALETTE[ch];
+            const color = (overrides && overrides[ch]) || PALETTE[ch];
             if (!color) continue; // carácter desconocido = transparente
             ctx.fillStyle = color;
             ctx.fillRect(x, y, 1, 1);
@@ -298,18 +317,25 @@ function rasterize(rows) {
  * scale, y la GPU no interpola (pixel art crujiente).
  *
  * @param {keyof typeof DEFS} name
+ * @param {string} [skinId]  Variante de paleta (solo aplica a sprites del dino;
+ *                           en el resto es inocuo porque no usan chars W/w/C
+ *                           con overrides). Default 'classic' = paleta base.
  * @returns {Texture}
  */
-export function getTexture(name) {
-    let tex = cache.get(name);
+export function getTexture(name, skinId = 'classic') {
+    const skin = DINO_SKINS[normalizeSkinId(skinId)];
+    const variant = skin.overrides ? normalizeSkinId(skinId) : 'classic';
+    const key = `${name}@${variant}`;
+
+    let tex = cache.get(key);
     if (tex) return tex;
 
     const def = DEFS[name];
     if (!def) throw new Error(`pixelart: sprite desconocido "${name}"`);
 
-    tex = Texture.from(rasterize(def));
+    tex = Texture.from(rasterize(def, skin.overrides));
     tex.source.scaleMode = 'nearest';
-    cache.set(name, tex);
+    cache.set(key, tex);
     return tex;
 }
 

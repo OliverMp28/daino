@@ -214,6 +214,29 @@ export function setWorldSpeed(pxPerSec) {
 }
 
 /**
+ * Congela/reanuda el render loop COMPLETO (rAF de Pixi incluido). Lo usa
+ * AppController durante LOADING: el análisis offline del MP3 corre en el
+ * main thread y competir con el render a 60fps lo ralentizaba y hacía que
+ * las animaciones fueran a trompicones (feedback user Jul 2026). Canvas
+ * congelado en su último frame + CPU entera para el LevelGenerator.
+ */
+export function setRenderPaused(paused) {
+    if (!app) return;
+    if (paused) app.ticker.stop();
+    else app.ticker.start();
+}
+
+/** Passthrough al dino ambiente del scenery (visible solo en MENU). */
+export function setAmbientDinoVisible(visible) {
+    if (scenery) scenery.setAmbientDinoVisible(visible);
+}
+
+/** Cambia el skin del dino ambiente (lo empuja la UI al cambiar AJUSTES). */
+export function setAmbientDinoSkin(skinId) {
+    if (scenery) scenery.setAmbientDinoSkin(skinId);
+}
+
+/**
  * Pulso de beat [0,1] para el shader (uBpmPulse). GameSession lo calcula
  * cada frame como exp-decay de la fase del beat (BPM detectado + audioTime).
  */
@@ -228,6 +251,9 @@ function getApi() {
         detachAudio,
         setWorldSpeed,
         setBeatPulse,
+        setRenderPaused,
+        setAmbientDinoVisible,
+        setAmbientDinoSkin,
         getCanvas: () => app?.canvas ?? null,
         // GameSession monta Dino/Obstacle en gameLayer, bursts también ahí.
         // Devolvemos refs vivas — no copiamos para evitar el foot-gun de

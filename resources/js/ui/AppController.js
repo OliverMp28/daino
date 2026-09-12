@@ -24,6 +24,7 @@ import { fadeOverlay } from './transitions.js';
 import { closeAllModals, openSettingsModal, openPauseModal } from './modals.js';
 import { Input } from '../game/systems/input.js';
 import { getUser, request as apiRequest } from '../api/client.js';
+import { getSkin } from './settings.js';
 
 const STATE = Object.freeze({
     MENU: 'MENU',
@@ -72,6 +73,15 @@ export function start(cfg) {
     // que registrar aquí basta — emit solo dispara cuando hay listeners.
     onPause = () => handlePauseRequested();
     Input.on('pause', onPause);
+
+    // Skin del dino: aplicar la persistida al dino ambiente del menú y
+    // reaccionar en vivo cuando el user la cambie en AJUSTES (settings.js
+    // dispatcha 'daino:skinchange'). La GameSession la lee al arrancar cada
+    // partida — no hay que tocar una partida en curso.
+    engineApi.setAmbientDinoSkin?.(getSkin());
+    window.addEventListener('daino:skinchange', (ev) => {
+        engineApi.setAmbientDinoSkin?.(ev.detail?.skinId ?? getSkin());
+    });
 }
 
 export function dispose() {
@@ -137,6 +147,12 @@ async function handleAudioReady(ev) {
     menu.setVisible(false);
     showHintWithText('Generando nivel…');
 
+    // Congelar el render loop de Pixi durante el análisis: el LevelGenerator
+    // corre en el main thread y compartir CPU con el shader/scenery a 60fps
+    // ralentizaba la generación Y hacía que las animaciones fueran a
+    // trompicones. Canvas quieto (el hint DOM sigue vivo) + análisis a tope.
+    engineApi.setRenderPaused(true);
+
     let level;
     try {
         const seed = readSeedFromUrl();
@@ -150,6 +166,7 @@ async function handleAudioReady(ev) {
             },
         });
     } catch (err) {
+        engineApi.setRenderPaused(false);
         console.error('[AppController] generate() falló:', err);
         showHintWithText('Error generando nivel — vuelve a soltar el MP3');
         setTimeout(() => hideHint(), 4000);
@@ -157,6 +174,8 @@ async function handleAudioReady(ev) {
         setState(STATE.MENU);
         return;
     }
+
+    engineApi.setRenderPaused(false);
 
     console.info('[daino] level ready:', {
         bpm: level.bpm.toFixed(1),
@@ -222,6 +241,7 @@ async function handleAudioReady(ev) {
                 audioEngine,
                 level,
                 levelId,
+                skinId: getSkin(),
                 // onGameOver se queda como fallback — la transición real la
                 // dispara `daino:gamestate` que escuchamos arriba.
                 onGameOver: () => {},
@@ -337,6 +357,10 @@ function setState(next) {
     // mostrar/ocultar UI según el modo (chip de auth visible solo en MENU,
     // por ejemplo).
     document.body.dataset.appState = next;
+
+    // El dino ambiente del scenery solo corre en el menú — durante la
+    // partida el Dino real de la GameSession ocupa el mismo sitio.
+    engineApi?.setAmbientDinoVisible?.(next === STATE.MENU);
 }
 
 function showHintWithText(text) {

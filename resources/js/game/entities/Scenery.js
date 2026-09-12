@@ -8,8 +8,11 @@
 // del engine. El engine decide worldSpeed (menú vs partida) via setWorldSpeed.
 
 import { Container, Graphics, Sprite, TilingSprite } from 'pixi.js';
-import { GROUND_OFFSET_PX, SCENERY } from '../config.js';
-import { getTexture, spriteSize, PIXEL_SCALE } from '../assets/pixelart.js';
+import { GROUND_OFFSET_PX, SCENERY, DINO_X, DINO_SIZE } from '../config.js';
+import { getTexture, spriteSize, normalizeSkinId, PIXEL_SCALE } from '../assets/pixelart.js';
+
+/** Periodo fijo del trote del dino ambiente del menú (no depende del BPM). */
+const AMBIENT_RUN_PERIOD_S = 0.3;
 
 /**
  * @param {{ width: number, height: number }} viewport
@@ -101,7 +104,23 @@ export function createScenery(viewport) {
         groundStrip.y = groundY - PIXEL_SCALE;
     }
 
-    // Orden de profundidad: montañas lejanas → cercanas → nubes → suelo.
+    // ---------- Dino ambiente (solo menú) ----------
+    // Corre en el MISMO sitio donde la GameSession montará el Dino real —
+    // la transición menú→partida se siente continua. AppController lo
+    // muestra/oculta según body[data-app-state] via engine API; el skin lo
+    // empuja la UI cuando cambia en AJUSTES.
+    const ambientDino = new Sprite(getTexture('dinoRunA'));
+    ambientDino.anchor.set(0.5, 1);
+    ambientDino.scale.set(PIXEL_SCALE);
+    let ambientSkin = 'classic';
+    let ambientFrame = 0;
+    let ambientT = 0;
+
+    function layoutAmbientDino() {
+        ambientDino.position.set(DINO_X + DINO_SIZE.w / 2, groundY);
+    }
+
+    // Orden de profundidad: montañas lejanas → cercanas → nubes → suelo → dino.
     container.addChild(mountainsFar, mountainsNear);
     // (las nubes se addChild en spawnClouds, quedan sobre las montañas)
     container.addChild(groundStrip);
@@ -110,6 +129,8 @@ export function createScenery(viewport) {
     spawnClouds();
     layoutGround();
     container.setChildIndex(groundStrip, container.children.length - 1);
+    container.addChild(ambientDino);
+    layoutAmbientDino();
 
     // ---------- API ----------
     function tick(dt, worldSpeed) {
@@ -134,6 +155,16 @@ export function createScenery(viewport) {
                 c.y = H * (0.08 + Math.random() * 0.30);
             }
         }
+
+        // Dino ambiente: trote a periodo fijo mientras esté visible.
+        if (ambientDino.visible) {
+            ambientT += dt;
+            if (ambientT >= AMBIENT_RUN_PERIOD_S) {
+                ambientT -= AMBIENT_RUN_PERIOD_S;
+                ambientFrame = 1 - ambientFrame;
+                ambientDino.texture = getTexture(ambientFrame === 0 ? 'dinoRunA' : 'dinoRunB', ambientSkin);
+            }
+        }
     }
 
     function resize(width, height) {
@@ -142,11 +173,28 @@ export function createScenery(viewport) {
         groundY = H - GROUND_OFFSET_PX;
         buildMountains();
         layoutGround();
+        layoutAmbientDino();
         // Nubes: re-clamp de Y para que no queden fuera si el alto cambió mucho.
         for (const c of clouds) {
             if (c.y > H * 0.45) c.y = H * (0.08 + Math.random() * 0.30);
         }
     }
 
-    return { container, tick, resize };
+    /** Muestra/oculta el dino ambiente (AppController: visible solo en MENU). */
+    function setAmbientDinoVisible(visible) {
+        ambientDino.visible = visible;
+        if (visible) {
+            // Refresca la textura al mostrarse por si el skin cambió mientras
+            // estaba oculto (partida en curso, por ejemplo).
+            ambientDino.texture = getTexture(ambientFrame === 0 ? 'dinoRunA' : 'dinoRunB', ambientSkin);
+        }
+    }
+
+    /** Cambia el skin del dino ambiente en vivo. */
+    function setAmbientDinoSkin(skinId) {
+        ambientSkin = normalizeSkinId(skinId);
+        ambientDino.texture = getTexture(ambientFrame === 0 ? 'dinoRunA' : 'dinoRunB', ambientSkin);
+    }
+
+    return { container, tick, resize, setAmbientDinoVisible, setAmbientDinoSkin };
 }

@@ -586,6 +586,19 @@ dialog.daino-modal .modal-footer {
     line-height: 1.4;
 }
 
+.daino-settings__select {
+    grid-column: 2 / 3;
+    grid-row: 1 / 2;
+    justify-self: end;
+    background: color-mix(in oklch, var(--color-daino-bg-lifted) 80%, transparent);
+    color: var(--color-daino-fg);
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 25%, transparent);
+    border-radius: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    font: inherit;
+    cursor: pointer;
+}
+
 /* El slider: estilo cross-browser ligero. Pista + thumb. */
 .daino-settings__row input[type="range"] {
     grid-column: 1 / -1;

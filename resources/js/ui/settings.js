@@ -9,6 +9,7 @@
 
 const KEY_VOLUME = 'daino:volume';
 const KEY_REDUCE_EFFECTS = 'daino:reduce_effects';
+const KEY_SKIN = 'daino:skin';
 const PREFIX = 'daino:';
 
 /** Devuelve volumen guardado [0,1]. Default 1.0. */
@@ -45,6 +46,26 @@ export function setReduceEffects(enabled) {
     } else {
         localStorage.removeItem(KEY_REDUCE_EFFECTS);
     }
+}
+
+/**
+ * Skin del dino (id del registro DINO_SKINS de game/assets/pixelart.js).
+ * Default 'classic'. Este módulo guarda el string tal cual — la validación
+ * contra el registro la hacen los consumidores con `normalizeSkinId` (así
+ * settings.js no importa código del juego y no crea dependencia circular).
+ */
+export function getSkin() {
+    return localStorage.getItem(KEY_SKIN) ?? 'classic';
+}
+
+/**
+ * Persiste el skin y avisa a los interesados (el dino ambiente del menú se
+ * actualiza en vivo vía AppController; la próxima partida lo usa al montar
+ * el Dino real).
+ */
+export function setSkin(skinId) {
+    localStorage.setItem(KEY_SKIN, skinId);
+    window.dispatchEvent(new CustomEvent('daino:skinchange', { detail: { skinId } }));
 }
 
 /**

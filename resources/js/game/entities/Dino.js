@@ -16,11 +16,19 @@ import {
     DUCK_SIZE, DUCK_HITBOX_PADDING,
     JUMP_VELOCITY, COYOTE_TIME_S, RUN_ANIM,
 } from '../config.js';
-import { getTexture, PIXEL_SCALE } from '../assets/pixelart.js';
+import { getTexture, normalizeSkinId, PIXEL_SCALE } from '../assets/pixelart.js';
 
 export class Dino extends Container {
-    constructor() {
+    /**
+     * @param {{ skinId?: string }} [opts]  Skin del registro DINO_SKINS
+     *        (assets/pixelart.js). La elige el user en AJUSTES; AppController
+     *        la pasa vía GameSession. Default 'classic'.
+     */
+    constructor(opts = {}) {
         super();
+
+        /** Variante de paleta con la que se resuelven TODOS los frames. */
+        this.skinId = normalizeSkinId(opts.skinId ?? 'classic');
 
         this.x = DINO_X;
         this.y = 0;
@@ -45,7 +53,7 @@ export class Dino extends Container {
         // Sprite anclado a la BASE-CENTRO del box lógico: el squash & stretch
         // escala desde los pies (como debe ser) y el frame agachado, más ancho
         // que el box, queda centrado sin mover los pies.
-        this._sprite = new Sprite(getTexture('dinoRunA'));
+        this._sprite = new Sprite(getTexture('dinoRunA', this.skinId));
         this._sprite.anchor.set(0.5, 1);
         this._sprite.position.set(DINO_SIZE.w / 2, DINO_SIZE.h);
         this._sprite.scale.set(PIXEL_SCALE);
@@ -85,8 +93,15 @@ export class Dino extends Container {
     /** Mantener ↓: agachado en suelo, fast-fall en el aire (y agachado al caer). */
     duckStart() {
         if (this.dead) return;
+        const wasStanding = !this.ducking;
         this.ducking = true;
-        if (!this.grounded) this.fastFall = true;
+        if (!this.grounded) {
+            this.fastFall = true;
+        } else if (wasStanding) {
+            // Squash rápido al tirarse al suelo — vende el gesto.
+            this._squashX = 1.12;
+            this._squashY = 0.82;
+        }
     }
 
     /** Soltar ↓. */
@@ -98,7 +113,7 @@ export class Dino extends Container {
     /** Pose de muerte (ojo en X). La llama GameSession al chocar. */
     setDead() {
         this.dead = true;
-        this._sprite.texture = getTexture('dinoDead');
+        this._sprite.texture = getTexture('dinoDead', this.skinId);
     }
 
     /**
@@ -128,12 +143,12 @@ export class Dino extends Container {
                     this._runFrame = 1 - this._runFrame;
                 }
                 if (this.ducking) {
-                    this._sprite.texture = getTexture(this._runFrame === 0 ? 'dinoDuckA' : 'dinoDuckB');
+                    this._sprite.texture = getTexture(this._runFrame === 0 ? 'dinoDuckA' : 'dinoDuckB', this.skinId);
                 } else {
-                    this._sprite.texture = getTexture(this._runFrame === 0 ? 'dinoRunA' : 'dinoRunB');
+                    this._sprite.texture = getTexture(this._runFrame === 0 ? 'dinoRunA' : 'dinoRunB', this.skinId);
                 }
             } else {
-                this._sprite.texture = getTexture('dinoJump');
+                this._sprite.texture = getTexture('dinoJump', this.skinId);
             }
         }
 

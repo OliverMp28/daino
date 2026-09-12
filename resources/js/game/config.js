@@ -76,39 +76,46 @@ export const JUMP_BUFFER_S = 0.12;
  */
 export const RUN_ANIM = Object.freeze({ periodS: 0.16, refSpeed: 400 });
 
-/** Periodo de aleteo del ptero en segundos por frame. */
-export const PTERO_FLAP_PERIOD_S = 0.18;
+/** Periodo default de animación de obstáculos multi-frame sin `animPeriodS` propio. */
+export const OBSTACLE_ANIM_PERIOD_S = 0.18;
+
+/** Polvo al correr: cada cuántos segundos suelta una motita en los pies. */
+export const RUN_DUST = Object.freeze({ periodS: 0.24, color: 0x5a6499 });
+
+/**
+ * Techo global de partículas one-shot vivas (bursts). Si se alcanza, los
+ * bursts nuevos se descartan — protege dispositivos modestos de una cascada
+ * de muertes/aterrizajes seguidos.
+ */
+export const MAX_BURST_PARTICLES = 140;
 
 // --------------------------- Obstáculos ---------------------------
 
 /**
- * Catálogo de tipos de obstáculo. Tamaños = celdas del sprite × PIXEL_SCALE
- * (ver assets/pixelart.js). `sprites` son los frames de animación (1 = estático).
- * `altitude` px desde el suelo hasta la BASE del obstáculo: 0 = apoyado en el
- * suelo (cactus); >0 = volador (ptero — se pasa agachándose o con salto muy
- * preciso, como el pájaro del Chrome dino).
+ * Catálogo de tipos de obstáculo — REGISTRO ÚNICO Y EXTENSIBLE. Añadir un
+ * obstáculo nuevo = dibujar su sprite en assets/pixelart.js + una entrada
+ * aquí; LevelGenerator, spawner y Obstacle lo consumen sin tocar código.
+ *
+ * Campos por kind:
+ *   w/h            Tamaño en px (= celdas del sprite × PIXEL_SCALE).
+ *   altitude       px desde el suelo hasta la BASE: 0 = apoyado (cactus);
+ *                  >0 = volador (se pasa agachándose o con salto preciso).
+ *   sprites        Frames de animación (1 entrada = estático).
+ *   animPeriodS    Segundos por frame cuando hay >1 sprite.
+ *   weight         Peso relativo en el pick del PRNG (no hace falta que
+ *                  sumen 1 — se normalizan entre los kinds disponibles).
+ *   availableFromS Segundos de canción antes de los cuales este kind NO
+ *                  aparece (el peso se reparte entre los disponibles).
+ *                  Regla determinista: misma seed ⇒ misma timeline.
  */
 export const OBSTACLE_KIND = Object.freeze({
-    CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'] },
-    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'] },
-    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'] },
+    CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], weight: 0.40, availableFromS: 0 },
+    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], weight: 0.30, availableFromS: 0 },
+    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, weight: 0.30, availableFromS: 10 },
 });
 
 /** Padding del hitbox del obstacle (más ajustado que el del Dino). */
 export const OBSTACLE_HITBOX_PADDING = { top: 6, right: 6, bottom: 4, left: 6 };
-
-/**
- * Segundos iniciales de canción SIN pteros — el jugador aprende el salto
- * antes de que aparezca la mecánica de agacharse. Regla determinista (misma
- * seed ⇒ misma timeline), no aleatoria.
- */
-export const PTERO_GRACE_S = 10;
-
-/**
- * Pesos del PRNG al asignar kind a cada spawn (deben sumar 1). Dentro del
- * grace inicial el peso del ptero se reparte a los cactus.
- */
-export const KIND_WEIGHTS = Object.freeze({ CACTUS_SMALL: 0.40, CACTUS_WIDE: 0.30, PTERO: 0.30 });
 
 // --------------------------- Velocidad por BPM ---------------------------
 
