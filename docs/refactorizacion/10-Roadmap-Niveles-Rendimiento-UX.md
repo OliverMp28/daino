@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** ninguna ola arrancada. Investigación cerrada Sep 2026.
+> **Estado:** Olas 0 y 1 ✅ completas (Sep 2026). Resto pendiente.
 
 ---
 
@@ -168,6 +168,7 @@ Lo único que hoy está realmente gateado por estado es la visibilidad del dino 
 | **D13** | `filterSpacing` corre *antes* del filtro `t >= 1.5`, así que onsets descartados consumen presupuesto de espaciado y pueden suprimir un onset legítimo en t=1.6 | `LevelGenerator.js:55` vs `:144` |
 | **D14** | `SPAWN_WINDOW_S` está en **segundos**, no en píxeles: a 250 px/s el hueco mínimo son 175 px y a 600 px/s son 420 px. La dificultad efectiva varía **2.4×** según el BPM sin que nadie lo haya afinado | `config.js:158` |
 | **D15** | Nada valida que un patrón sea superable: el salto completo dura `2 × 900 / 2500 = 0.72 s`, **más** que el hueco mínimo de 0.70 s | `config.js:15,18,158` |
+| **D16** | `pickPeaks` umbraliza solo contra la mediana móvil, sin suelo de energía absoluto, y el envelope se normaliza por su máximo. En un tramo plano el ruido se amplifica y genera onsets: medido, un drone tonal de 10 s produce **237 onsets frente a los 112 de un click track percusivo**. Intros suaves y pistas ambientales reciben obstáculos sin relación con su contenido musical. Descubierto al escribir los tests de la Ola 0; cubierto por un test que documenta el comportamiento actual | `SpectralFlux.js:172-199` |
 
 ---
 
@@ -222,7 +223,7 @@ El charter puede generar cualquier dificultad desde el mismo `analysis.json`, as
 
 ## 3. Las olas
 
-### Ola 0 — Quick wins
+### Ola 0 — Quick wins ✅
 
 **Objetivo.** Recoger todo lo que mejora de forma inmediata y medible sin condicionar ninguna decisión de arquitectura posterior. Sesión corta.
 
@@ -245,11 +246,24 @@ El charter puede generar cualquier dificultad desde el mismo `analysis.json`, as
 - Migración `006_add_levels_indexes.sql` con `idx_levels_public_created (is_public, created_at)` → **D8**.
 - Precargar `GET /api/levels?public=1` al montar el menú y pintar filas esqueleto en vez de `"Cargando…"` → **D9**.
 
-**Verificación.** Cronometrar "Analizando audio…" con la misma canción antes y después (esperado: de 3–5 s a menos de 1 s). Abrir NIVELES y comprobar que pinta al instante. `EXPLAIN` sobre `findPublic()` mostrando uso del índice.
+**Verificación — hecha, con medidas reales.**
+
+| Qué | Antes | Después |
+|---|---|---|
+| Bucle de mariposas de la FFT, 18 080 hops (Chrome 153) | 21 881 ms | **1 821 ms** — 12× |
+| Apertura del modal NIVELES con el menú ya montado | ~1 333 ms + 1 petición | **31,5 ms, 0 peticiones** |
+| `EXPLAIN` de `findPublic()` | `type: ALL` + filesort | `type: ref`, `key: idx_levels_public_created`, **sin filesort** |
+| Análisis completo de un MP3 real (`HOPE.mp3`), LOADING→PLAYING | — | **1 302 ms** (incluye decode y los 300 ms del fundido) |
+
+Equivalencia numérica de la FFT verificada de tres formas: idéntica **bit a bit** a la implementación anterior sobre 9 tamaños × 5 entradas aleatorias; contrastada contra una DFT ingenua (error máximo 1.86e-6, picos espectrales en los bins esperados); y determinismo del pipeline completo confirmado en Node y en el navegador.
+
+**Suite de tests nueva:** `tests/js/` con `node --test` (built-in de Node 22, **cero dependencias nuevas**), 13 tests, `bun run test`. Cubre corrección de la FFT, determinismo del envelope, invariancia frente al yield, detección de BPM, contrato del objeto Level que consume GameSession, y validez de los `kind` generados contra el registro. Era la primera suite automatizada del repo.
+
+> Hallazgo durante los tests: el defecto **D16** (`pickPeaks` sin suelo de energía absoluto). Documentado con un test que fija el comportamiento actual y falla a propósito cuando la Ola 5 lo corrija.
 
 ---
 
-### Ola 1 — Perfiles de render por estado
+### Ola 1 — Perfiles de render por estado ✅
 
 **Objetivo.** Que cada estado de la app pague solo lo que necesita, manteniendo una única escena continua.
 
@@ -271,7 +285,30 @@ El charter puede generar cualquier dificultad desde el mismo `analysis.json`, as
 - **Tier adaptativo:** media móvil del tiempo de frame; si supera el presupuesto N frames seguidos, baja un escalón. Cubre el riesgo de doc 06 §11 y absorbe la tarea diferida del Bloque 8 sobre `hardwareConcurrency`.
 - Selector **"Calidad: Auto / Alta / Media / Baja"** en el modal AJUSTES, persistido en `daino:quality` siguiendo el patrón ya establecido en `ui/settings.js`.
 
-**Verificación.** DevTools → Performance, 10 s en MENU antes y después. Confirmar que el menú cae a ~30 fps con el filtro a resolución reducida y que la partida mantiene 60 fps a resolución plena. Comprobar que la transición menú→partida sigue siendo continua (sin parpadeo ni salto del suelo).
+**Verificación — hecha, con medidas reales.**
+
+Presupuesto aplicado en cada estado, comprobado recorriendo el ciclo completo con un MP3 real:
+
+| Estado | fps | `filter.resolution` | Motas activas | Ticker |
+|---|---|---|---|---|
+| MENU | 30 | 0.60 | 24 / 80 | activo |
+| LOADING | 15 | 0.50 | 0 | **parado** |
+| PLAYING | 60 (sin tope) | 1.00 | 80 / 80 | activo |
+| PLAYING + modal abierto | 15 | 0.50 | 24 | activo |
+| GAME_OVER | 30 | 0.75 | 40 | activo |
+
+Coste de rasterizado medido con renders síncronos forzados (`readPixels` para sincronizar la GPU), viewport 1536×674 @dpr 1.25:
+
+| `filter.resolution` | ms/frame | vs. plena |
+|---|---|---|
+| 1.00 | 2.78 | 100 % |
+| 0.75 | 1.65 | 59 % |
+| **0.60** | **1.58** | **57 %** |
+| 0.45 | 1.57 | 56 % |
+
+**43 % menos coste de frame** en el menú; combinado con el tope de 30 fps, el menú pasa a costar **~28 %** de lo que costaba. La curva se aplana por debajo de 0.75 en esta GPU (el cuello deja de ser el relleno), pero el tier `low` a 0.45 sí rinde en hardware limitado por fill rate.
+
+Tiers forzados desde AJUSTES verificados (`medium` → 0.70 / 48 motas / 60 fps; `low` → 0.45 / 20 motas / 30 fps) y captura del menú comparada con el estado previo: **sin degradación visible** — el filtro solo afecta al shader de fondo, los sprites pixel-art se rasterizan aparte.
 
 ---
 
@@ -473,14 +510,14 @@ Si hay que elegir una sola cosa: **Ola 3**. Es la que cambia cómo se siente el 
 
 | Defecto | Ola | Defecto | Ola |
 |---|---|---|---|
-| D1 fila duplicada por partida | 3 | D9 modal sin precarga | 0 |
-| D2 título `.mp3.mp3` | 0 | D10 `sampleRate` no fijado | 0 |
-| D3 validación 200 vs col 120 | 0 | D11 nivel privado no jugable | 2 |
-| D4 botón "Jugar" bloqueado | 0 | D12 identidad en iframe | 2 |
-| D5 `file_path` expuesto | 0 | D13 orden `filterSpacing` | 3 |
+| D1 fila duplicada por partida | 3 | D9 modal sin precarga | 0 ✅ |
+| D2 título `.mp3.mp3` | 0 ✅ | D10 `sampleRate` no fijado | 0 ✅ |
+| D3 validación 200 vs col 120 | 0 ✅ | D11 nivel privado no jugable | 2 |
+| D4 botón "Jugar" bloqueado | 0 ✅ | D12 identidad en iframe | 2 |
+| D5 `file_path` expuesto | 0 ✅ | D13 orden `filterSpacing` | 3 |
 | D6 `difficulty` hardcodeada | 5 | D14 espaciado en s, no en px | 5 |
-| D7 `?public=1` muerto | 0 | D15 sin validación de jugabilidad | 5 |
-| D8 sin índice `is_public` | 0 | | |
+| D7 `?public=1` muerto | 0 ✅ | D15 sin validación de jugabilidad | 5 |
+| D8 sin índice `is_public` | 0 ✅ | D16 sin suelo de energía en `pickPeaks` | 5 |
 
 ---
 

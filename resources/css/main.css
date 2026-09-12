@@ -840,8 +840,45 @@ body:not([data-app-state="MENU"]) #auth-anchor {
     overflow-y: auto;
 }
 
-.daino-levels__list[aria-busy="true"] .daino-levels__loading {
-    opacity: 0.7;
+/* Filas esqueleto durante la carga del catálogo (Ola 0, defecto D9).
+   Reservan exactamente el alto de una fila real, así que cuando llegan los
+   datos no hay salto de layout. El barrido es un gradiente desplazándose:
+   una sola propiedad animada (background-position), compuesta por la GPU,
+   sin reflow. */
+.daino-levels__row--skeleton {
+    pointer-events: none;
+}
+
+.daino-levels__skeleton-bar {
+    display: block;
+    height: 0.85rem;
+    border-radius: 0.25rem;
+    background: linear-gradient(
+        90deg,
+        color-mix(in oklch, var(--color-daino-fg) 8%, transparent) 25%,
+        color-mix(in oklch, var(--color-daino-fg) 16%, transparent) 37%,
+        color-mix(in oklch, var(--color-daino-fg) 8%, transparent) 63%
+    );
+    background-size: 400% 100%;
+    animation: daino-skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+.daino-levels__skeleton-bar--sub {
+    margin-top: 0.45rem;
+    height: 0.7rem;
+    width: 60%;
+}
+
+@keyframes daino-skeleton-sweep {
+    from { background-position: 100% 50%; }
+    to   { background-position: 0 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-skeleton-bar,
+    .daino-levels__skeleton-bar {
+        animation: none;
+    }
 }
 
 .daino-levels__loading,

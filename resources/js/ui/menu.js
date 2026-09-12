@@ -17,6 +17,7 @@
 
 import { pickFileViaInput } from './upload.js';
 import { openLevelsModal, openRankingModal, openProfileModal, openSettingsModal } from './modals.js';
+import { prefetchLevels } from '../api/levelsCache.js';
 
 let rootEl = null;
 let callbacks = {};
@@ -34,6 +35,13 @@ export function mount(opts) {
         onProfile: opts.onProfile ?? openProfileModal,
         onSettings: opts.onSettings ?? (() => openSettingsModal()),
     };
+
+    // Precalentar el catálogo (defecto D9). El listado tardaba 1-1.5 s en
+    // aparecer porque el fetch no arrancaba hasta que el modal ya estaba
+    // abierto. Lanzarlo aquí aprovecha el tiempo que el jugador pasa mirando
+    // el menú, así que al pulsar NIVELES la lista suele estar ya en memoria.
+    // Es especulativo y silencioso: si falla, la apertura real reintenta.
+    prefetchLevels('public');
 
     rootEl = document.createElement('div');
     rootEl.className = 'daino-menu';

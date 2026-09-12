@@ -25,6 +25,18 @@ const SMOOTHING = 0.82;
 const MIN_DB = -100;
 const MAX_DB = -30;
 
+/**
+ * Sample rate forzado del AudioContext.
+ *
+ * Todo el análisis offline (`levels/SpectralFlux.js`) deriva su resolución
+ * temporal de `audioBuffer.sampleRate / HOP_SIZE`. Dejarlo al criterio del
+ * dispositivo hacía que el mismo MP3 con la misma seed produjera timelines
+ * distintas en equipos distintos. Fijarlo aquí es lo que hace el análisis
+ * reproducible — requisito para persistir charts (Ola 3) y para que un chart
+ * generado fuera del navegador (Ola 4) case con el reloj del cliente.
+ */
+export const ANALYSIS_SAMPLE_RATE = 44100;
+
 export class AudioEngine {
     constructor() {
         this.ctx = null;
@@ -33,6 +45,7 @@ export class AudioEngine {
         this.gainNode = null;
         this._freqBuffer = null;     // Uint8Array(FFT_SIZE/2) — 1024 bins
         this._timeBuffer = null;     // Uint8Array(FFT_SIZE) — 2048 muestras
+        this._downsampled = null;    // Uint8Array(targetBins) reusado por getFrequencyData
         this._currentBuffer = null;  // último AudioBuffer reproducido (para test)
         this._playStartedAt = 0;     // ctx.currentTime cuando arrancó el play actual
         this._onVisibilityChange = null;
@@ -45,9 +58,28 @@ export class AudioEngine {
         // Some browsers require explicit `latencyHint: 'interactive'` for low
         // latency in games. Default es 'interactive' actualmente, pero lo
         // dejamos explícito para que sobreviva a cambios futuros.
-        this.ctx = new (window.AudioContext || window.webkitAudioContext)({
-            latencyHint: 'interactive',
-        });
+        //
+        // `sampleRate` FIJO (Ola 0, defecto D10). Sin él, el contexto adopta el
+        // del dispositivo de salida: 44.1 kHz en unas máquinas, 48 kHz en otras.
+        // `decodeAudioData` remuestrea al rate del contexto, así que el envelope
+        // de onsets salía a `sampleRate / 512` — 86.13 Hz o 93.75 Hz según el
+        // equipo. Resultado: la misma canción con la misma seed generaba
+        // timelines DISTINTAS en máquinas distintas, rompiendo en silencio el
+        // invariante de determinismo del Bloque 5.
+        //
+        // Fijarlo a 44100 hace el análisis reproducible entre dispositivos, que
+        // es requisito para persistir charts (Ola 3) y para que un chart
+        // generado en servidor (Ola 4) cuadre con el reloj del cliente.
+        const AudioCtor = window.AudioContext || window.webkitAudioContext;
+        try {
+            this.ctx = new AudioCtor({ latencyHint: 'interactive', sampleRate: ANALYSIS_SAMPLE_RATE });
+        } catch {
+            // Algún dispositivo (sobre todo iOS antiguo) puede rechazar un rate
+            // que no soporta. Degradar es mejor que quedarse sin audio; se
+            // pierde el determinismo entre equipos, no la jugabilidad.
+            console.warn(`[AudioEngine] ${ANALYSIS_SAMPLE_RATE} Hz no soportado; usando el rate del dispositivo.`);
+            this.ctx = new AudioCtor({ latencyHint: 'interactive' });
+        }
 
         this.analyser = this.ctx.createAnalyser();
         this.analyser.fftSize = FFT_SIZE;
@@ -171,16 +203,27 @@ export class AudioEngine {
      * promedia segmentos contiguos.
      */
     getFrequencyData(targetBins = 256) {
+        // Buffer de salida reutilizado entre frames (Ola 0). Antes se alocaba
+        // un `new Uint8Array(targetBins)` en CADA frame de partida — 60 arrays
+        // por segundo para tirar, presión de GC gratuita dentro del bucle de
+        // render. El engine consume el resultado de forma síncrona (lo copia a
+        // la textura del shader en la misma línea), así que reutilizarlo es
+        // seguro: nadie guarda la referencia entre frames.
+        if (this._downsampled === null || this._downsampled.length !== targetBins) {
+            this._downsampled = new Uint8Array(targetBins);
+        }
+        const out = this._downsampled;
+
         if (this.analyser === null) {
-            // Devolver buffer idle del tamaño pedido si no se ha iniciado aún.
-            return new Uint8Array(targetBins);
+            // Sin contexto todavía: devolver silencio del tamaño pedido.
+            out.fill(0);
+            return out;
         }
         this.analyser.getByteFrequencyData(this._freqBuffer);
 
         const native = this._freqBuffer.length;  // 1024 con fftSize=2048
         if (targetBins === native) return this._freqBuffer;
 
-        const out = new Uint8Array(targetBins);
         const step = native / targetBins;
         for (let i = 0; i < targetBins; i++) {
             const start = (i * step) | 0;

@@ -33,12 +33,23 @@ use App\Services\FileUploadService;
  */
 final class LevelApiController
 {
+    /** Debe coincidir con `levels.title VARCHAR(120)`. */
+    private const TITLE_MAX_LEN = 120;
+
+    /** Debe coincidir con `levels.artist VARCHAR(120)`. */
+    private const ARTIST_MAX_LEN = 120;
+
     public function store(Request $req): Response
     {
         $user = AuthContext::user();
 
-        $title       = Validator::string($req->input('title'),       ['min' => 1, 'max' => 200, 'field' => 'title']);
-        $artist      = Validator::string($req->input('artist'),      ['min' => 0, 'max' => 200, 'required' => false, 'field' => 'artist']);
+        // `max` debe coincidir con el ancho real de la columna (VARCHAR(120),
+        // ver 002_create_levels_table.sql). Estaba a 200: un título más largo
+        // pasaba la validación y reventaba en MariaDB con el error 1406, que el
+        // handler global traduce a un 500 opaco en vez del 422 que corresponde
+        // a una entrada inválida del cliente. Defecto D3.
+        $title       = Validator::string($req->input('title'),       ['min' => 1, 'max' => self::TITLE_MAX_LEN, 'field' => 'title']);
+        $artist      = Validator::string($req->input('artist'),      ['min' => 0, 'max' => self::ARTIST_MAX_LEN, 'required' => false, 'field' => 'artist']);
         $durationSec = Validator::int   ($req->input('duration_sec'), ['min' => 1, 'max' => 7200, 'field' => 'duration_sec']);
         $bpm         = Validator::int   ($req->input('bpm'),         ['min' => 30, 'max' => 300, 'required' => false, 'field' => 'bpm']);
         $difficulty  = Validator::int   ($req->input('difficulty'),  ['min' => 1, 'max' => 5, 'field' => 'difficulty']);
@@ -79,8 +90,10 @@ final class LevelApiController
 
     public function index(Request $req): Response
     {
-        $mine   = filter_var($req->query('mine', '0'),   FILTER_VALIDATE_BOOLEAN);
-        $public = filter_var($req->query('public', '0'), FILTER_VALIDATE_BOOLEAN);
+        // Nota: no existe un flag `public`. La lista pública es el comportamiento
+        // por defecto, así que `?public=1` es aceptado y redundante — se ignora
+        // a propósito en lugar de parsearse a una variable muerta (defecto D7).
+        $mine   = filter_var($req->query('mine', '0'), FILTER_VALIDATE_BOOLEAN);
         $limit  = Validator::int($req->query('limit', 20),  ['min' => 1, 'max' => 50, 'required' => false, 'field' => 'limit']);
         $offset = Validator::int($req->query('offset', 0),  ['min' => 0, 'max' => 100_000, 'required' => false, 'field' => 'offset']);
 
@@ -92,7 +105,7 @@ final class LevelApiController
             $items = Level::findByUser($user->id, $limit, $offset);
             $total = Level::countByUser($user->id);
         } else {
-            // Default: lista pública. `?public=1` y default son equivalentes
+            // Default: lista pública. `?public=1` y el default son equivalentes,
             // para evitar el "no listado" silencioso.
             $items = Level::findPublic($limit, $offset);
             $total = Level::countPublic();
@@ -222,7 +235,13 @@ final class LevelApiController
             'difficulty'     => $level->difficulty,
             'generator_seed' => $level->generatorSeed,
             'is_public'      => $level->isPublic,
-            'file_path'      => $level->filePath,
+            // `file_path` NO se expone (defecto D5). Es una ruta interna del
+            // servidor y el cliente nunca la usa: descarga por
+            // `GET /api/levels/{id}/file`, que valida `is_public` antes de
+            // servir. Publicarla solo daba a cualquiera la estructura del
+            // almacenamiento. Se sustituye por un booleano derivado, que es
+            // lo único que la UI necesita saber ("¿tiene audio subido?").
+            'has_audio'      => $level->filePath !== null,
             'created_at'     => $level->createdAt,
         ];
     }

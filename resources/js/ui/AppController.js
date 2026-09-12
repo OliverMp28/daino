@@ -24,7 +24,7 @@ import { fadeOverlay } from './transitions.js';
 import { closeAllModals, openSettingsModal, openPauseModal } from './modals.js';
 import { Input } from '../game/systems/input.js';
 import { getUser, request as apiRequest } from '../api/client.js';
-import { getSkin } from './settings.js';
+import { getSkin, getQuality } from './settings.js';
 
 const STATE = Object.freeze({
     MENU: 'MENU',
@@ -78,6 +78,13 @@ export function start(cfg) {
     // reaccionar en vivo cuando el user la cambie en AJUSTES (settings.js
     // dispatcha 'daino:skinchange'). La GameSession la lee al arrancar cada
     // partida — no hay que tocar una partida en curso.
+    // Calidad gráfica persistida (Ola 1). 'auto' deja que el engine degrade
+    // solo si mide frames lentos sostenidos durante la partida.
+    engineApi.setQualityTier?.(getQuality());
+    window.addEventListener('daino:qualitychange', (ev) => {
+        engineApi.setQualityTier?.(ev.detail?.quality ?? getQuality());
+    });
+
     engineApi.setAmbientDinoSkin?.(getSkin());
     window.addEventListener('daino:skinchange', (ev) => {
         engineApi.setAmbientDinoSkin?.(ev.detail?.skinId ?? getSkin());
@@ -361,6 +368,11 @@ function setState(next) {
     // El dino ambiente del scenery solo corre en el menú — durante la
     // partida el Dino real de la GameSession ocupa el mismo sitio.
     engineApi?.setAmbientDinoVisible?.(next === STATE.MENU);
+
+    // Presupuesto de render del estado (Ola 1). Las claves de STATE y las de
+    // RENDER_PROFILES coinciden a propósito, así que no hay tabla de traducción
+    // que se pueda desincronizar al añadir un estado.
+    engineApi?.setRenderProfile?.(next);
 }
 
 function showHintWithText(text) {

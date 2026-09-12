@@ -10,7 +10,11 @@
 const KEY_VOLUME = 'daino:volume';
 const KEY_REDUCE_EFFECTS = 'daino:reduce_effects';
 const KEY_SKIN = 'daino:skin';
+const KEY_QUALITY = 'daino:quality';
 const PREFIX = 'daino:';
+
+/** Valores aceptados para la calidad gráfica. 'auto' = degradado adaptativo. */
+export const QUALITY_VALUES = Object.freeze(['auto', 'high', 'medium', 'low']);
 
 /** Devuelve volumen guardado [0,1]. Default 1.0. */
 export function getVolume() {
@@ -66,6 +70,33 @@ export function getSkin() {
 export function setSkin(skinId) {
     localStorage.setItem(KEY_SKIN, skinId);
     window.dispatchEvent(new CustomEvent('daino:skinchange', { detail: { skinId } }));
+}
+
+/**
+ * Calidad gráfica (Ola 1). Default 'auto': el engine arranca en el tier alto y
+ * baja solo si mide frames lentos sostenidos durante la partida.
+ *
+ * Se valida contra {@link QUALITY_VALUES} al leer, no al escribir: localStorage
+ * es editable por el usuario y un valor basura no debe dejar el juego sin
+ * render. Ante algo desconocido, 'auto'.
+ *
+ * @returns {'auto'|'high'|'medium'|'low'}
+ */
+export function getQuality() {
+    const raw = localStorage.getItem(KEY_QUALITY);
+    return QUALITY_VALUES.includes(raw) ? raw : 'auto';
+}
+
+/**
+ * Persiste la calidad y avisa al engine en vivo — el cambio se ve en el mismo
+ * frame, sin recargar ni reiniciar la partida.
+ *
+ * @param {'auto'|'high'|'medium'|'low'} quality
+ */
+export function setQuality(quality) {
+    const safe = QUALITY_VALUES.includes(quality) ? quality : 'auto';
+    localStorage.setItem(KEY_QUALITY, safe);
+    window.dispatchEvent(new CustomEvent('daino:qualitychange', { detail: { quality: safe } }));
 }
 
 /**

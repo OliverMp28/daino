@@ -16,6 +16,7 @@
 // existen como stubs que ya pueden ser llamados (Lote D los completa).
 
 import { getUser, logout, isAuthenticated, request as apiRequest, upload as apiUpload } from '../api/client.js';
+import { getLevels, invalidateLevels } from '../api/levelsCache.js';
 import { isBridgeEmbedded } from '../iframe/bridge.js';
 import { renderAvatar } from './avatar.js';
 import { getOrCreateAudioEngine } from './upload.js';
@@ -23,6 +24,7 @@ import {
     getVolume, setVolume,
     getReduceEffects, setReduceEffects,
     getSkin, setSkin,
+    getQuality, setQuality,
     listKeys, clearAll,
 } from './settings.js';
 import { DINO_SKINS, normalizeSkinId } from '../game/assets/pixelart.js';
@@ -275,16 +277,42 @@ function tabBtn(label, key, active) {
     return b;
 }
 
-async function loadLevels(container, tab, switchTab) {
+/**
+ * Pinta N filas fantasma con la misma altura y estructura que una fila real.
+ * Sustituye al texto "Cargando…" (defecto D9): el panel mantiene su forma
+ * mientras llegan los datos, así que al aparecer las filas no hay salto de
+ * layout. Marcadas `aria-hidden` porque el estado de carga ya lo comunica el
+ * `aria-busy` del contenedor; que un lector de pantalla lea filas vacías sería
+ * ruido.
+ *
+ * @param {HTMLElement} container
+ * @param {number} count
+ */
+function renderSkeletonRows(container, count = 4) {
+    for (let i = 0; i < count; i++) {
+        const row = document.createElement('div');
+        row.className = 'daino-levels__row daino-levels__row--skeleton';
+        row.setAttribute('aria-hidden', 'true');
+        const meta = document.createElement('div');
+        meta.className = 'daino-levels__meta';
+        const title = document.createElement('span');
+        title.className = 'daino-levels__skeleton-bar';
+        const sub = document.createElement('span');
+        sub.className = 'daino-levels__skeleton-bar daino-levels__skeleton-bar--sub';
+        meta.append(title, sub);
+        row.appendChild(meta);
+        container.appendChild(row);
+    }
+}
+
+async function loadLevels(container, tab, switchTab, opts = {}) {
     container.innerHTML = '';
     container.setAttribute('aria-busy', 'true');
-    const loading = document.createElement('p');
-    loading.className = 'daino-levels__loading';
-    loading.textContent = 'Cargando…';
-    container.appendChild(loading);
+    renderSkeletonRows(container);
 
-    const path = tab === 'mine' ? '/api/levels?mine=1&limit=20' : '/api/levels?public=1&limit=20';
-    const res = await apiRequest('GET', path);
+    // Pasa por la caché: si el menú ya precalentó la lista, esto resuelve en el
+    // mismo tick y el esqueleto ni llega a verse.
+    const res = await getLevels(tab, { force: opts.force === true });
     container.removeAttribute('aria-busy');
     container.innerHTML = '';
 
@@ -347,8 +375,14 @@ function renderLevelRow(level, tab, switchTab) {
                 await playPublicLevel(level);
                 closeAllModals();
             } catch (err) {
-                playBtn.textContent = 'Error';
+                // Defecto D4: antes esto dejaba el botón deshabilitado con el
+                // texto "Error" de forma permanente — un fallo de red puntual
+                // obligaba a cerrar y reabrir el modal. Ahora se restaura el
+                // estado y se explica qué pasó, para poder reintentar.
                 console.error('[levels] play falló:', err);
+                playBtn.disabled = false;
+                playBtn.textContent = 'Reintentar';
+                showInlineError(playBtn, 'No se pudo cargar el nivel. ¿Sigue publicado?');
             }
         });
         actions.appendChild(playBtn);
@@ -392,7 +426,12 @@ async function playPublicLevel(level) {
         detail: {
             audioBuffer,
             audioEngine,
-            name: level.title + '.mp3',
+            // El título se manda TAL CUAL, sin volver a añadirle la extensión
+            // (defecto D2). AppController usa `name` como `title` al crear la
+            // fila del nivel, así que concatenar ".mp3" aquí hacía que cada
+            // rejugada de un nivel llamado "cancion.mp3" generase
+            // "cancion.mp3.mp3", luego "cancion.mp3.mp3.mp3"…
+            name: level.title,
         },
     }));
 }
@@ -419,8 +458,10 @@ async function publishLevel(level, btn, switchTab) {
 
     if (res.ok) {
         btn.textContent = 'Publicado';
-        // Recargar tab "Mis niveles" para que el row pase a "público".
-        // (También aparecerá en "Públicos" la próxima vez que se abra ese tab.)
+        // Publicar cambia AMBOS listados: el nivel pasa a público en "Mis
+        // niveles" y aparece en "Públicos". Invalidamos los dos para que la
+        // caché no sirva la versión previa dentro de su ventana de frescura.
+        invalidateLevels();
         await switchTab('mine');
     } else if (res.status === 409) {
         btn.disabled = false;
@@ -684,6 +725,40 @@ export function openSettingsModal(opts = {}) {
     skinRow.appendChild(skinSelect);
     skinRow.appendChild(skinNote);
     body.appendChild(skinRow);
+
+    // ----- Calidad gráfica (Ola 1) -----
+    const qualityRow = document.createElement('section');
+    qualityRow.className = 'daino-settings__row';
+    const qualityLabel = document.createElement('label');
+    qualityLabel.className = 'daino-settings__label';
+    qualityLabel.htmlFor = 'daino-settings-quality';
+    qualityLabel.textContent = 'Calidad gráfica';
+    const qualitySelect = document.createElement('select');
+    qualitySelect.id = 'daino-settings-quality';
+    qualitySelect.dataset.interactive = 'true';
+    qualitySelect.className = 'daino-settings__select';
+    for (const [value, text] of [
+        ['auto', 'Automática'],
+        ['high', 'Alta'],
+        ['medium', 'Media'],
+        ['low', 'Baja'],
+    ]) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = text;
+        qualitySelect.appendChild(opt);
+    }
+    qualitySelect.value = getQuality();
+    qualitySelect.addEventListener('change', () => {
+        setQuality(qualitySelect.value);
+    });
+    const qualityNote = document.createElement('p');
+    qualityNote.className = 'daino-settings__hint';
+    qualityNote.textContent = 'Automática baja la calidad sola si detecta tirones. Elegir una fija desactiva ese ajuste.';
+    qualityRow.appendChild(qualityLabel);
+    qualityRow.appendChild(qualitySelect);
+    qualityRow.appendChild(qualityNote);
+    body.appendChild(qualityRow);
 
     // ----- Reducir efectos visuales (placeholder funcional para Bloque 8) -----
     const fxRow = document.createElement('section');

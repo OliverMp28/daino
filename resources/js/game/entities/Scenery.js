@@ -133,16 +133,22 @@ export function createScenery(viewport) {
     layoutAmbientDino();
 
     // ---------- API ----------
+    // Pares (capa, factor de parallax) precomputados: los consume `tick` cada
+    // frame y nunca cambian tras el build/resize.
+    const ridges = [mountainsFar, mountainsNear];
+    const ridgeFactors = [SCENERY.mountainParallax * 0.6, SCENERY.mountainParallax];
+
     function tick(dt, worldSpeed) {
         // Suelo: 1:1 con la velocidad del mundo (los obstáculos van pegados a él).
         groundStrip.tilePosition.x -= worldSpeed * dt;
 
         // Montañas: parallax lento con wrap sobre su periodo.
-        for (const [gfx, factor] of [
-            [mountainsFar, SCENERY.mountainParallax * 0.6],
-            [mountainsNear, SCENERY.mountainParallax],
-        ]) {
-            gfx.x -= worldSpeed * factor * dt;
+        // `ridges` se construye una sola vez (ver arriba): la versión anterior
+        // creaba el array de pares y sus dos sub-arrays EN CADA FRAME, dentro
+        // del bucle de render. Basura gratuita 60 veces por segundo.
+        for (let i = 0; i < ridges.length; i++) {
+            const gfx = ridges[i];
+            gfx.x -= worldSpeed * ridgeFactors[i] * dt;
             const period = gfx._period ?? W;
             if (gfx.x <= -period) gfx.x += period;
         }

@@ -29,7 +29,8 @@ import { createAudioFilter, FFT_BINS } from './shaders/audioFilter.js';
 import { computeBands } from './audio/features.js';
 import { createParticleLayer } from './entities/ParticleLayer.js';
 import { createScenery } from './entities/Scenery.js';
-import { GROUND_OFFSET_PX, SCENERY } from './config.js';
+import { GROUND_OFFSET_PX, SCENERY, DT_CAP_S } from './config.js';
+import { resolveBudget, MAX_FILTER_DPR, TIER_ORDER } from './RenderProfile.js';
 
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const DEBUG_MODE = (() => {
@@ -48,6 +49,13 @@ let scenery = null;        // resultado de createScenery()
 let isPaused = false;
 let timeAccum = 0;         // segundos desde init — siempre avanza salvo pausa
 let worldSpeed = SCENERY.menuSpeed;  // px/s del scroll del scenery
+
+// --- Perfiles de render (Ola 1) ---
+let profileName = 'MENU';        // estado actual de la app
+let qualityTier = 'high';        // tier efectivo (auto-degradado o forzado)
+let qualityLocked = false;       // true si el user eligió tier a mano
+let budget = resolveBudget('MENU', 'high');
+let modalOpen = false;           // hay un <dialog open>: presupuesto de PAUSED
 
 // Layers expuestos a module-scope para que `getApi().getLayers()` pueda
 // devolver referencias estables sin filtrar internals.
@@ -129,6 +137,11 @@ export async function startEngine(mountTarget = document.body) {
     fitViewport();
     window.addEventListener('resize', fitViewport);
 
+    // Presupuesto inicial (MENU). Se aplica DESPUÉS de crear el filtro y la
+    // capa de partículas: `applyBudget` toca ambos.
+    applyBudget();
+    watchModals();
+
     // Pause/resume del ticker basado en el estado del AudioContext.
     // dispatch lo hace AudioEngine cuando recibe `onstatechange`.
     window.addEventListener('audio:pause', () => { isPaused = true; });
@@ -146,17 +159,164 @@ export async function startEngine(mountTarget = document.body) {
     return getApi();
 }
 
+/**
+ * Vigila si hay algún `<dialog open>` para bajar el presupuesto mientras un
+ * modal tapa la escena.
+ *
+ * Se hace con MutationObserver y no pidiendo a `modals.js` que avise porque
+ * así no hay nada que recordar: cualquier `<dialog>` que se abra en el futuro
+ * queda cubierto sin tocar el engine. `showModal()` además no dispara ningún
+ * evento de apertura, así que escuchar eventos no bastaría.
+ *
+ * El coste es nulo: solo se observa el atributo `open`, que cambia un puñado
+ * de veces por sesión.
+ */
+function watchModals() {
+    if (typeof MutationObserver === 'undefined') return;
+
+    const sync = () => {
+        const anyOpen = document.querySelector('dialog[open]') !== null;
+        if (anyOpen === modalOpen) return;
+        modalOpen = anyOpen;
+        applyBudget();
+    };
+
+    new MutationObserver(sync).observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['open'],
+    });
+    sync();
+}
+
+/**
+ * Traduce el presupuesto activo a ajustes concretos del renderer.
+ *
+ * Punto único donde un presupuesto se convierte en efecto: si mañana el
+ * presupuesto gana un campo, se cablea aquí y en ningún otro sitio.
+ */
+function applyBudget() {
+    // Un modal abierto congela el juego por detrás: no se mira, no se juega.
+    const effective = modalOpen && profileName === 'PLAYING' ? 'PAUSED' : profileName;
+    budget = resolveBudget(effective, qualityTier);
+
+    if (app) {
+        // maxFPS 0 = sin tope. Pixi interpreta 0 como "usa el rAF nativo".
+        app.ticker.maxFPS = budget.maxFPS;
+    }
+
+    if (audioFilter?.filter) {
+        // `resolution` del filtro es un multiplicador sobre la del render
+        // target. Se capa por MAX_FILTER_DPR porque un pase full-screen a 3×
+        // (móviles) cuesta 9 veces lo que a 1× sin diferencia visible en una
+        // escena de degradados.
+        const dpr = app?.renderer?.resolution ?? 1;
+        const capped = Math.min(dpr, MAX_FILTER_DPR) / (dpr || 1);
+        audioFilter.filter.resolution = Math.max(0.25, budget.filterResolution * capped);
+    }
+
+    if (particleLayer?.setActiveRatio) {
+        particleLayer.setActiveRatio(budget.particleRatio);
+    }
+}
+
+/**
+ * Cambia el perfil de render según el estado de la app.
+ * Lo llama `AppController.setState()`; no hay otro punto de entrada.
+ *
+ * @param {import('./RenderProfile.js').ProfileName} name
+ */
+export function setRenderProfile(name) {
+    if (name === profileName) return;
+    profileName = name;
+    applyBudget();
+}
+
+/**
+ * Fuerza un tier de calidad ('high' | 'medium' | 'low') o vuelve a 'auto'.
+ * Lo expone el modal AJUSTES. Elegir a mano desactiva el degradado automático:
+ * si el usuario pidió Alta explícitamente, bajarle la calidad por detrás sería
+ * ignorar su decisión.
+ *
+ * @param {'auto'|'high'|'medium'|'low'} tier
+ */
+export function setQualityTier(tier) {
+    if (tier === 'auto') {
+        qualityLocked = false;
+        qualityTier = 'high';   // el monitor volverá a bajar si hace falta
+    } else {
+        qualityLocked = true;
+        qualityTier = tier;
+    }
+    frameSamples = 0;
+    slowFrames = 0;
+    applyBudget();
+}
+
+/** Tier efectivo en uso — lo lee AJUSTES para mostrar qué está aplicando 'auto'. */
+export function getQualityTier() {
+    return { tier: qualityTier, locked: qualityLocked };
+}
+
+// --- Degradado automático de calidad ---
+//
+// Mide el tiempo de frame y baja un escalón si se sostiene por encima del
+// presupuesto. Cubre el riesgo del doc 06 §11 (GPU modesta) sin depender de
+// `hardwareConcurrency`, que miente en bastantes móviles: medir lo que pasa de
+// verdad es más fiable que inferirlo de las specs.
+//
+// La histéresis importa: se exige una racha larga de frames lentos para bajar,
+// y NUNCA se vuelve a subir solo. Oscilar entre tiers se ve peor que quedarse
+// en el bajo, y el usuario siempre puede forzar el que quiera desde AJUSTES.
+const SLOW_FRAME_MS = 24;        // ~40 fps; por debajo de eso se nota
+const SLOW_FRAMES_TO_DEGRADE = 90;
+const WARMUP_FRAMES = 120;       // ignora el arranque: compilar shaders da tirones
+let frameSamples = 0;
+let slowFrames = 0;
+
+function monitorPerformance(elapsedMs) {
+    if (qualityLocked) return;
+    frameSamples++;
+    if (frameSamples < WARMUP_FRAMES) return;
+
+    // Solo se vigila lo que se juega: en el menú, con tope de 30 fps, un frame
+    // "lento" es lo normal y no dice nada del hardware.
+    if (profileName !== 'PLAYING') { slowFrames = 0; return; }
+
+    if (elapsedMs > SLOW_FRAME_MS) slowFrames++;
+    else slowFrames = Math.max(0, slowFrames - 1);
+
+    if (slowFrames >= SLOW_FRAMES_TO_DEGRADE) {
+        const idx = TIER_ORDER.indexOf(qualityTier);
+        if (idx >= 0 && idx < TIER_ORDER.length - 1) {
+            qualityTier = TIER_ORDER[idx + 1];
+            console.info(`[engine] frames lentos sostenidos — bajando calidad a "${qualityTier}"`);
+            applyBudget();
+        }
+        slowFrames = 0;
+    }
+}
+
 function tick(ticker) {
     if (isPaused) return;
 
-    const dt = Math.min(1 / 20, ticker.deltaMS / 1000);
+    // Mismo cap que usa GameSession (Ola 0). Antes el engine capaba a 1/20 s y
+    // la GameSession a DT_CAP_S = 1/30 s sobre el MISMO frame: ante un tirón de
+    // 40 ms el mundo (suelo, nubes, partículas) avanzaba 40 ms mientras el Dino
+    // y los obstáculos avanzaban 33 ms. Un solo cap compartido mantiene mundo y
+    // jugador en la misma escala temporal.
+    const dt = Math.min(DT_CAP_S, ticker.deltaMS / 1000);
     timeAccum += dt;
+
+    monitorPerformance(ticker.deltaMS);
 
     // Energía de la canción para partículas (0 en idle/menú).
     let rms = 0;
 
-    // Scenery + motas: siempre vivos (salvo reduced motion).
-    if (!REDUCED_MOTION) {
+    // Scenery: vivo salvo reduced motion o presupuesto que lo congele
+    // (LOADING, PAUSED, modal abierto).
+    if (!REDUCED_MOTION && budget.sceneryAnimated) {
         scenery.tick(dt, worldSpeed);
     }
 
@@ -252,6 +412,9 @@ function getApi() {
         setWorldSpeed,
         setBeatPulse,
         setRenderPaused,
+        setRenderProfile,
+        setQualityTier,
+        getQualityTier,
         setAmbientDinoVisible,
         setAmbientDinoSkin,
         getCanvas: () => app?.canvas ?? null,

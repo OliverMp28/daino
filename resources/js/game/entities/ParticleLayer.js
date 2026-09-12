@@ -66,14 +66,49 @@ export function createParticleLayer(viewport, opts = {}) {
     }
 
     let t = 0;
+    // Cuántas motas del pool están montadas en el contenedor. Las que no lo
+    // están no se animan NI se suben a GPU (Ola 1).
+    let activeCount = motes.length;
+
+    /**
+     * Ajusta cuántas motas participan. El pool se crea una sola vez y las
+     * sobrantes se sacan del ParticleContainer en lugar de destruirse, así que
+     * subir y bajar de perfil no genera basura ni recoloca nada.
+     *
+     * Se quita/añade de verdad (no se limita a saltarlas en el bucle) porque
+     * el coste dominante no era el `Math.sin` sino `layer.update()`, que
+     * resube el buffer de posiciones ENTERO a la GPU cada frame: mientras la
+     * mota siga en el contenedor, se paga.
+     *
+     * @param {number} ratio  Fracción del pool a mantener activa, [0,1].
+     */
+    layer.setActiveRatio = (ratio) => {
+        if (motes.length === 0) return;
+        const target = Math.max(0, Math.min(motes.length, Math.round(motes.length * ratio)));
+        if (target === activeCount) return;
+
+        if (target < activeCount) {
+            for (let i = target; i < activeCount; i++) layer.removeParticle(motes[i].p);
+        } else {
+            for (let i = activeCount; i < target; i++) {
+                // Reentrar por abajo evita que aparezcan de golpe en mitad de
+                // la pantalla al subir de perfil.
+                motes[i].p.y = H + 4 + Math.random() * H * 0.5;
+                motes[i].p.x = Math.random() * W;
+                layer.addParticle(motes[i].p);
+            }
+        }
+        activeCount = target;
+    };
 
     layer.tick = (dt, energy) => {
-        if (motes.length === 0) return;
+        if (activeCount === 0) return;
         t += dt;
         // La energía de la canción multiplica la velocidad de ascenso (hasta
         // ×4 con RMS a tope) — en el menú (energy 0) flotan tranquilas.
         const boost = 1 + energy * 3;
-        for (const m of motes) {
+        for (let i = 0; i < activeCount; i++) {
+            const m = motes[i];
             m.p.y -= m.speed * boost * dt;
             m.p.x += Math.sin(t * 0.8 + m.phase) * m.drift * dt;
             if (m.p.y < -4) {

@@ -29,8 +29,8 @@ Tras retomar el proyecto y jugarlo, se abrió una segunda hoja de ruta que **atr
 
 | Ola | Estado | Resumen |
 |-----|--------|---------|
-| 0 — Quick wins | ⏳ Pendiente | Tabla de twiddle en la FFT (93 % del coste del análisis), `sampleRate` fijo, índice `is_public`, precarga del catálogo, 5 defectos menores |
-| 1 — Perfiles de render por estado | ⏳ Pendiente | Una sola escena, presupuesto declarativo por estado (`maxFPS`, `filter.resolution`, partículas). Tier adaptativo + selector de calidad |
+| 0 — Quick wins | ✅ Completa | Tabla de twiddle en la FFT (93 % del coste del análisis), `sampleRate` fijo, índice `is_public`, precarga del catálogo, 5 defectos menores |
+| 1 — Perfiles de render por estado | ✅ Completa | Una sola escena, presupuesto declarativo por estado (`maxFPS`, `filter.resolution`, partículas). Tier adaptativo + selector de calidad |
 | 2 — UX: menú y catálogo | ⏳ Pendiente | JUGAR abre el catálogo (rejilla de tarjetas), "Subir mi canción" como acción aparte. **Modifica el doc 06 §4.1** |
 | 3 — Chart + sincronía real | ⏳ Pendiente | **Bisagra.** Arregla el desfase de 3–7 s entre beat y obstáculo, define `chart.json` versionado, persistencia y caché en cliente |
 | 4 — Analizador en servidor | ⏳ Pendiente | Sidecar Python (`librosa`/`madmom`) en docker-compose. Análisis una vez al publicar; el jugador no analiza nunca. Catálogo oficial sembrado |
