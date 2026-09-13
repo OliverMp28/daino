@@ -35,7 +35,8 @@
         "migrate": "php scripts/migrate.php",
         "analyse": "phpstan analyse -l 6 app/",
         "clean:sessions": "php scripts/clean-sessions.php",
-        "test": "php tests/php/run.php"
+        "test": "php tests/php/run.php",
+        "seed:official": "php scripts/seed-official.php"
     },
     "minimum-stability": "stable",
     "prefer-stable": true

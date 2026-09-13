@@ -44,6 +44,44 @@ final class User
     }
 
     /**
+     * Perfiles públicos de varios usuarios en UNA consulta (para rankings y
+     * autores de niveles, sin N+1).
+     *
+     * @param list<int> $ids
+     * @return array<int, array{vout_id: string, username: string, avatar_url: ?string}>  indexado por id
+     */
+    public static function publicProfilesByIds(array $ids): array
+    {
+        $ids = array_values(array_unique($ids));
+        if ($ids === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = Database::getInstance()->prepare("SELECT id, vout_id, username, avatar_url FROM users WHERE id IN ({$in})");
+        $stmt->execute($ids);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(int) $row['id']] = [
+                'vout_id'    => (string) $row['vout_id'],
+                'username'   => (string) $row['username'],
+                'avatar_url' => $row['avatar_url'] === null ? null : (string) $row['avatar_url'],
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Forma pública del usuario: lo que el frontend puede mostrar. Nunca el id
+     * interno ni fechas.
+     *
+     * @return array{vout_id: string, username: string, avatar_url: ?string}
+     */
+    public function publicProfile(): array
+    {
+        return ['vout_id' => $this->voutId, 'username' => $this->username, 'avatar_url' => $this->avatarUrl];
+    }
+
+    /**
      * @param array{vout_id: string, username: string, avatar_url?: ?string} $data
      */
     public static function create(array $data): self

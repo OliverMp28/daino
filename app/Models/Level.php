@@ -19,17 +19,40 @@ use RuntimeException;
  * (`LIST_COLUMNS`) y el chart se lee aparte con `findChart()` cuando alguien va
  * a jugar. Un listado de 20 niveles pasaría de ~2 KB a ~800 KB si trajera los
  * blobs sin necesidad.
+ *
+ * Ola 2: niveles OFICIALES. Son del juego, no de una persona: `userId` es null,
+ * siempre están publicados y se identifican por `officialSlug` (la clave del
+ * manifiesto `database/seeds/official/manifest.json`). Los crea y actualiza
+ * `OfficialCatalogSeeder`; ningún endpoint los puede mutar (toda mutación
+ * compara `userId` con el usuario, y null no coincide con nadie).
  */
 final class Level
 {
     /** Columnas de metadata. Nunca incluir `chart_json` ni `analysis_json` aquí. */
     private const LIST_COLUMNS = 'id, user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
         difficulty, file_path, audio_sha256, generator_seed, is_public, chart_status, chart_version,
-        difficulty_ceiling, is_official, created_at, updated_at';
+        difficulty_ceiling, is_official, official_slug, created_at, updated_at';
+
+    /** Pestañas públicas del catálogo. */
+    public const SCOPE_OFFICIAL  = 'official';
+    public const SCOPE_COMMUNITY = 'community';
+    public const SCOPE_PUBLIC    = 'public';
+
+    /**
+     * WHERE y ORDER BY de cada pestaña pública. Los oficiales van de menos a
+     * más difícil: un jugador nuevo encuentra primero lo más asequible. Los de
+     * la comunidad, lo más reciente primero. Las dos primeras usan
+     * `idx_levels_catalog (is_official, is_public, created_at)`.
+     */
+    private const SCOPE_SQL = [
+        self::SCOPE_OFFICIAL  => ['is_official = TRUE AND is_public = TRUE', 'difficulty ASC, title ASC, id ASC'],
+        self::SCOPE_COMMUNITY => ['is_official = FALSE AND is_public = TRUE', 'created_at DESC, id DESC'],
+        self::SCOPE_PUBLIC    => ['is_public = TRUE', 'created_at DESC, id DESC'],
+    ];
 
     public function __construct(
         public readonly int $id,
-        public readonly int $userId,
+        public readonly ?int $userId,
         public string $title,
         public ?string $artist,
         public int $durationSec,
@@ -40,12 +63,13 @@ final class Level
         public int $difficulty,
         public ?string $filePath,
         public ?string $audioSha256,
-        public readonly string $generatorSeed,
+        public string $generatorSeed,
         public bool $isPublic,
         public string $chartStatus,
         public ?int $chartVersion,
         public ?int $difficultyCeiling,
         public bool $isOfficial,
+        public readonly ?string $officialSlug,
         public readonly string $createdAt,
         public string $updatedAt,
     ) {
@@ -62,6 +86,56 @@ final class Level
         $stmt->execute(['id' => $id]);
         $row = $stmt->fetch();
         return $row === false ? null : self::fromRow($row);
+    }
+
+    public static function findOfficialBySlug(string $slug): ?self
+    {
+        $stmt = Database::getInstance()->prepare('SELECT ' . self::LIST_COLUMNS . ' FROM levels WHERE official_slug = :slug');
+        $stmt->execute(['slug' => $slug]);
+        $row = $stmt->fetch();
+        return $row === false ? null : self::fromRow($row);
+    }
+
+    /**
+     * Página de una pestaña pública del catálogo.
+     *
+     * @param string $scope  Una de las constantes SCOPE_*.
+     * @return list<self>
+     */
+    public static function findByScope(string $scope, int $limit = 50, int $offset = 0): array
+    {
+        [$where, $order] = self::scopeSql($scope);
+        $stmt = Database::getInstance()->prepare(
+            'SELECT ' . self::LIST_COLUMNS . " FROM levels WHERE {$where} ORDER BY {$order} LIMIT :lim OFFSET :off",
+        );
+        $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+        $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
+        $stmt->execute();
+        return array_map(self::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * @param string $scope  Una de las constantes SCOPE_*.
+     */
+    public static function countByScope(string $scope): int
+    {
+        [$where] = self::scopeSql($scope);
+        $row = Database::getInstance()->query("SELECT COUNT(*) AS c FROM levels WHERE {$where}")->fetch();
+        return $row === false ? 0 : (int) $row['c'];
+    }
+
+    public static function isScope(string $scope): bool
+    {
+        return isset(self::SCOPE_SQL[$scope]);
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private static function scopeSql(string $scope): array
+    {
+        // Lista cerrada: el SQL nunca se construye con texto del cliente.
+        return self::SCOPE_SQL[$scope] ?? throw new \InvalidArgumentException("Scope de catálogo desconocido: {$scope}");
     }
 
     /**
@@ -99,14 +173,7 @@ final class Level
      */
     public static function findPublic(int $limit = 50, int $offset = 0): array
     {
-        $stmt = Database::getInstance()->prepare(
-            'SELECT ' . self::LIST_COLUMNS . ' FROM levels WHERE is_public = TRUE
-             ORDER BY created_at DESC LIMIT :lim OFFSET :off',
-        );
-        $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
-        $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
-        $stmt->execute();
-        return array_map(self::fromRow(...), $stmt->fetchAll());
+        return self::findByScope(self::SCOPE_PUBLIC, $limit, $offset);
     }
 
     public static function countByUser(int $userId): int
@@ -119,9 +186,7 @@ final class Level
 
     public static function countPublic(): int
     {
-        $stmt = Database::getInstance()->query('SELECT COUNT(*) AS c FROM levels WHERE is_public = TRUE');
-        $row = $stmt->fetch();
-        return $row === false ? 0 : (int) $row['c'];
+        return self::countByScope(self::SCOPE_PUBLIC);
     }
 
     /**
@@ -163,7 +228,7 @@ final class Level
 
     /**
      * @param array{
-     *     user_id: int,
+     *     user_id: ?int,
      *     title: string,
      *     artist?: ?string,
      *     duration_sec: int,
@@ -178,7 +243,9 @@ final class Level
      *     analysis_json?: ?string,
      *     chart_version?: ?int,
      *     file_path?: ?string,
-     *     is_public?: bool
+     *     is_public?: bool,
+     *     is_official?: bool,
+     *     official_slug?: ?string
      * } $data
      */
     public static function create(array $data): self
@@ -188,10 +255,10 @@ final class Level
         $stmt = $pdo->prepare(
             'INSERT INTO levels (user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
                                  difficulty, file_path, audio_sha256, generator_seed, is_public,
-                                 chart_json, analysis_json, chart_status, chart_version)
+                                 chart_json, analysis_json, chart_status, chart_version, is_official, official_slug)
              VALUES (:user_id, :title, :artist, :duration_sec, :duration_ms, :bpm, :bpm_exact, :game_speed,
                      :difficulty, :file_path, :audio_sha256, :generator_seed, :is_public,
-                     :chart_json, :analysis_json, :chart_status, :chart_version)',
+                     :chart_json, :analysis_json, :chart_status, :chart_version, :is_official, :official_slug)',
         );
         $stmt->execute([
             'user_id'        => $data['user_id'],
@@ -211,6 +278,8 @@ final class Level
             'analysis_json'  => $data['analysis_json'] ?? null,
             'chart_status'   => $chartJson !== null ? 'ready' : 'none',
             'chart_version'  => $chartJson !== null ? ($data['chart_version'] ?? null) : null,
+            'is_official'    => ($data['is_official'] ?? false) ? 1 : 0,
+            'official_slug'  => $data['official_slug'] ?? null,
         ]);
         $id = (int) $pdo->lastInsertId();
         $created = self::findById($id);
@@ -242,6 +311,66 @@ final class Level
         ]);
         $this->chartStatus = 'ready';
         $this->chartVersion = $chartVersion;
+    }
+
+    /**
+     * Actualiza la metadata mostrable de un nivel (no toca audio ni chart).
+     *
+     * @param array{title?: string, artist?: ?string, difficulty?: int, file_path?: ?string} $data
+     * @return bool  true si cambió algo.
+     */
+    public function updateMetadata(array $data): bool
+    {
+        $map = ['title' => 'title', 'artist' => 'artist', 'difficulty' => 'difficulty', 'file_path' => 'filePath'];
+        $sets = [];
+        $params = ['id' => $this->id];
+        foreach ($map as $column => $property) {
+            if (!array_key_exists($column, $data) || $data[$column] === $this->{$property}) {
+                continue;
+            }
+            $sets[] = "{$column} = :{$column}";
+            $params[$column] = $data[$column];
+        }
+        if ($sets === []) {
+            return false;
+        }
+        Database::getInstance()->prepare('UPDATE levels SET ' . implode(', ', $sets) . ' WHERE id = :id')->execute($params);
+        foreach ($map as $column => $property) {
+            if (array_key_exists($column, $params)) {
+                $this->{$property} = $data[$column];
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Sustituye a la vez el audio de un nivel y el chart que le corresponde.
+     * Nunca uno sin el otro: un chart solo vale para el audio con el que se
+     * generó. Lo usa el seed de oficiales con `--rechart`.
+     *
+     * @param array{audio_sha256: string, duration_sec: int, duration_ms: int, bpm: int, bpm_exact: float,
+     *              game_speed: int, generator_seed: string, chart_json: string, analysis_json: ?string,
+     *              chart_version: int} $data
+     */
+    public function replaceAudioAndChart(array $data): void
+    {
+        Database::getInstance()->prepare(
+            "UPDATE levels
+             SET audio_sha256 = :audio_sha256, duration_sec = :duration_sec, duration_ms = :duration_ms,
+                 bpm = :bpm, bpm_exact = :bpm_exact, game_speed = :game_speed, generator_seed = :generator_seed,
+                 chart_json = :chart_json, analysis_json = :analysis_json,
+                 chart_status = 'ready', chart_version = :chart_version
+             WHERE id = :id",
+        )->execute($data + ['id' => $this->id]);
+        $this->audioSha256 = $data['audio_sha256'];
+        $this->durationSec = $data['duration_sec'];
+        $this->durationMs = $data['duration_ms'];
+        $this->bpm = $data['bpm'];
+        $this->bpmExact = $data['bpm_exact'];
+        $this->gameSpeed = $data['game_speed'];
+        $this->generatorSeed = $data['generator_seed'];
+        $this->chartStatus = 'ready';
+        $this->chartVersion = $data['chart_version'];
     }
 
     /**
@@ -297,7 +426,7 @@ final class Level
     {
         return new self(
             id:                (int) $row['id'],
-            userId:            (int) $row['user_id'],
+            userId:            $row['user_id'] === null ? null : (int) $row['user_id'],
             title:             (string) $row['title'],
             artist:            $row['artist'] === null ? null : (string) $row['artist'],
             durationSec:       (int) $row['duration_sec'],
@@ -314,6 +443,7 @@ final class Level
             chartVersion:      $row['chart_version'] === null ? null : (int) $row['chart_version'],
             difficultyCeiling: $row['difficulty_ceiling'] === null ? null : (int) $row['difficulty_ceiling'],
             isOfficial:        (bool) $row['is_official'],
+            officialSlug:      $row['official_slug'] === null ? null : (string) $row['official_slug'],
             createdAt:         (string) $row['created_at'],
             updatedAt:         (string) $row['updated_at'],
         );

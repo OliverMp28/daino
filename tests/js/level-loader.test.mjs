@@ -77,7 +77,7 @@ test('catálogo, reintento inmediato: cero red, cero decodificación, cero anál
     const out = await loader.loadCatalog(catalogLevel(sha));
 
     assert.deepEqual(calls, { fetchAudio: 1, getJson: 1, decode: 1, analyze: 0 });
-    assert.deepEqual(out.fromCache, { decoded: true, audio: false, analysis: false, chart: true });
+    assert.deepEqual(out.fromCache, { decoded: true, audio: false, analysis: false, chart: true, prefetched: false });
 });
 
 test('catálogo tras recargar la página: audio y chart salen de la caché persistente', async () => {
@@ -91,7 +91,7 @@ test('catálogo tras recargar la página: audio y chart salen de la caché persi
     assert.equal(world.calls.fetchAudio, 1, 'sin segunda descarga');
     assert.equal(world.calls.getJson, 1, 'sin segunda petición del chart');
     assert.equal(world.calls.decode, 2, 'decodificar sí hace falta: el AudioBuffer no se persiste');
-    assert.deepEqual(out.fromCache, { decoded: false, audio: true, analysis: false, chart: true });
+    assert.deepEqual(out.fromCache, { decoded: false, audio: true, analysis: false, chart: true, prefetched: false });
 });
 
 test('una versión nueva del chart en el servidor invalida la cacheada', async () => {
@@ -169,13 +169,131 @@ test('el nivel ya no existe en el servidor: error not_found', async () => {
 test('una caché rota nunca impide jugar', async () => {
     const broken = {
         kind: 'broken',
-        getAudio: async () => null, putAudio: async () => {},
+        getAudio: async () => null, putAudio: async () => {}, hasAudio: async () => false,
         getAnalysis: async () => null, putAnalysis: async () => {},
         getChart: async () => null, putChart: async () => {},
     };
     const { sha, loader } = await makeWorld({ cache: broken });
     const out = await loader.loadCatalog(catalogLevel(sha));
     assert.ok(out.chart.events.length > 0);
+});
+
+// --------------------------- Ola 2 ---------------------------
+
+test('D11: nivel privado propio con su archivo — usa el chart guardado y guarda progreso', async () => {
+    const { sha, calls, loader, serverChart } = await makeWorld();
+    const privateLevel = catalogLevel(sha, { id: 42, title: 'Mi privada', is_public: false, has_audio: false });
+    const out = await loader.loadLocal(localFile(), { level: privateLevel });
+
+    assert.equal(out.levelId, 42, 'con levelId: el progreso se guarda en ESE nivel');
+    assert.equal(out.title, 'Mi privada', 'el título es el del nivel, no el del archivo');
+    assert.deepEqual(out.chart.events, serverChart.events, 'se juega exactamente el chart guardado');
+    assert.equal(calls.analyze, 0, 'con chart en el servidor no se analiza');
+    assert.equal(calls.fetchAudio, 0, 'el audio es el del jugador, no se descarga');
+});
+
+test('D11: elegir otro MP3 para un nivel privado se rechaza antes de decodificar', async () => {
+    const { calls, loader } = await makeWorld();
+    const privateLevel = catalogLevel('a'.repeat(64), { id: 42, title: 'Mi privada', is_public: false });
+    await assert.rejects(
+        loader.loadLocal(localFile(), { level: privateLevel }),
+        (err) => err instanceof LevelLoadError && err.code === 'audio_mismatch' && err.message.includes('Mi privada'),
+    );
+    assert.equal(calls.decode, 0);
+});
+
+test('D11: nivel privado sin chart en el servidor se genera con su seed', async () => {
+    const { sha, calls, loader } = await makeWorld();
+    const level = catalogLevel(sha, { id: 43, has_chart: false, chart_version: null, generator_seed: '99' });
+    const out = await loader.loadLocal(localFile(), { level });
+    assert.equal(calls.analyze, 1);
+    assert.equal(out.chart.seed, 99);
+});
+
+test('precarga al abrir la ficha: JUGAR se engancha a la descarga en curso, no la repite', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const world = await makeWorld();
+    const realFetch = world.deps.fetchAudio;
+    const loader = createLevelLoader({
+        ...world.deps,
+        async fetchAudio(url) { await gate; return realFetch(url); },
+    });
+    const level = catalogLevel(world.sha, { has_audio: true });
+
+    const prefetch = loader.prefetchCatalog(level);
+    assert.equal(loader.prefetchCatalog(level), prefetch, 'dos aperturas de la ficha: una sola precarga');
+    const stages = [];
+    const play = loader.loadCatalog(level, { onStage: (s, p) => stages.push([s, p]) });
+    release();
+    const out = await play;
+    await prefetch;
+
+    assert.equal(world.calls.fetchAudio, 1, 'una sola descarga');
+    assert.equal(world.calls.getJson, 1, 'un solo chart');
+    assert.equal(out.fromCache.prefetched, true);
+    assert.equal(out.fromCache.audio, true, 'el audio llega desde la caché que llenó la precarga');
+    assert.ok(stages.some(([s]) => s === LOAD_STAGE.DOWNLOADING), 'la carga enseña la descarga que está esperando');
+});
+
+test('precarga: no descarga lo que ya está en caché y no rompe si falla', async () => {
+    const world = await makeWorld();
+    const level = catalogLevel(world.sha, { has_audio: true });
+    await world.loader.loadCatalog(level);
+    const before = { ...world.calls };
+    await createLevelLoader(world.deps).prefetchCatalog(level);
+    assert.equal(world.calls.fetchAudio, before.fetchAudio, 'audio ya cacheado: sin red');
+
+    const failing = await makeWorld({ async fetchAudio() { throw new Error('offline'); } });
+    await assert.doesNotReject(failing.loader.prefetchCatalog(catalogLevel(failing.sha, { has_audio: true })));
+    await assert.doesNotReject(failing.loader.prefetchCatalog({ id: 1, has_audio: false }), 'sin audio publicado no hay nada que precargar');
+});
+
+test('precarga con decodificador aparte: JUGAR no descarga, ni decodifica, ni espera al chart', async () => {
+    const world = await makeWorld();
+    let detached = 0;
+    const loader = createLevelLoader({
+        ...world.deps,
+        async decodeDetached() { detached++; return { duration: 40, sampleRate: 44100 }; },
+    });
+    const level = catalogLevel(world.sha, { has_audio: true });
+    await loader.prefetchCatalog(level);
+    const out = await loader.loadCatalog(level);
+
+    assert.equal(detached, 1, 'decodificado durante la precarga');
+    assert.equal(world.calls.decode, 0, 'el decodificador del juego ni se toca');
+    assert.equal(world.calls.fetchAudio, 1);
+    assert.equal(world.calls.getJson, 1, 'el chart de la precarga quedó en caché');
+    assert.equal(out.fromCache.decoded, true);
+});
+
+test('precarga: hojear varias fichas solo decodifica la última abierta', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const world = await makeWorld();
+    const decodedShas = [];
+    const loader = createLevelLoader({
+        ...world.deps,
+        async fetchAudio(url) { await gate; return world.deps.fetchAudio(url); },
+        async decodeDetached() { decodedShas.push('x'); return { duration: 40, sampleRate: 44100 }; },
+    });
+    const a = loader.prefetchCatalog(catalogLevel(world.sha, { id: 1, has_audio: true }));
+    const b = loader.prefetchCatalog(catalogLevel(world.sha, { id: 2, has_audio: true }));
+    release();
+    await Promise.all([a, b]);
+    assert.equal(decodedShas.length, 1, 'la ficha 1 quedó atrás: su audio no se decodifica');
+});
+
+test('catálogo: el chart se pide a la vez que el audio, no después', async () => {
+    const order = [];
+    const world = await makeWorld();
+    const loader = createLevelLoader({
+        ...world.deps,
+        async fetchAudio(url) { order.push('audio:start'); const r = await world.deps.fetchAudio(url); order.push('audio:end'); return r; },
+        async getJson(p) { order.push('chart:start'); return world.deps.getJson(p); },
+    });
+    await loader.loadCatalog(catalogLevel(world.sha));
+    assert.ok(order.indexOf('chart:start') < order.indexOf('audio:end'), `orden: ${order.join(' → ')}`);
 });
 
 /** Mundo nuevo que comparte la caché (con el análisis) del resultado previo. */

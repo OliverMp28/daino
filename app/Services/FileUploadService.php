@@ -152,7 +152,12 @@ final class FileUploadService
      */
     public static function deleteLevelMp3(string $relativePath): void
     {
-        $abs = self::storageBase() . '/' . basename($relativePath);
+        // El audio de un nivel oficial es del catálogo, no de un usuario: ningún
+        // flujo de usuario puede borrarlo aunque llegara aquí por error.
+        if (self::isOfficialPath($relativePath)) {
+            return;
+        }
+        $abs = self::absolutePath($relativePath);
         if (is_file($abs)) {
             @unlink($abs);
         }
@@ -165,7 +170,7 @@ final class FileUploadService
      */
     public static function streamLevelMp3(string $relativePath, ?string $etag = null): void
     {
-        $abs = self::storageBase() . '/' . basename($relativePath);
+        $abs = self::absolutePath($relativePath);
         if (!is_file($abs)) {
             throw new RuntimeException("Archivo de level no existe: {$abs}");
         }
@@ -176,7 +181,9 @@ final class FileUploadService
         if (!headers_sent()) {
             header('Content-Type: audio/mpeg');
             header('Content-Length: ' . $size);
-            header('Content-Disposition: inline; filename="' . basename($abs) . '"');
+            // Nombre neutro: el del disco puede llevar comillas o acentos (los
+            // oficiales conservan el nombre original) y no aporta nada al cliente.
+            header('Content-Disposition: inline; filename="level.mp3"');
             header('Accept-Ranges: none');
             if ($etag !== null) {
                 // Con ETag (el hash del audio) el navegador revalida con un 304
@@ -205,6 +212,37 @@ final class FileUploadService
             throw new RuntimeException('No se pudo calcular el hash del archivo subido.');
         }
         return $hash;
+    }
+
+    /** Prefijo de `levels.file_path` para el audio de los niveles oficiales. */
+    public const OFFICIAL_PREFIX = 'official/';
+
+    public static function isOfficialPath(string $relativePath): bool
+    {
+        return str_starts_with($relativePath, self::OFFICIAL_PREFIX);
+    }
+
+    /**
+     * Ruta absoluta del audio de un nivel a partir de `levels.file_path`.
+     *
+     *   levels/12.mp3          → storage/uploads/levels/12.mp3   (subido por un usuario)
+     *   official/HOPE.mp3      → storage/official/HOPE.mp3       (catálogo de fábrica)
+     *
+     * Solo se usa el nombre final (`basename`): un `file_path` manipulado nunca
+     * puede salir de su directorio.
+     */
+    public static function absolutePath(string $relativePath): string
+    {
+        return self::isOfficialPath($relativePath)
+            ? self::officialDir() . '/' . basename($relativePath)
+            : self::storageBase() . '/' . basename($relativePath);
+    }
+
+    /** Directorio de los MP3 oficiales (gitignored: son pistas comerciales). */
+    public static function officialDir(): string
+    {
+        $root = defined('DAINO_ROOT') ? (string) DAINO_ROOT : (__DIR__ . '/../..');
+        return realpath($root) . '/storage/official';
     }
 
     private static function storageBase(): string

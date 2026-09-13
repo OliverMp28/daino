@@ -78,6 +78,8 @@ El juego tiene dos estados visibles, cambiados con una sola animación:
 > - **JUGAR** abre el **catálogo de niveles** (rejilla de tarjetas grandes, no panel lateral), no el selector de archivos.
 > - **"Subir mi canción"** pasa a ser una acción propia y explícita, separada visualmente, para que nadie pulse JUGAR y se encuentre un diálogo de archivos por sorpresa.
 > - El drag & drop sobre la ventana se mantiene como atajo.
+> - **NIVELES** deja de ser un botón del menú: su lista es la que ahora abre JUGAR.
+> - ✅ Implementado (Ola 2, `ui/menu.js` + `ui/catalog.js`). Menú final: JUGAR / SUBIR MI CANCIÓN / RANKING · PERFIL · AJUSTES.
 >
 > El resto de este apartado (shader activo, título centrado, avatar arriba-derecha, sin navbar ni footer) sigue vigente.
 - Esquina superior derecha: avatar + username (clic → perfil/logout).

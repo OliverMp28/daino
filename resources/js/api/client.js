@@ -14,7 +14,10 @@
 //   - El csrf_token también — viene en el mismo response que el access_token.
 //   - postMessage targetOrigin nunca "*" — eso lo cubre bridge.js, no aquí.
 
-import { isBridgeEmbedded, getAccessToken as getBridgeToken } from '../iframe/bridge.js';
+import { isBridgeEmbedded, onAuthToken as onBridgeToken } from '../iframe/bridge.js';
+
+/** Espera máxima al primer AUTH_TOKEN antes de dejar arrancar la UI en anónimo. */
+const BRIDGE_TOKEN_WAIT_MS = 5000;
 
 let accessToken = null;
 let csrfToken = null;
@@ -67,20 +70,22 @@ export function init() {
 
     initPromise = (async () => {
         if (isBridgeEmbedded()) {
-            // En iframe el AUTH_TOKEN llega via postMessage del parent. El
-            // bridge ya está escuchando y guarda el token internamente. Aquí
-            // lo leemos cuando el handshake esté listo (puede llegar tras
-            // el boot — el token podría ser null al principio).
-            //
-            // El bridge dispatcha 'message' interno al recibir AUTH_TOKEN;
-            // no expone evento DOM, así que polleamos brevemente.
-            const t = await waitForBridgeToken(5000);
-            if (t !== null) {
-                accessToken = t;
-                // user nulo en iframe — Vout ya muestra avatar/username en
-                // su chrome (doc 06 §7), no lo necesitamos en Daino.
-                emitAuthChange('login');
-            }
+            // En iframe el AUTH_TOKEN llega por postMessage del parent, en el
+            // arranque o más tarde, y otra vez en cada renovación. Cada token
+            // se traduce a identidad con GET /api/me (defecto D12: antes el
+            // usuario quedaba a null y embebido no existían "Mis niveles" ni el
+            // guardado de progreso). `init()` espera al primero hasta 5 s para
+            // que la UI arranque ya con sesión si llega a tiempo; uno tardío se
+            // procesa igual y emite `daino:auth:login` cuando llegue.
+            await new Promise((resolve) => {
+                const timer = setTimeout(resolve, BRIDGE_TOKEN_WAIT_MS);
+                onBridgeToken((token) => {
+                    void adoptBridgeToken(token).finally(() => {
+                        clearTimeout(timer);
+                        resolve();
+                    });
+                });
+            });
         } else {
             try {
                 const r = await fetch('/api/me/token', {
@@ -114,15 +119,28 @@ export function init() {
     return initPromise;
 }
 
-/** Espera hasta `timeoutMs` a que el bridge tenga AUTH_TOKEN. Devuelve null si timeout. */
-async function waitForBridgeToken(timeoutMs) {
-    const start = performance.now();
-    while (performance.now() - start < timeoutMs) {
-        const t = getBridgeToken();
-        if (t !== null) return t;
-        await new Promise((r) => setTimeout(r, 50));
+/**
+ * Adopta un access token entregado por Vout. La primera vez resuelve la
+ * identidad; en una renovación solo cambia el token.
+ *
+ * @param {string} token
+ */
+async function adoptBridgeToken(token) {
+    accessToken = token;
+    if (user !== null) {
+        emitAuthChange('token-refreshed');
+        return;
     }
-    return null;
+    const res = await doRequest('GET', '/api/me', {});
+    if (accessToken !== token) return;   // llegó otro token mientras tanto
+    if (res.ok && res.data?.user) {
+        setAuth({ access: token, csrf: csrfToken, exp: 0, userPayload: res.data.user });
+    } else {
+        // Token rechazado (caducado, otra audiencia, usuario borrado): se sigue
+        // jugando en anónimo hasta que Vout envíe uno válido.
+        console.warn('[client] el token de Vout no se aceptó:', res.status, res.data?.error);
+        accessToken = null;
+    }
 }
 
 /**
@@ -135,7 +153,9 @@ async function waitForBridgeToken(timeoutMs) {
  */
 export async function request(method, path, opts = {}) {
     const res = await doRequest(method, path, opts);
-    if (res.status === 401 && res.data?.must_refresh && !opts._retried) {
+    // Embebido no hay cookie de refresco (SameSite): el token nuevo lo manda
+    // Vout por postMessage. Intentar /auth/refresh fallaría y cerraría la sesión.
+    if (res.status === 401 && res.data?.must_refresh && !opts._retried && !isBridgeEmbedded()) {
         const refreshed = await tryRefresh();
         if (refreshed) {
             return request(method, path, { ...opts, _retried: true });
@@ -223,7 +243,7 @@ async function tryRefresh() {
  */
 export async function upload(path, formData) {
     const res = await doUpload(path, formData);
-    if (res.status === 401 && res.data?.must_refresh) {
+    if (res.status === 401 && res.data?.must_refresh && !isBridgeEmbedded()) {
         const refreshed = await tryRefresh();
         if (refreshed) {
             // FormData es reusable según spec — el reintento crea un nuevo

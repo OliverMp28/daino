@@ -31,9 +31,9 @@ Tras retomar el proyecto y jugarlo, se abrió una segunda hoja de ruta que **atr
 |-----|--------|---------|
 | 0 — Quick wins | ✅ Completa | Tabla de twiddle en la FFT (93 % del coste del análisis), `sampleRate` fijo, índice `is_public`, precarga del catálogo, 5 defectos menores |
 | 1 — Perfiles de render por estado | ✅ Completa | Una sola escena, presupuesto declarativo por estado (`maxFPS`, `filter.resolution`, partículas). Tier adaptativo + selector de calidad |
-| 2 — UX: menú y catálogo | ⏳ Pendiente | JUGAR abre el catálogo (rejilla de tarjetas), "Subir mi canción" como acción aparte. **Modifica el doc 06 §4.1** |
+| 2 — UX: menú y catálogo | ✅ Completa | JUGAR abre el catálogo (rejilla de tarjetas + ficha con ranking del nivel), "Subir mi canción" como acción aparte, 8 niveles oficiales horneados y sembrados, identidad y embebido en Vout arreglados (D12, D21). **Modifica el doc 06 §4.1** |
 | 3 — Chart + sincronía real | ✅ Completa | **Bisagra.** Arregla el desfase de 3–7 s entre beat y obstáculo, define `chart.json` versionado, persistencia y caché en cliente |
-| 4 — Analizador en servidor | ⏳ Pendiente | Sidecar Python (`librosa`/`madmom`) en docker-compose. Análisis una vez al publicar; el jugador no analiza nunca. Catálogo oficial sembrado |
+| 4 — Analizador en servidor | ⏳ Pendiente | Sidecar Python (`librosa`/`madmom`) en docker-compose. Análisis una vez al publicar; el jugador no analiza nunca. Re-hornear el catálogo oficial (ya sembrado en la Ola 2) con el analizador nuevo |
 | 5 — Charter musical | ⏳ Pendiente | Cuantización a rejilla de beats, patrones, curva de dificultad por secciones, validación de jugabilidad |
 | 6 — Vocabulario de juego ampliado | ⏳ Pendiente | Modos de movimiento en `physics.js`, eventos `mode`/`fx` del chart |
 | 7 — Overrides manuales y editor | ⏳ Pendiente | Capa de ediciones que sobrevive a regeneraciones + editor visual |

@@ -21,12 +21,32 @@ final class HomeController
 {
     public function index(Request $req): Response
     {
+        $voutOrigin = Env::string('VOUT_ORIGIN', '');
         $html = View::render('pages.home', [
             'title'       => 'Daino',
-            'voutOrigin'  => Env::string('VOUT_ORIGIN', ''),
+            'voutOrigin'  => $voutOrigin,
             'uploadMaxMb' => Env::int('UPLOAD_MAX_SIZE_MB', 10),
         ]);
 
-        return Response::html($html);
+        // Quién puede embeber Daino (Ola 2, defecto D21). Nginx envía
+        // `X-Frame-Options: SAMEORIGIN` a todo, y eso impedía que Vout —otro
+        // origen— mostrara el juego en su iframe: el modo embebido entero era
+        // inalcanzable. X-Frame-Options no admite listas de orígenes;
+        // `frame-ancestors` sí, y los navegadores que lo entienden ignoran
+        // X-Frame-Options cuando está presente (CSP nivel 2). Los que no lo
+        // entienden siguen protegidos por la cabecera de nginx.
+        return Response::html($html)
+            ->header('Content-Security-Policy', 'frame-ancestors ' . self::frameAncestors($voutOrigin));
+    }
+
+    /**
+     * `'self'` más el origen de Vout, solo si es un origen bien formado
+     * (esquema http/https + host + puerto opcional). Un valor raro en el .env
+     * nunca debe acabar inyectado en una cabecera.
+     */
+    public static function frameAncestors(string $voutOrigin): string
+    {
+        $isOrigin = preg_match('#^https?://[a-z0-9.-]+(:\d{1,5})?$#i', $voutOrigin) === 1;
+        return $isOrigin ? "'self' {$voutOrigin}" : "'self'";
     }
 }

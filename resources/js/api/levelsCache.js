@@ -1,117 +1,196 @@
-// Caché en memoria del listado de niveles (Ola 0, defecto D9).
+// Caché en memoria del catálogo de niveles (Olas 0 y 2).
 //
-// Problema que resuelve: `openLevelsModal()` abría el <dialog> y SOLO ENTONCES
-// lanzaba el fetch, así que el panel aparecía vacío con un "Cargando…" durante
-// 1-1.5 s en cada apertura, y cada cambio de pestaña volvía a pedir lo mismo.
+// Ola 0 (defecto D9): el listado se precalienta al montar el menú y se
+// reutiliza entre aperturas mientras siga fresco; así el catálogo pinta al
+// instante en vez de mostrar "Cargando…" 1-1.5 s en cada apertura.
 //
-// Aquí el listado se precalienta al montar el menú — mientras el jugador lee el
-// título y decide, la petición ya está en vuelo — y se reutiliza entre
-// aperturas mientras siga fresco.
-//
-// Por qué un módulo propio y no estado suelto dentro de `modals.js`: la Ola 2
-// reescribe la UI del catálogo por completo y la Ola 3 añade caché persistente
-// de charts y audio. Este módulo es el punto único donde vivirá esa política,
-// así que la UI no tiene que saber nada de cachés ni de invalidación.
+// Ola 2: una entrada por pestaña del catálogo (`official`, `community`, `mine`)
+// con paginación. La primera página se cachea; "cargar más" amplía la misma
+// entrada, de modo que reabrir el catálogo conserva lo que ya se había visto.
 //
 // Deliberadamente EN MEMORIA, no localStorage: el listado incluye niveles
-// privados del usuario y cambia al publicar o al cambiar de sesión. Persistirlo
-// entre recargas daría datos obsoletos a cambio de muy poco.
+// privados y la mejor marca del usuario, y cambia al publicar, al jugar o al
+// cambiar de sesión. Persistirlo entre recargas daría datos obsoletos a cambio
+// de muy poco. La invalidación vive aquí, en el dueño de la caché, para que
+// ningún consumidor pueda olvidarse de hacerla.
 
 import { request as apiRequest } from './client.js';
 
-/**
- * Cuánto se considera fresco un listado. 30 s cubre de sobra el patrón real
- * (abrir el modal, mirar, cerrar, volver a abrir) sin arriesgar que el usuario
- * deje de ver un nivel que acaba de publicar otra persona.
- */
+/** Frescura de una pestaña. Cubre abrir, mirar, cerrar y volver a abrir. */
 const TTL_MS = 30_000;
 
-/** @typedef {'public' | 'mine'} LevelsTab */
+/** Tamaño de página: una rejilla de 4 columnas × 6 filas en escritorio. */
+export const PAGE_SIZE = 24;
+
+/** @typedef {'official' | 'community' | 'mine'} CatalogTab */
+export const CATALOG_TABS = Object.freeze(['official', 'community', 'mine']);
+
+/**
+ * @typedef {Object} CatalogPage
+ * @property {object[]} items  Todos los niveles cargados hasta ahora, en orden.
+ * @property {number}   total  Total en el servidor.
+ */
 
 /**
  * @typedef {Object} CacheEntry
- * @property {number}            fetchedAt  `performance.now()` de la respuesta.
- * @property {object|null}       payload    Cuerpo de la respuesta si fue 2xx.
- * @property {object|null}       error      `{ status, message }` si falló.
- * @property {Promise<any>|null} inFlight   Petición en curso, para deduplicar.
+ * @property {number}                  fetchedAt
+ * @property {CatalogPage|null}        page
+ * @property {Promise<Result>|null}    inFlight
  */
 
-/** @type {Map<LevelsTab, CacheEntry>} */
+/** @typedef {{ ok: boolean, status: number, data: CatalogPage | null, error?: string }} Result */
+
+/** @type {Map<CatalogTab, CacheEntry>} */
 const cache = new Map();
 
-const PATHS = {
-    public: '/api/levels?limit=20',
-    mine: '/api/levels?mine=1&limit=20',
-};
-
 /**
- * Devuelve el listado de una pestaña, desde caché si sigue fresco.
+ * Página inicial de una pestaña, desde caché si sigue fresca.
  *
  * Deduplica peticiones concurrentes: si el precalentamiento sigue en vuelo
- * cuando el usuario abre el modal, ambos esperan a la MISMA promesa en vez de
- * disparar dos peticiones iguales.
+ * cuando el usuario abre el catálogo, ambos esperan a la MISMA promesa.
  *
- * @param {LevelsTab} tab
- * @param {{ force?: boolean }} [opts]  `force` salta la caché (tras publicar).
- * @returns {Promise<{ ok: boolean, status: number, data: any }>}
+ * @param {CatalogTab} tab
+ * @param {{ force?: boolean }} [opts]
+ * @returns {Promise<Result>}
  */
-export async function getLevels(tab, opts = {}) {
+export function getLevels(tab, opts = {}) {
+    assertTab(tab);
     const entry = cache.get(tab);
-
     if (!opts.force && entry) {
         if (entry.inFlight) return entry.inFlight;
-        const fresh = performance.now() - entry.fetchedAt < TTL_MS;
-        if (fresh && entry.error === null) {
-            return { ok: true, status: 200, data: entry.payload };
+        if (entry.page !== null && performance.now() - entry.fetchedAt < TTL_MS) {
+            return Promise.resolve({ ok: true, status: 200, data: entry.page });
         }
     }
 
-    const inFlight = apiRequest('GET', PATHS[tab]).then((res) => {
-        cache.set(tab, {
-            fetchedAt: performance.now(),
-            payload: res.ok ? res.data : null,
-            error: res.ok ? null : { status: res.status, message: res.data?.message },
-            inFlight: null,
-        });
+    const inFlight = fetchPage(tab, 0).then((res) => {
+        const current = cache.get(tab);
+        if (current?.inFlight !== inFlight) return res;   // invalidada mientras tanto
+        if (res.ok) {
+            cache.set(tab, { fetchedAt: performance.now(), page: res.data, inFlight: null });
+        } else {
+            // Un fallo no tira lo que ya se tenía: se sigue pudiendo enseñar.
+            current.inFlight = null;
+        }
         return res;
-    }).catch((err) => {
-        // Un fallo no debe dejar una promesa colgada en la caché para siempre.
-        cache.delete(tab);
-        throw err;
     });
+    cache.set(tab, { fetchedAt: entry?.fetchedAt ?? -Infinity, page: entry?.page ?? null, inFlight });
+    return inFlight;
+}
 
-    cache.set(tab, { fetchedAt: performance.now(), payload: null, error: null, inFlight });
+/**
+ * Carga la siguiente página y la añade a la entrada cacheada.
+ *
+ * @param {CatalogTab} tab
+ * @returns {Promise<Result>}  `data` es la página ACUMULADA.
+ */
+export async function loadMoreLevels(tab) {
+    assertTab(tab);
+    const entry = cache.get(tab);
+    if (!entry?.page) return getLevels(tab);
+    if (entry.inFlight) return entry.inFlight;
+
+    const offset = entry.page.items.length;
+    const inFlight = fetchPage(tab, offset).then((res) => {
+        const current = cache.get(tab);
+        if (current?.inFlight !== inFlight) return res;
+        if (!res.ok) {
+            current.inFlight = null;
+            return res;
+        }
+        // Un nivel nuevo publicado entre páginas desplaza el offset: se
+        // descartan los repetidos en vez de pintarlos dos veces.
+        const seen = new Set(current.page.items.map((l) => l.id));
+        const page = {
+            items: [...current.page.items, ...res.data.items.filter((l) => !seen.has(l.id))],
+            total: res.data.total,
+        };
+        cache.set(tab, { fetchedAt: current.fetchedAt, page, inFlight: null });
+        return { ok: true, status: res.status, data: page };
+    });
+    entry.inFlight = inFlight;
     return inFlight;
 }
 
 /**
  * Lanza la petición sin esperarla, para tenerla lista antes de que el usuario
- * abra el catálogo. Los errores se tragan a propósito: esto es especulativo y
- * no debe producir ruido ni rechazos sin capturar. Si falló, la apertura real
- * del modal reintentará y ahí sí se mostrará el error.
+ * abra el catálogo. Especulativo y silencioso.
  *
- * @param {LevelsTab} [tab]
+ * @param {CatalogTab} [tab]
  */
-export function prefetchLevels(tab = 'public') {
-    void getLevels(tab).catch(() => {});
+export function prefetchLevels(tab = 'official') {
+    void getLevels(tab);
+}
+
+/**
+ * Lo que haya cacheado para una pestaña, aunque ya no esté fresco. La UI lo
+ * pinta al instante mientras `getLevels` revalida (stale-while-revalidate): tras
+ * una partida el catálogo no vuelve a pasar por el esqueleto.
+ *
+ * @param {CatalogTab} tab
+ * @returns {CatalogPage|null}
+ */
+export function peekLevels(tab) {
+    return cache.get(tab)?.page ?? null;
+}
+
+/**
+ * Marca todas las pestañas como no frescas SIN borrarlas: la próxima lectura
+ * revalida, pero `peekLevels` sigue teniendo algo que enseñar.
+ */
+export function markLevelsStale() {
+    // -Infinity y no 0: `performance.now()` cuenta desde que cargó la página, así
+    // que durante sus primeros 30 s un 0 seguiría pareciendo fresco.
+    for (const entry of cache.values()) entry.fetchedAt = -Infinity;
 }
 
 /**
  * Invalida la caché. Sin argumento, la vacía entera.
- * Llamar tras publicar un nivel o al cambiar la sesión.
  *
- * @param {LevelsTab} [tab]
+ * @param {CatalogTab} [tab]
  */
 export function invalidateLevels(tab) {
     if (tab === undefined) cache.clear();
     else cache.delete(tab);
 }
 
-// Un cambio de identidad invalida ambos listados: "mine" pasa a ser de otra
-// persona (o deja de existir) y los públicos pueden mostrar acciones distintas
-// según haya sesión. Se registra aquí, en el dueño de la caché, y no en la UI:
-// así ningún consumidor futuro puede olvidarse de hacerlo.
+/**
+ * Sustituye un nivel en las pestañas cacheadas que lo contengan (p. ej. tras
+ * publicarlo), sin volver a pedir nada.
+ *
+ * @param {object} level
+ */
+export function patchCachedLevel(level) {
+    for (const entry of cache.values()) {
+        if (!entry.page) continue;
+        const i = entry.page.items.findIndex((l) => l.id === level.id);
+        if (i >= 0) entry.page.items[i] = { ...entry.page.items[i], ...level };
+    }
+}
+
+async function fetchPage(tab, offset) {
+    const res = await apiRequest('GET', `/api/levels?scope=${tab}&limit=${PAGE_SIZE}&offset=${offset}`);
+    if (!res.ok || !Array.isArray(res.data?.items)) {
+        return {
+            ok: false,
+            status: res.status,
+            data: null,
+            error: res.data?.message ?? (res.status === 0 ? 'Sin conexión con el servidor.' : `Error ${res.status}.`),
+        };
+    }
+    return { ok: true, status: res.status, data: { items: res.data.items, total: Number(res.data.total) || 0 } };
+}
+
+function assertTab(tab) {
+    if (!CATALOG_TABS.includes(tab)) throw new Error(`levelsCache: pestaña desconocida "${tab}"`);
+}
+
+// Un cambio de identidad BORRA todo: "mine" pasa a ser de otra persona y las
+// marcas de las tarjetas son de quien mira; enseñar lo anterior ni un instante
+// filtraría datos de la sesión previa. Tras guardar un progreso basta con
+// revalidar: lo cacheado sigue siendo del mismo usuario.
 if (typeof window !== 'undefined') {
     window.addEventListener('daino:auth:login', () => invalidateLevels());
     window.addEventListener('daino:auth:logout', () => invalidateLevels());
+    window.addEventListener('daino:progress-saved', () => markLevelsStale());
 }

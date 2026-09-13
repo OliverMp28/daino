@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"tests/js/*.test.mjs\""
+    "test": "node --test \"tests/js/*.test.mjs\"",
+    "bake:official": "node scripts/bake-official.mjs"
   },
   "dependencies": {
     "pixi.js": "^8.18.0"

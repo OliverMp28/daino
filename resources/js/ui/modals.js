@@ -7,19 +7,17 @@
 //   - createModal(id, { title, body, footer })  → instancia un <dialog> y lo
 //     monta en #modal-root. Idempotente: si ya existe el id, devuelve el viejo.
 //   - openProfileModal()      — hidrata desde client.getUser(). Si null, CTA login.
-//   - openLevelsModal()       — placeholder Bloque 7.
-//   - openRankingModal()      — placeholder Bloque 7.
-//   - openSettingsModal()     — funcional con localStorage (Lote D).
+//   - openRankingModal()      — ranking global.
+//   - openSettingsModal()     — funcional con localStorage.
+//   - openPauseModal()        — pausa centrada.
 //   - closeAllModals()        — cierra cualquier <dialog> abierto.
 //
-// Lote B implementa solo createModal + openProfileModal. Los demás openers
-// existen como stubs que ya pueden ser llamados (Lote D los completa).
+// El catálogo de niveles vive en `catalog.js` desde la Ola 2 (pantalla casi
+// completa, no un panel lateral).
 
-import { getUser, logout, isAuthenticated, request as apiRequest, upload as apiUpload } from '../api/client.js';
-import { getLevels, invalidateLevels } from '../api/levelsCache.js';
+import { getUser, logout, isAuthenticated, request as apiRequest } from '../api/client.js';
 import { isBridgeEmbedded } from '../iframe/bridge.js';
 import { renderAvatar } from './avatar.js';
-import { requestCatalogPlay } from './playRequests.js';
 import {
     getVolume, setVolume,
     getReduceEffects, setReduceEffects,
@@ -151,7 +149,7 @@ export function openProfileModal() {
         const note = document.createElement('p');
         note.style.fontSize = '0.9rem';
         note.style.opacity = '0.75';
-        note.textContent = 'Has iniciado sesión con Vout. Tu progreso global se guardará cuando se cablée el ranking (Bloque 7).';
+        note.textContent = 'Has iniciado sesión con Vout. Tus marcas se guardan y cuentan para el ranking.';
         body.appendChild(note);
     } else {
         // Anónimo — CTA login.
@@ -203,253 +201,6 @@ export function openProfileModal() {
         footer,
     });
     dialog.showModal();
-}
-
-// --------------------------- Modal: NIVELES ---------------------------
-
-/**
- * Niveles: tabs "Públicos" y "Mis niveles" (segunda solo con sesión).
- * Cada item con título / artist / BPM / dificultad. Los públicos tienen
- * botón "Jugar", que pide la partida (`requestCatalogPlay`); la descarga, la
- * caché y el chart los gestiona AppController. Mis privados tienen "Hacer
- * público" (sube el MP3 que el user tenga localmente; el servidor comprueba
- * que es el mismo audio con el que se generó el nivel).
- *
- * Loading state: aria-busy true durante el fetch. Error: mensaje rojo
- * inline. Sin spinner externo — el browser ya pinta el estado naturalmente.
- */
-export function openLevelsModal() {
-    const body = document.createElement('div');
-    body.className = 'daino-levels';
-
-    const tabs = document.createElement('div');
-    tabs.className = 'daino-levels__tabs';
-    tabs.setAttribute('role', 'tablist');
-
-    const publicTab = tabBtn('Públicos', 'public', true);
-    tabs.appendChild(publicTab);
-
-    let mineTab = null;
-    if (isAuthenticated()) {
-        mineTab = tabBtn('Mis niveles', 'mine', false);
-        tabs.appendChild(mineTab);
-    }
-
-    const list = document.createElement('div');
-    list.className = 'daino-levels__list';
-    list.setAttribute('role', 'tabpanel');
-
-    body.appendChild(tabs);
-    body.appendChild(list);
-
-    let activeTab = 'public';
-    const switchTab = async (tab) => {
-        activeTab = tab;
-        publicTab.classList.toggle('is-active', tab === 'public');
-        publicTab.setAttribute('aria-selected', String(tab === 'public'));
-        if (mineTab !== null) {
-            mineTab.classList.toggle('is-active', tab === 'mine');
-            mineTab.setAttribute('aria-selected', String(tab === 'mine'));
-        }
-        await loadLevels(list, tab, switchTab);
-    };
-
-    publicTab.addEventListener('click', () => { void switchTab('public'); });
-    if (mineTab !== null) {
-        mineTab.addEventListener('click', () => { void switchTab('mine'); });
-    }
-
-    const dialog = createModal('levels', { title: 'Niveles', body });
-    dialog.showModal();
-
-    // Carga inicial.
-    void switchTab(activeTab);
-}
-
-function tabBtn(label, key, active) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'daino-levels__tab' + (active ? ' is-active' : '');
-    b.dataset.tab = key;
-    b.dataset.interactive = 'true';
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', String(active));
-    b.textContent = label;
-    return b;
-}
-
-/**
- * Pinta N filas fantasma con la misma altura y estructura que una fila real.
- * Sustituye al texto "Cargando…" (defecto D9): el panel mantiene su forma
- * mientras llegan los datos, así que al aparecer las filas no hay salto de
- * layout. Marcadas `aria-hidden` porque el estado de carga ya lo comunica el
- * `aria-busy` del contenedor; que un lector de pantalla lea filas vacías sería
- * ruido.
- *
- * @param {HTMLElement} container
- * @param {number} count
- */
-function renderSkeletonRows(container, count = 4) {
-    for (let i = 0; i < count; i++) {
-        const row = document.createElement('div');
-        row.className = 'daino-levels__row daino-levels__row--skeleton';
-        row.setAttribute('aria-hidden', 'true');
-        const meta = document.createElement('div');
-        meta.className = 'daino-levels__meta';
-        const title = document.createElement('span');
-        title.className = 'daino-levels__skeleton-bar';
-        const sub = document.createElement('span');
-        sub.className = 'daino-levels__skeleton-bar daino-levels__skeleton-bar--sub';
-        meta.append(title, sub);
-        row.appendChild(meta);
-        container.appendChild(row);
-    }
-}
-
-async function loadLevels(container, tab, switchTab, opts = {}) {
-    container.innerHTML = '';
-    container.setAttribute('aria-busy', 'true');
-    renderSkeletonRows(container);
-
-    // Pasa por la caché: si el menú ya precalentó la lista, esto resuelve en el
-    // mismo tick y el esqueleto ni llega a verse.
-    const res = await getLevels(tab, { force: opts.force === true });
-    container.removeAttribute('aria-busy');
-    container.innerHTML = '';
-
-    if (!res.ok) {
-        const err = document.createElement('p');
-        err.className = 'daino-levels__error';
-        err.textContent = `Error ${res.status}: ${res.data?.message ?? 'no se pudo cargar la lista'}.`;
-        container.appendChild(err);
-        return;
-    }
-
-    const items = res.data?.items ?? [];
-    if (items.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'daino-levels__empty';
-        empty.textContent = tab === 'mine'
-            ? 'Aún no has creado ningún nivel. Suelta un MP3 en el menú para empezar.'
-            : 'Aún no hay niveles públicos. Sé el primero — sube tu MP3 desde "Mis niveles".';
-        container.appendChild(empty);
-        return;
-    }
-
-    for (const lvl of items) {
-        container.appendChild(renderLevelRow(lvl, tab, switchTab));
-    }
-}
-
-function renderLevelRow(level, tab, switchTab) {
-    const row = document.createElement('article');
-    row.className = 'daino-levels__row';
-
-    const meta = document.createElement('div');
-    meta.className = 'daino-levels__meta';
-    const title = document.createElement('strong');
-    title.textContent = level.title;
-    meta.appendChild(title);
-    const sub = document.createElement('span');
-    sub.className = 'daino-levels__sub';
-    const parts = [];
-    if (level.artist) parts.push(level.artist);
-    if (level.bpm) parts.push(`${level.bpm} BPM`);
-    parts.push(`Dif. ${level.difficulty}`);
-    parts.push(`${Math.round(level.duration_sec)}s`);
-    sub.textContent = parts.join(' · ');
-    meta.appendChild(sub);
-
-    const actions = document.createElement('div');
-    actions.className = 'daino-levels__actions';
-
-    if (level.is_public) {
-        const playBtn = document.createElement('button');
-        playBtn.type = 'button';
-        playBtn.className = 'daino-btn daino-btn--primary';
-        playBtn.dataset.interactive = 'true';
-        playBtn.textContent = 'Jugar';
-        playBtn.addEventListener('click', () => {
-            // Ola 3: el modal solo PIDE la partida. AppController cierra los
-            // modales, muestra la carga con su progreso real (descarga,
-            // análisis si hace falta) y gestiona los errores. Así el audio y el
-            // chart pasan por la caché, y un segundo intento no descarga nada.
-            requestCatalogPlay(level);
-        });
-        actions.appendChild(playBtn);
-    } else if (tab === 'mine') {
-        const publishBtn = document.createElement('button');
-        publishBtn.type = 'button';
-        publishBtn.className = 'daino-btn';
-        publishBtn.dataset.interactive = 'true';
-        publishBtn.textContent = 'Hacer público';
-        publishBtn.addEventListener('click', async () => {
-            await publishLevel(level, publishBtn, switchTab);
-        });
-        actions.appendChild(publishBtn);
-    }
-
-    row.appendChild(meta);
-    row.appendChild(actions);
-    return row;
-}
-
-async function publishLevel(level, btn, switchTab) {
-    // Pedir un MP3 al user (puede ser el mismo que generó el nivel local).
-    const file = await new Promise((resolve) => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'audio/mpeg,.mp3';
-        input.onchange = (e) => resolve(e.target.files[0] ?? null);
-        input.oncancel = () => resolve(null);
-        input.click();
-    });
-    if (file === null) return;
-
-    btn.disabled = true;
-    const original = btn.textContent;
-    btn.textContent = 'Subiendo…';
-
-    const fd = new FormData();
-    fd.append('file', file);
-    const res = await apiUpload(`/api/levels/${level.id}/upload`, fd);
-
-    if (res.ok) {
-        btn.textContent = 'Publicado';
-        // Publicar cambia AMBOS listados: el nivel pasa a público en "Mis
-        // niveles" y aparece en "Públicos". Invalidamos los dos para que la
-        // caché no sirva la versión previa dentro de su ventana de frescura.
-        invalidateLevels();
-        await switchTab('mine');
-    } else if (res.status === 409) {
-        btn.disabled = false;
-        btn.textContent = original;
-        showInlineError(btn, 'Ya tienes un nivel público con ese título.');
-    } else if (res.status === 413) {
-        btn.disabled = false;
-        btn.textContent = original;
-        showInlineError(btn, 'Archivo demasiado grande.');
-    } else if (res.status === 422) {
-        btn.disabled = false;
-        btn.textContent = original;
-        const fields = res.data?.fields ?? {};
-        const msg = fields.file ?? 'Validación falló.';
-        showInlineError(btn, msg);
-    } else {
-        btn.disabled = false;
-        btn.textContent = original;
-        showInlineError(btn, `Error ${res.status}.`);
-    }
-}
-
-function showInlineError(anchor, message) {
-    const existing = anchor.parentElement?.querySelector('.daino-levels__inline-error');
-    if (existing) existing.remove();
-    const err = document.createElement('span');
-    err.className = 'daino-levels__inline-error';
-    err.textContent = message;
-    anchor.parentElement?.appendChild(err);
-    setTimeout(() => err.remove(), 4000);
 }
 
 // --------------------------- Modal: RANKING ---------------------------
@@ -760,7 +511,7 @@ export function openSettingsModal(opts = {}) {
     clearBtn.textContent = 'Borrar';
     clearBtn.disabled = keys.length === 0;
     clearBtn.addEventListener('click', () => {
-        const sure = window.confirm('¿Borrar todos los datos locales de Daino? Esto incluye volumen y preferencias.');
+        const sure = window.confirm('¿Borrar todos los datos locales de Daino? Esto incluye volumen, preferencias y las marcas guardadas sin sesión.');
         if (!sure) return;
         const removed = clearAll();
         clearNote.textContent = `Borradas ${removed} entradas. Recarga para aplicar valores por defecto.`;

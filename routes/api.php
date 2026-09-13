@@ -53,11 +53,15 @@ $router->group(['prefix' => '/api'], static function (Router $r): void {
         $r->get('/levels',           'Api\\LevelApiController@index');
         $r->get('/levels/{id}',       'Api\\LevelApiController@show');
         $r->get('/levels/{id}/chart', 'Api\\LevelApiController@chart');
+        $r->get('/levels/{id}/ranking', 'Api\\LevelApiController@ranking');
         $r->get('/levels/{id}/file',  'Api\\LevelApiController@streamFile');
     });
 
     // -------- Mutación + lectura privada (Bearer obligatorio) --------
     $r->group(['middleware' => [AuthMiddleware::class]], static function (Router $r): void {
+        // Identidad del Bearer: la usa el modo iframe, donde no hay cookie de sesión.
+        $r->get('/me', 'Api\\MeApiController@show');
+
         $r->post('/progress', 'Api\\ProgressApiController@store');
 
         $r->post('/levels',                  'Api\\LevelApiController@store');

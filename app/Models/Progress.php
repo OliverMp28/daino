@@ -68,6 +68,104 @@ final class Progress
         return $row;
     }
 
+    /**
+     * Mejor marca de un usuario en cada nivel de una página del catálogo, en
+     * UNA consulta (sin N+1 por tarjeta).
+     *
+     * @param list<int> $levelIds
+     * @return array<int, array{points: int, percentage: int}>  indexado por level_id
+     */
+    public static function bestForUserOnLevels(int $userId, array $levelIds): array
+    {
+        if ($levelIds === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($levelIds), '?'));
+        $stmt = Database::getInstance()->prepare(
+            "SELECT level_id, points, percentage FROM progress WHERE user_id = ? AND level_id IN ({$in})",
+        );
+        $stmt->execute([$userId, ...$levelIds]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(int) $row['level_id']] = ['points' => (int) $row['points'], 'percentage' => (int) $row['percentage']];
+        }
+        return $out;
+    }
+
+    /**
+     * Jugadores distintos con marca guardada en cada nivel, en una consulta.
+     * (Una fila de `progress` por usuario y nivel ⇒ COUNT = jugadores.)
+     *
+     * @param list<int> $levelIds
+     * @return array<int, int>  indexado por level_id; los niveles sin jugadores no aparecen
+     */
+    public static function playerCounts(array $levelIds): array
+    {
+        if ($levelIds === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($levelIds), '?'));
+        $stmt = Database::getInstance()->prepare(
+            "SELECT level_id, COUNT(*) AS players FROM progress WHERE level_id IN ({$in}) GROUP BY level_id",
+        );
+        $stmt->execute($levelIds);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(int) $row['level_id']] = (int) $row['players'];
+        }
+        return $out;
+    }
+
+    /**
+     * Mejores marcas de un nivel. Empate a puntos: gana quien lo logró antes.
+     * Usa `idx_progress_level_points (level_id, points)`.
+     *
+     * @return list<self>
+     */
+    public static function topForLevel(int $levelId, int $limit = 10): array
+    {
+        $stmt = Database::getInstance()->prepare(
+            'SELECT * FROM progress WHERE level_id = :level_id
+             ORDER BY points DESC, best_run_at ASC, id ASC LIMIT :lim',
+        );
+        $stmt->bindValue(':level_id', $levelId, \PDO::PARAM_INT);
+        $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+        $stmt->execute();
+        return array_map(self::fromRow(...), $stmt->fetchAll());
+    }
+
+    /**
+     * Posición de una marca dentro de su nivel, con el mismo criterio de orden
+     * que `topForLevel` (1 = primero).
+     */
+    public function rankOnLevel(): int
+    {
+        $stmt = Database::getInstance()->prepare(
+            'SELECT COUNT(*) AS ahead FROM progress
+             WHERE level_id = :level_id
+               AND (points > :points
+                    OR (points = :points2 AND (best_run_at < :at OR (best_run_at = :at2 AND id < :id))))',
+        );
+        $stmt->execute([
+            'level_id' => $this->levelId,
+            'points'   => $this->points,
+            'points2'  => $this->points,
+            'at'       => $this->bestRunAt,
+            'at2'      => $this->bestRunAt,
+            'id'       => $this->id,
+        ]);
+        $row = $stmt->fetch();
+        return ($row === false ? 0 : (int) $row['ahead']) + 1;
+    }
+
+    public static function countForLevel(int $levelId): int
+    {
+        $stmt = Database::getInstance()->prepare('SELECT COUNT(*) AS c FROM progress WHERE level_id = :level_id');
+        $stmt->execute(['level_id' => $levelId]);
+        $row = $stmt->fetch();
+        return $row === false ? 0 : (int) $row['c'];
+    }
+
     public function delete(): void
     {
         $stmt = Database::getInstance()->prepare('DELETE FROM progress WHERE id = :id');

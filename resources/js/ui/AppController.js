@@ -12,6 +12,7 @@
 //
 // Eventos consumidos:
 //   - 'daino:play-request'  Alguien pidió jugar (ui/playRequests.js) → LOADING.
+//   - 'daino:prefetch-request'  Se abrió la ficha de un nivel: precarga (Ola 2).
 //   - 'daino:gamestate'     GameSession terminó (win/collision/stopped) → MENU.
 //
 // Ola 3: la preparación de la partida la hace `levelLoader`, que decide qué
@@ -24,14 +25,18 @@ import { readSeedFromUrl } from '../game/levels/Seed.js';
 import { createLevelLoader, LevelLoadError, LOAD_STAGE } from '../game/levels/levelLoader.js';
 import { analyzeAudio } from '../game/levels/analyze.js';
 import { buildChart } from '../game/levels/charter.js';
+import { chartStats, difficultyFromStats } from '../game/levels/chartStats.js';
 import { GameSession } from '../game/GameSession.js';
 import { getAudioEngine } from '../game/audio/sharedEngine.js';
+import { ANALYSIS_SAMPLE_RATE } from '../game/audio/AudioEngine.js';
 import { createLevelCache } from '../storage/levelCache.js';
 import { sha256Hex } from '../storage/hash.js';
+import { createLocalBests } from '../storage/localBests.js';
 import * as menu from './menu.js';
 import { fadeOverlay } from './transitions.js';
 import { closeAllModals, openSettingsModal, openPauseModal } from './modals.js';
-import { PLAY_REQUEST_EVENT } from './playRequests.js';
+import { openCatalog } from './catalog.js';
+import { PLAY_REQUEST_EVENT, PREFETCH_REQUEST_EVENT } from './playRequests.js';
 import { showToast } from './toast.js';
 import { Input } from '../game/systems/input.js';
 import { getUser, request as apiRequest } from '../api/client.js';
@@ -46,9 +51,6 @@ const STATE = Object.freeze({
     GAME_OVER: 'GAME_OVER',
 });
 
-/** Dificultad por defecto hasta que la elija quien sube la canción (Olas 4-5, defecto D6). */
-const DEFAULT_DIFFICULTY = 3;
-
 let state = STATE.MENU;
 let engineApi = null;
 let activeSession = null;
@@ -57,6 +59,15 @@ let onPlayRequest = null;
 let onGameState = null;
 let onPause = null;
 let loader = null;
+let onPrefetch = null;
+const localBests = createLocalBests();
+
+/**
+ * Id del nivel del catálogo que se está jugando (null en una canción local sin
+ * guardar). Al terminar, la marca se recuerda en el navegador para enseñarla en
+ * la tarjeta aunque no haya sesión (Ola 2).
+ */
+let playingLevelId = null;
 
 /**
  * Número de la petición de partida vigente. Si llega otra mientras la
@@ -76,6 +87,13 @@ export function start(cfg) {
         fetchAudio: (url) => fetch(url, { credentials: 'same-origin' }),
         getJson: (path) => apiRequest('GET', path),
         decode: (bytes) => getAudioEngine().decode(bytes),
+        // La precarga decodifica sin tocar el AudioContext del juego: crearlo o
+        // reanudarlo fuera de un gesto del usuario lo dejaría suspendido. Un
+        // AudioBuffer no está atado a su contexto, así que el de un
+        // OfflineAudioContext al mismo rate se reproduce igual.
+        decodeDetached: typeof OfflineAudioContext === 'function'
+            ? (bytes) => new OfflineAudioContext(2, 1, ANALYSIS_SAMPLE_RATE).decodeAudioData(bytes)
+            : undefined,
         analyze: (audioBuffer, opts) => analyzeAudio(audioBuffer, opts),
         buildChart,
         hash: sha256Hex,
@@ -93,6 +111,13 @@ export function start(cfg) {
     onGameState = (ev) => { handleGameState(ev); };
     window.addEventListener(PLAY_REQUEST_EVENT, onPlayRequest);
     window.addEventListener('daino:gamestate', onGameState);
+
+    // Abrir la ficha de un nivel es intención de jugarlo: su audio y su chart
+    // se van descargando para que JUGAR arranque sin esperar a la red.
+    onPrefetch = (ev) => {
+        if (state === STATE.MENU && ev.detail?.level) void loader.prefetchCatalog(ev.detail.level);
+    };
+    window.addEventListener(PREFETCH_REQUEST_EVENT, onPrefetch);
 
     // ESC durante partida → pausa explícita.
     onPause = () => handlePauseRequested();
@@ -116,9 +141,11 @@ export function start(cfg) {
 export function dispose() {
     if (onPlayRequest) window.removeEventListener(PLAY_REQUEST_EVENT, onPlayRequest);
     if (onGameState) window.removeEventListener('daino:gamestate', onGameState);
+    if (onPrefetch) window.removeEventListener(PREFETCH_REQUEST_EVENT, onPrefetch);
     if (onPause) Input.off('pause', onPause);
     onPlayRequest = null;
     onGameState = null;
+    onPrefetch = null;
     onPause = null;
     if (activeSession) {
         try { activeSession.stop(); } catch { /* ignore */ }
@@ -146,7 +173,8 @@ export function getActiveAudioEngine() {
 // --------------------------- Handlers ---------------------------
 
 /**
- * @param {{ source: 'local', file: File } | { source: 'catalog', level: object }} request
+ * @param {{ source: 'local', file: File, level?: object | null } | { source: 'catalog', level: object }} request
+ *        `local` con `level`: nivel privado propio jugado con su archivo (D11).
  */
 async function handlePlayRequest(request) {
     if (request?.source !== 'local' && request?.source !== 'catalog') return;
@@ -185,16 +213,31 @@ async function handlePlayRequest(request) {
 
     try {
         loaded = request.source === 'local'
-            ? await loader.loadLocal(request.file, { onStage, seed: readSeedFromUrl() ?? undefined })
+            ? await loader.loadLocal(request.file, {
+                onStage,
+                seed: readSeedFromUrl() ?? undefined,
+                level: request.level ?? undefined,
+            })
             : await loader.loadCatalog(request.level, { onStage });
     } catch (err) {
         if (renderPaused) engineApi.setRenderPaused(false);
         if (seq !== playRequestSeq) return;
-        console.error('[AppController] no se pudo preparar la partida:', err);
+        if (err instanceof LevelLoadError) {
+            // Error esperado y explicado al jugador (otro MP3, nivel retirado):
+            // no es un fallo del programa.
+            console.warn('[AppController] no se pudo preparar la partida:', err.code, err.message);
+        } else {
+            console.error('[AppController] no se pudo preparar la partida:', err);
+        }
         hideHint();
-        showToast(err instanceof LevelLoadError ? err.message : 'No se pudo preparar el nivel. Inténtalo de nuevo.');
         menu.setVisible(true);
         setState(STATE.MENU);
+        // Si venía de la ficha de un nivel, se vuelve a ella: el jugador puede
+        // elegir el archivo correcto sin tener que buscar el nivel otra vez.
+        if (request.level) openCatalog({ tab: request.level.is_mine ? 'mine' : undefined, level: request.level });
+        // DESPUÉS de abrir el catálogo: la top layer apila por orden de
+        // apertura, y un aviso abierto antes quedaría debajo del diálogo.
+        showToast(err instanceof LevelLoadError ? err.message : 'No se pudo preparar el nivel. Inténtalo de nuevo.');
         return;
     }
     if (renderPaused) engineApi.setRenderPaused(false);
@@ -245,6 +288,7 @@ async function handlePlayRequest(request) {
                 skinId: getSkin(),
             });
             activeSession.start();
+            playingLevelId = loaded.levelId;
             setState(STATE.PLAYING);
         },
     });
@@ -267,7 +311,9 @@ async function persistLocalLevel(loaded) {
             body: {
                 title: loaded.title.slice(0, 120),
                 audio_sha256: loaded.sha256,
-                difficulty: DEFAULT_DIFFICULTY,
+                // Dificultad MEDIDA del chart (Ola 2) hasta que la elija quien
+                // sube la canción (Olas 4-5, defecto D6).
+                difficulty: difficultyFromStats(chartStats(loaded.chart)),
                 generator_seed: String(loaded.chart.seed),
                 chart: loaded.chart,
                 analysis: loaded.analysis ?? undefined,
@@ -329,11 +375,17 @@ function handlePauseRequested() {
 }
 
 function handleGameState(ev) {
-    const { kind, score } = ev.detail ?? {};
+    const { kind, score, percentage } = ev.detail ?? {};
     if (kind !== 'win' && kind !== 'collision' && kind !== 'stopped') return;
 
     // Guard de re-entry: solo si veníamos de PLAYING o PAUSED.
     if (state !== STATE.PLAYING && state !== STATE.PAUSED) return;
+
+    // 'stopped' (salir desde la pausa) no es un intento real, igual que en el
+    // servidor. Anónimo o no, la marca se recuerda para la tarjeta del nivel.
+    if (playingLevelId !== null && kind !== 'stopped') {
+        localBests.record(playingLevelId, { points: score ?? 0, percentage: percentage ?? 0 });
+    }
 
     setState(STATE.GAME_OVER);
     void transitionToMenu(score, kind);
@@ -357,6 +409,7 @@ async function transitionToMenu(score, kind) {
             // Shader a modo idle.
             engineApi.detachAudio();
             lastAudioEngine = null;
+            playingLevelId = null;
 
             closeAllModals();
             menu.setVisible(true);
@@ -370,7 +423,7 @@ async function transitionToMenu(score, kind) {
     if (kind === 'win') {
         showToast(`¡Nivel completado! Puntuación ${score}`, 'info');
     } else if (kind === 'collision') {
-        showToast(`Puntuación ${score} — elige un nivel o suelta un MP3 para volver a jugar`, 'info');
+        showToast(`Puntuación ${score} — pulsa JUGAR para intentarlo otra vez`, 'info');
     }
 }
 

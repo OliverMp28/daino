@@ -418,21 +418,27 @@ export class GameSession {
         // (sesión activa). 'stopped' NO persiste — pulsar "Salir al menú" no
         // debería contar como un intento real. La UI no espera la respuesta;
         // si falla, log a consola — el toast del menú ya muestra el score.
-        if (this.levelId !== null && (reason === 'win' || reason === 'collision')) {
-            const reached = this._finalSongTime || Math.max(0, this.audioEngine.getSongTime());
-            const percentage = this._durationSec > 0
-                ? Math.min(100, Math.max(0, Math.round((reached / this._durationSec) * 100)))
-                : 0;
+        const reached = this._finalSongTime || Math.max(0, this.audioEngine.getSongTime());
+        const percentage = this._durationSec > 0
+            ? Math.min(100, Math.max(0, Math.round((reached / this._durationSec) * 100)))
+            : 0;
+        const levelId = this.levelId;
+        if (levelId !== null && (reason === 'win' || reason === 'collision')) {
             apiRequest('POST', '/api/progress', {
                 body: {
-                    level_id: this.levelId,
+                    level_id: levelId,
                     percentage,
                     points: this._score,
                 },
             }).then((res) => {
                 if (!res.ok) {
                     console.warn('[GameSession] POST /api/progress falló:', res.status, res.data);
+                    return;
                 }
+                // Ola 2: la marca y los jugadores del catálogo pueden haber
+                // cambiado. Se avisa DESPUÉS de guardar para que quien revalide
+                // no lea el estado anterior.
+                window.dispatchEvent(new CustomEvent('daino:progress-saved', { detail: { levelId } }));
             }).catch((err) => {
                 console.warn('[GameSession] POST /api/progress error:', err);
             });
@@ -441,8 +447,9 @@ export class GameSession {
         // Bloque 6: dispatch desacoplado para que el AppController orqueste
         // la transición a MENU sin acoplarse al callback. `onGameOver` se
         // mantiene como fallback para callers que prefieran el camino directo.
+        // `percentage` (Ola 2): la mejor marca local de los jugadores sin sesión.
         window.dispatchEvent(new CustomEvent('daino:gamestate', {
-            detail: { kind: reason, score: this._score, durationSec: this._durationSec },
+            detail: { kind: reason, score: this._score, percentage, durationSec: this._durationSec },
         }));
 
         this.onGameOver({ reason, score: this._score });

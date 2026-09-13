@@ -19,10 +19,11 @@ import { showToast } from './toast.js';
 
 const META_UPLOAD_MAX = 'daino:upload-max-mb';
 
-function readUploadMaxBytes() {
+/** Tamaño máximo de MP3 que admite el servidor, en MB. */
+export function uploadMaxMb() {
     const meta = document.querySelector(`meta[name="${META_UPLOAD_MAX}"]`);
     const mb = Number.parseInt(meta?.getAttribute('content') ?? '10', 10);
-    return (Number.isFinite(mb) && mb > 0 ? mb : 10) * 1024 * 1024;
+    return Number.isFinite(mb) && mb > 0 ? mb : 10;
 }
 
 function isMp3(file) {
@@ -30,18 +31,25 @@ function isMp3(file) {
     return /\.mp3$/i.test(file.name);
 }
 
+/**
+ * @param {File} file
+ * @returns {string | null}  Motivo del rechazo, o null si el archivo vale.
+ */
+export function validateMp3(file) {
+    if (!isMp3(file)) return 'Solo MP3 por ahora — el archivo no parece audio/mpeg.';
+    const maxMb = uploadMaxMb();
+    if (file.size > maxMb * 1024 * 1024) return `Archivo demasiado grande — máximo ${maxMb} MB.`;
+    return null;
+}
+
 /** Valida y, si procede, pide la partida. */
-function handleFile(file) {
-    if (!isMp3(file)) {
-        showToast('Solo MP3 por ahora — el archivo no parece audio/mpeg.');
+function handleFile(file, level = null) {
+    const problem = validateMp3(file);
+    if (problem !== null) {
+        showToast(problem);
         return;
     }
-    const maxBytes = readUploadMaxBytes();
-    if (file.size > maxBytes) {
-        showToast(`Archivo demasiado grande — máximo ${Math.floor(maxBytes / (1024 * 1024))} MB.`);
-        return;
-    }
-    requestLocalPlay(file);
+    requestLocalPlay(file, { level });
 }
 
 function onDragOver(ev) {
@@ -71,8 +79,11 @@ function onDrop(ev) {
  * El audio se desbloquea AQUÍ, en el clic, antes de abrir el diálogo: el
  * evento `change` que llega al elegir el archivo no cuenta como gesto del
  * usuario en todos los navegadores, y sin gesto el AudioContext no arranca.
+ *
+ * @param {{ level?: object }} [opts]  Nivel privado propio que se va a jugar con
+ *        ese archivo (Ola 2, D11); el cargador comprueba que es el mismo audio.
  */
-export function pickFileViaInput() {
+export function pickFileViaInput(opts = {}) {
     unlockAudio();
     const inp = document.createElement('input');
     inp.type = 'file';
@@ -81,7 +92,7 @@ export function pickFileViaInput() {
     document.body.appendChild(inp);
     inp.addEventListener('change', () => {
         const file = inp.files?.[0];
-        if (file) handleFile(file);
+        if (file) handleFile(file, opts.level ?? null);
         inp.remove();
     }, { once: true });
     inp.addEventListener('cancel', () => inp.remove(), { once: true });

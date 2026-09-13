@@ -3,11 +3,11 @@ declare(strict_types=1);
 
 namespace App\Controllers\Api;
 
-use App\Core\Database;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Validator;
 use App\Models\Ranking;
+use App\Models\User;
 
 /**
  * RankingApiController — GET /api/ranking (público, sin Bearer).
@@ -27,19 +27,13 @@ final class RankingApiController
         $total = Ranking::countAll();
 
         // Hidratar info de user (username + avatar_url) en una sola query.
-        $userIds = array_map(static fn ($r) => $r->userId, $rankings);
-        $usersById = self::fetchUsersByIds($userIds);
+        $usersById = User::publicProfilesByIds(array_map(static fn ($r) => $r->userId, $rankings));
 
         $items = [];
         foreach ($rankings as $i => $r) {
-            $u = $usersById[$r->userId] ?? null;
             $items[] = [
                 'rank'           => $offset + $i + 1,
-                'user'           => $u === null ? null : [
-                    'vout_id'    => $u['vout_id'],
-                    'username'   => $u['username'],
-                    'avatar_url' => $u['avatar_url'],
-                ],
+                'user'           => $usersById[$r->userId] ?? null,
                 'total_points'   => $r->totalPoints,
                 'avg_percentage' => $r->avgPercentage,
                 'levels_played'  => $r->levelsPlayed,
@@ -53,30 +47,5 @@ final class RankingApiController
             'limit'  => $limit,
             'offset' => $offset,
         ]);
-    }
-
-    /**
-     * @param list<int> $userIds
-     * @return array<int, array{vout_id: string, username: string, avatar_url: ?string}>
-     */
-    private static function fetchUsersByIds(array $userIds): array
-    {
-        if ($userIds === []) {
-            return [];
-        }
-        $placeholders = implode(',', array_fill(0, count($userIds), '?'));
-        $stmt = Database::getInstance()->prepare(
-            "SELECT id, vout_id, username, avatar_url FROM users WHERE id IN ({$placeholders})",
-        );
-        $stmt->execute(array_values($userIds));
-        $out = [];
-        foreach ($stmt->fetchAll() as $row) {
-            $out[(int) $row['id']] = [
-                'vout_id'    => (string) $row['vout_id'],
-                'username'   => (string) $row['username'],
-                'avatar_url' => $row['avatar_url'] === null ? null : (string) $row['avatar_url'],
-            ];
-        }
-        return $out;
     }
 }

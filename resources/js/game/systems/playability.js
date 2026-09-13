@@ -208,3 +208,47 @@ export function validatePlayability(obstacles, speedPxS, opts = {}) {
     }
     return { ok: true };
 }
+
+/** Resolución del barrido de `timingWindowS`: 5 ms, por debajo de un frame. */
+const WINDOW_SCAN_STEP_S = 0.005;
+const WINDOW_SCAN_MAX_S = 0.5;
+const windowCache = new Map();
+
+/**
+ * Anchura, en segundos, del margen de error de UNA acción aislada: el intervalo
+ * continuo de desplazamientos de la pulsación (alrededor del instante del chart)
+ * con los que el jugador sobrevive.
+ *
+ * Mide la exigencia de timing de un tipo de obstáculo a una velocidad, con la
+ * física real. Hallazgo al medirlo (Ola 2): la velocidad importa, y al revés de
+ * lo intuitivo — a menos px/s el obstáculo tarda más en atravesar al Dino y el
+ * margen se ESTRECHA. CACTUS_WIDE: 116 ms a 250 px/s, 298 ms a 400 y 398 ms a
+ * 600. Las canciones lentas son las más exigentes en timing.
+ *
+ * Memorizado por (kind, velocidad redondeada): el barrido cuesta ~200
+ * simulaciones de un obstáculo, milisegundos, y se repite poco.
+ *
+ * @param {string} kind  Clave de OBSTACLE_KIND.
+ * @param {number} speedPxS
+ * @returns {number}  0 si ni la pulsación exacta sobrevive.
+ */
+export function timingWindowS(kind, speedPxS) {
+    const key = `${kind}@${Math.round(speedPxS)}`;
+    const cached = windowCache.get(key);
+    if (cached !== undefined) return cached;
+
+    const obstacles = toSimObstacles([{ t: 5, type: 'obstacle', kind }]);
+    const survives = (offset) => simulateRun(obstacles, speedPxS, { pressOffset: () => offset }).ok;
+
+    let width = 0;
+    if (obstacles.length === 1 && survives(0)) {
+        const steps = Math.round(WINDOW_SCAN_MAX_S / WINDOW_SCAN_STEP_S);
+        let early = 0;
+        while (early < steps && survives(-(early + 1) * WINDOW_SCAN_STEP_S)) early++;
+        let late = 0;
+        while (late < steps && survives((late + 1) * WINDOW_SCAN_STEP_S)) late++;
+        width = Math.round((early + late) * WINDOW_SCAN_STEP_S * 1000) / 1000;
+    }
+    windowCache.set(key, width);
+    return width;
+}

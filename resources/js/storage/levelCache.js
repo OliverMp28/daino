@@ -36,6 +36,7 @@ export const DEFAULT_LIMITS = Object.freeze({
 /**
  * @typedef {Object} LevelCache
  * @property {(sha: string) => Promise<ArrayBuffer|null>} getAudio
+ * @property {(sha: string) => Promise<boolean>} hasAudio
  * @property {(sha: string, bytes: ArrayBuffer|Uint8Array) => Promise<void>} putAudio
  * @property {(sha: string, analyzerKey: string) => Promise<object|null>} getAnalysis
  * @property {(sha: string, analyzerKey: string, analysis: object) => Promise<void>} putAnalysis
@@ -99,6 +100,9 @@ export function createMemoryLevelCache(opts = {}) {
             // Copia: quien decodifique el buffer lo desengancha (detach) y
             // dejaría inservible la entrada cacheada.
             return rec === undefined ? null : rec.bytes === 0 ? new ArrayBuffer(0) : rec.data.slice(0);
+        },
+        async hasAudio(sha) {
+            return stores.audio.has(sha);
         },
         async putAudio(sha, bytes) {
             const data = toArrayBuffer(bytes);
@@ -229,6 +233,15 @@ function createIdbLevelCache({ limits }) {
             return safely('getAudio', null, async (db) => {
                 const rec = await getRecord(db, 'audio', sha);
                 return rec === undefined ? null : await rec.blob.arrayBuffer();
+            });
+        },
+        hasAudio(sha) {
+            // Sin leer el Blob ni tocar el "último uso": solo decide si hace
+            // falta descargar (precarga especulativa).
+            return safely('hasAudio', false, async (db) => {
+                const tx = db.transaction('audio', 'readonly');
+                const n = await reqToPromise(tx.objectStore('audio').count(sha));
+                return n > 0;
             });
         },
         putAudio(sha, bytes) {

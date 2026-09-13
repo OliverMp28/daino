@@ -11,8 +11,11 @@ use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Level;
+use App\Models\Progress;
+use App\Models\User;
 use App\Services\ChartValidator;
 use App\Services\FileUploadService;
+use App\Services\LevelPresenter;
 use PDOException;
 
 /**
@@ -20,9 +23,10 @@ use PDOException;
  *
  * Diseño:
  *   - POST /api/levels                   (auth)    upsert por (usuario, audio_sha256)
- *   - GET  /api/levels                   (público) ?mine=1 (auth) | públicos por defecto
+ *   - GET  /api/levels                   (público) ?scope=official|community|public|mine (mine: auth)
  *   - GET  /api/levels/{id}              (mixto)   público si is_public; 404 a no-autores si privado
  *   - GET  /api/levels/{id}/chart        (mixto)   chart del nivel, con ETag
+ *   - GET  /api/levels/{id}/ranking      (mixto)   mejores marcas del nivel + la de quien mira
  *   - POST /api/levels/{id}/upload       (auth)    multipart `file` MP3
  *   - GET  /api/levels/{id}/file         (mixto)   stream MP3 si is_public, con ETag
  *   - POST /api/levels/{id}/visibility   (auth)    {is_public: bool}
@@ -47,6 +51,9 @@ final class LevelApiController
     private const ARTIST_MAX_LEN = 120;
 
     private const SHA256_PATTERN = '/^[0-9a-f]{64}$/';
+
+    /** Pestaña privada del catálogo; las públicas son `Level::SCOPE_*`. */
+    private const SCOPE_MINE = 'mine';
 
     /** Código SQLSTATE de violación de restricción de unicidad. */
     private const SQLSTATE_UNIQUE_VIOLATION = '23000';
@@ -167,31 +174,89 @@ final class LevelApiController
             ->header('Cache-Control', 'private, no-cache');
     }
 
+    /**
+     * Listado del catálogo por pestaña.
+     *
+     *   ?scope=official   niveles del juego, de menos a más difíciles
+     *   ?scope=community  publicados por jugadores, lo más reciente primero
+     *   ?scope=mine       los del usuario, públicos y privados (requiere sesión)
+     *   ?scope=public     todos los públicos (por defecto; también `?public=1`)
+     *
+     * `?mine=1` se mantiene como alias de `scope=mine` para clientes anteriores
+     * a la Ola 2.
+     */
     public function index(Request $req): Response
     {
-        // Nota: no existe un flag `public`. La lista pública es el comportamiento
-        // por defecto, así que `?public=1` es aceptado y redundante (defecto D7).
         $mine   = filter_var($req->query('mine', '0'), FILTER_VALIDATE_BOOLEAN);
+        $scope  = $mine ? self::SCOPE_MINE : (string) $req->query('scope', Level::SCOPE_PUBLIC);
         $limit  = Validator::int($req->query('limit', 20), ['min' => 1, 'max' => 50, 'required' => false, 'field' => 'limit']);
         $offset = Validator::int($req->query('offset', 0), ['min' => 0, 'max' => 100_000, 'required' => false, 'field' => 'offset']);
+        $viewer = AuthContext::tryUser();
 
-        if ($mine) {
-            $user = AuthContext::tryUser();
-            if ($user === null) {
-                return Response::json(['error' => 'unauthorized', 'message' => 'mine=1 requires Bearer token.'], 401);
+        if ($scope === self::SCOPE_MINE) {
+            if ($viewer === null) {
+                return Response::json(['error' => 'unauthorized', 'message' => 'scope=mine requires Bearer token.'], 401);
             }
-            $items = Level::findByUser($user->id, $limit, $offset);
-            $total = Level::countByUser($user->id);
+            $items = Level::findByUser($viewer->id, $limit, $offset);
+            $total = Level::countByUser($viewer->id);
+        } elseif (Level::isScope($scope)) {
+            $items = Level::findByScope($scope, $limit, $offset);
+            $total = Level::countByScope($scope);
         } else {
-            $items = Level::findPublic($limit, $offset);
-            $total = Level::countPublic();
+            throw new ValidationException(['scope' => 'Debe ser official, community, public o mine.']);
         }
 
         return Response::json([
-            'items'  => array_map(self::serialize(...), $items),
+            'scope'  => $scope,
+            'items'  => LevelPresenter::many($items, $viewer),
             'total'  => $total,
             'limit'  => $limit,
             'offset' => $offset,
+        ]);
+    }
+
+    /**
+     * Ranking de un nivel concreto: mejores marcas y, con sesión, la posición
+     * de quien mira aunque no esté en el top.
+     *
+     * @param array<string, string> $params
+     */
+    public function ranking(Request $req, array $params): Response
+    {
+        $level = self::visibleLevel(self::parseId($params));
+        if ($level === null) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        $limit = Validator::int($req->query('limit', 10), ['min' => 1, 'max' => 50, 'required' => false, 'field' => 'limit']);
+
+        $top = Progress::topForLevel($level->id, $limit);
+        $profiles = User::publicProfilesByIds(array_map(static fn (Progress $p): int => $p->userId, $top));
+
+        $items = [];
+        foreach ($top as $i => $p) {
+            $items[] = [
+                'rank'        => $i + 1,
+                'user'        => $profiles[$p->userId] ?? null,
+                'points'      => $p->points,
+                'percentage'  => $p->percentage,
+                'best_run_at' => $p->bestRunAt,
+            ];
+        }
+
+        $me = null;
+        $viewer = AuthContext::tryUser();
+        if ($viewer !== null) {
+            $mine = Progress::findByUserAndLevel($viewer->id, $level->id);
+            if ($mine !== null) {
+                $me = ['rank' => $mine->rankOnLevel(), 'points' => $mine->points, 'percentage' => $mine->percentage];
+            }
+        }
+
+        return Response::json([
+            'level_id' => $level->id,
+            'items'    => $items,
+            'players'  => Progress::countForLevel($level->id),
+            'me'       => $me,
         ]);
     }
 
@@ -367,35 +432,12 @@ final class LevelApiController
     }
 
     /**
-     * Forma pública de un nivel. NUNCA incluye el chart ni el análisis (varios
-     * KB cada uno): se piden aparte con /chart cuando alguien va a jugar.
+     * Forma pública de un nivel, vista por quien hace la petición.
      *
      * @return array<string, mixed>
      */
     private static function serialize(Level $level): array
     {
-        return [
-            'id'             => $level->id,
-            'user_id'        => $level->userId,
-            'title'          => $level->title,
-            'artist'         => $level->artist,
-            'duration_sec'   => $level->durationSec,
-            'duration_ms'    => $level->durationMs,
-            'bpm'            => $level->bpm,
-            'bpm_exact'      => $level->bpmExact,
-            'game_speed'     => $level->gameSpeed,
-            'difficulty'     => $level->difficulty,
-            'generator_seed' => $level->generatorSeed,
-            'is_public'      => $level->isPublic,
-            'is_official'    => $level->isOfficial,
-            // `file_path` NO se expone (defecto D5): es una ruta interna del
-            // servidor. La UI solo necesita saber si hay audio subido.
-            'has_audio'      => $level->filePath !== null,
-            'audio_sha256'   => $level->audioSha256,
-            'has_chart'      => $level->hasChart(),
-            'chart_version'  => $level->chartVersion,
-            'created_at'     => $level->createdAt,
-            'updated_at'     => $level->updatedAt,
-        ];
+        return LevelPresenter::one($level, AuthContext::tryUser());
     }
 }

@@ -18,6 +18,7 @@ const META_VOUT_ORIGIN = 'daino:vout-origin';
 
 let accessToken = null;       // se hidrata desde AUTH_TOKEN; vive solo aquí
 let onGameAction = null;      // setter público (Bloque 5 lo conectará al motor)
+const tokenListeners = new Set();
 let allowedOrigin = null;
 let isEmbedded = false;
 
@@ -55,6 +56,11 @@ function handleMessage(event) {
             if (typeof data.token === 'string' && data.token.length > 0) {
                 accessToken = data.token;
                 console.info('[bridge] AUTH_TOKEN recibido');
+                // Vout reenvía AUTH_TOKEN al renovar el access token: cada
+                // entrega se notifica, no solo la primera.
+                for (const fn of tokenListeners) {
+                    try { fn(accessToken); } catch (err) { console.error('[bridge] listener AUTH_TOKEN:', err); }
+                }
             }
             return;
         }
@@ -99,6 +105,23 @@ export function getAccessToken() {
     return accessToken;
 }
 
+/**
+ * Suscribe a cada AUTH_TOKEN recibido (el primero y las renovaciones). Si ya
+ * había token al suscribirse, se entrega en la siguiente microtarea para que
+ * nadie tenga que sondear. Devuelve la función para desuscribirse.
+ *
+ * @param {(token: string) => void} fn
+ * @returns {() => void}
+ */
+export function onAuthToken(fn) {
+    tokenListeners.add(fn);
+    if (accessToken !== null) {
+        const current = accessToken;
+        queueMicrotask(() => { if (tokenListeners.has(fn)) fn(current); });
+    }
+    return () => tokenListeners.delete(fn);
+}
+
 /** Indica si el bridge corre en modo embebido (postMessage activo). */
 export function isBridgeEmbedded() {
     return isEmbedded;
@@ -118,4 +141,5 @@ export function _resetForTests() {
     onGameAction = null;
     allowedOrigin = null;
     isEmbedded = false;
+    tokenListeners.clear();
 }

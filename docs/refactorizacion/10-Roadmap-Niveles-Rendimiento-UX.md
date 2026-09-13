@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1 y 3 ✅ completas (Sep 2026). Olas 2 y 4-7 pendientes.
+> **Estado:** Olas 0, 1, 2 y 3 ✅ completas (Sep 2026). Olas 4-7 pendientes.
 
 ---
 
@@ -173,6 +173,7 @@ Lo único que hoy está realmente gateado por estado es la visibilidad del dino 
 | **D18** | El onset se fechaba **~23 ms antes** de sonar: el flujo espectral asigna al hop el inicio de su frame, pero con ventana Hann la energía pesa en el centro. Medido: mediana −23.0 a −23.4 ms a 90-174 BPM = `FRAME_SIZE/2/sampleRate`. Descubierto en la Ola 3 | `SpectralFlux.js` |
 | **D19** | Con los obstáculos ya colocados desde el reloj de audio, la física del Dino integraba con `dt` capado a 33 ms: en cada tirón de frames el salto **se quedaba atrás del mundo** y un jugador que pulsó a tiempo chocaba. Descubierto en el E2E de la Ola 3 (frames de 90-160 ms con la máquina cargada) | `GameSession.js` |
 | **D20** | `AudioContext.outputLatency` **vale 0 al empezar a sonar y salta a 40 ms** ~117 ms después (medido en Chrome). Restarla tal cual hacía retroceder el reloj de canción 40 ms de golpe. Descubierto en el E2E de la Ola 3 | `AudioEngine.js` |
+| **D21** | **Vout no podía embeber Daino.** Nginx envía `X-Frame-Options: SAMEORIGIN` a todas las respuestas, y Vout es otro origen: el navegador bloqueaba el iframe (`ERR_BLOCKED_BY_RESPONSE`, reproducido con Chrome). El modo embebido entero —bridge, `AUTH_TOKEN`, D12— era inalcanzable. Descubierto en el E2E de la Ola 2 | `docker/nginx/default.conf` |
 
 ---
 
@@ -316,7 +317,7 @@ Tiers forzados desde AJUSTES verificados (`medium` → 0.70 / 48 motas / 60 fps;
 
 ---
 
-### Ola 2 — UX: menú, catálogo y "subir mi canción"
+### Ola 2 — UX: menú, catálogo y "subir mi canción" ✅
 
 **Objetivo.** Que un jugador nuevo entre, pulse JUGAR y esté jugando, sin tener que pensar en archivos. Y que subir música propia sea una acción evidente y voluntaria.
 
@@ -333,6 +334,67 @@ Tiers forzados desde AJUSTES verificados (`medium` → 0.70 / 48 motas / 60 fps;
 - Arreglar **D11** (los niveles privados propios deben poder jugarse) y **D12** (identidad en modo iframe, para que "Míos" y el progreso existan embebidos en Vout).
 
 **Verificación.** Un usuario anónimo en una sesión limpia entra, pulsa JUGAR y está jugando en ≤ 2 s sin haber tocado ningún archivo. Un usuario con sesión ve sus niveles y su mejor marca en las tarjetas.
+
+#### Qué se construyó (y en qué se desvió del plan, con motivo)
+
+**Catálogo de fábrica ya en esta ola (el plan lo dejaba para la Ola 4).** Sin niveles oficiales el criterio de verificación era imposible: JUGAR abriría un catálogo vacío. En vez de esperar al analizador Python, los 8 oficiales se **hornean** con el analizador y el charter JS que ya existen:
+
+- `bun run bake:official` (Node + `ffmpeg`) decodifica cada MP3, lo analiza y genera su chart → `database/seeds/official/baked/<slug>.json` (**sí va al repo**: son tiempos y metadatos, 12-68 KB por canción).
+- `composer seed:official -- --from=docs/legacy/audios` verifica el hash de cada MP3 contra su horneado, lo copia a `storage/official/` (**gitignored**) y crea los niveles. Idempotente; un chart de un oficial ya sembrado no se sustituye sin `--rechart` (hay marcas registradas sobre él).
+- **Por qué ffmpeg sirve:** el chart solo vale si el decodificador produce las mismas muestras que el del navegador. Medido: ffmpeg 8.1 y Chrome dan **la misma longitud y desfase 0 muestras** (diferencia cuadrática ~2e-10) en 3 MP3 con y sin cabecera LAME. Y de extremo a extremo: el chart que el navegador genera al soltar `Sugar Red.mp3` es **idéntico byte a byte** al horneado.
+- La Ola 4 sustituye el horneado por el analizador Python; el script y el seed son el punto de enganche.
+
+**Oficiales sin autor.** `levels.user_id` pasa a admitir NULL (solo si `is_official`) y la identidad estable es `official_slug` (clave del manifiesto). Se descartó un usuario "sistema" (ensucia `users` y el ranking, `vout_id` inventado) y una columna generada `IF(is_official, audio_sha256, NULL)` (MariaDB la rechaza sobre columnas CHAR, error 1901).
+
+**"Nº de partidas" → "jugadores".** No se registran partidas, y un contador anónimo sería trivial de inflar sin rate limiting (Bloque 8). Se muestra el número de jugadores con marca guardada, que sale de `progress` sin coste ni abuso posible.
+
+**Dificultad MEDIDA del chart (D6 a medias).** Las estrellas no podían ser un "3" fijo. `chartStats.js` puntúa densidad de acciones, pasajes apretados, cuota de aéreos y **margen de error de cada acción simulado con la física real**. La dificultad elegida por quien sube sigue siendo de la Ola 5.
+
+> **Hallazgo al medirlo:** la velocidad importa, y al revés de lo intuitivo. A menos px/s el obstáculo tarda más en atravesar al Dino y **el margen se estrecha**: `CACTUS_WIDE` pasa de 398 ms a 600 px/s a **116 ms a 250 px/s**. Las canciones lentas son las más exigentes en timing. Es un dato directo para D14 en la Ola 5.
+
+**Ficha de nivel con ranking propio** (`GET /api/levels/{id}/ranking`: top N + la posición de quien mira aunque no esté en el top).
+
+**NIVELES desaparece del menú**: era la misma lista que ahora abre JUGAR. El menú queda JUGAR / SUBIR MI CANCIÓN / (RANKING · PERFIL · AJUSTES).
+
+**Marcas locales para jugadores sin sesión** (`storage/localBests.js`): la tarjeta muestra la mayor entre servidor y navegador. Daino se juega sin cuenta y reintentar un nivel sin ver tu marca no tiene sentido.
+
+**Precarga al abrir la ficha.** Abrir la ficha de un nivel descarga audio y chart **en paralelo** y decodifica el audio en un `OfflineAudioContext` (sin tocar el AudioContext del juego, que fuera de un gesto quedaría suspendido). Solo se decodifica la última ficha abierta. JUGAR se engancha a la precarga en curso en vez de repetirla.
+
+**D12 — identidad embebida.** `GET /api/me` (Bearer) y `client.js` suscrito a cada `AUTH_TOKEN` del bridge (primero y renovaciones, sin sondeo). Embebido, un 401 ya no intenta `/auth/refresh` (no hay cookie): espera al token siguiente de Vout.
+
+**D21 — descubierto al probar D12.** El iframe ni siquiera cargaba: `X-Frame-Options: SAMEORIGIN` de nginx. La shell envía ahora `Content-Security-Policy: frame-ancestors 'self' <VOUT_ORIGIN>` (validado como origen para no inyectar nada en la cabecera); los navegadores que lo entienden ignoran X-Frame-Options, y el resto sigue protegido por él.
+
+**D11 — niveles privados jugables.** Su audio está en el equipo del autor (Local-First): la ficha ofrece "Elegir MP3 y jugar", el cargador comprueba el hash **antes de decodificar**, usa el chart guardado y guarda el progreso en ESE nivel (no crea otro).
+
+**Avisos en la top layer.** Un `<dialog>` modal tapa cualquier z-index, así que los toasts quedaban debajo del catálogo. `toast.js` los abre como `popover`, y quien abre un diálogo y avisa lo hace en ese orden.
+
+#### Verificación — hecha, con medidas reales
+
+Tests: **108 JS** (+31) y **36 PHP** (+18). Los arreglos clave se comprobaron por mutación (precarga sin enganche, seed sin congelar el chart, pestaña comunidad con oficiales: el test falla). Migraciones 001-008 aplicadas sobre una base vacía sin errores.
+
+| Qué | Resultado |
+|---|---|
+| JUGAR → rejilla pintada (menú ya montado) | **29-38 ms**, 0 peticiones |
+| Tarjeta → ficha | **4-7 ms** |
+| Sesión limpia: ficha 1.5 s y JUGAR → partida | **956-1 043 ms** (antes de la precarga con decodificado: 1 802 ms) |
+| Sesión limpia: JUGAR nada más abrir la ficha (2:46) | **2 257 ms** (antes: 3 608 ms) — ver limitaciones |
+| Decodificado del navegador ffmpeg vs Chrome | misma longitud, **0 muestras** de desfase |
+| Chart generado en el navegador vs horneado (Sugar Red) | **idéntico byte a byte** |
+| Anónimo: partida de un oficial | **0 POST**; marca local en la tarjeta |
+| Embebido (iframe desde el origen de Vout, JWT RS256 real verificado contra JWKS) | carga (D21), `READY → AUTH_TOKEN → /api/me` → usuario, pestaña «Míos», progreso 200, tarjeta y ranking actualizados |
+| D11: MP3 correcto / incorrecto | correcto: progreso al nivel, **sin crear otro**; incorrecto: rechazado antes de decodificar, vuelve a la ficha con el aviso visible |
+| Publicar desde la ficha | pasa a «De la comunidad» |
+| `EXPLAIN` pestaña comunidad / ranking de nivel | `idx_levels_catalog` / `idx_progress_level_points`, **sin filesort** |
+| Horneado al día (`bake:official --check` y test JS) | 8/8 |
+
+**PHPStan nivel 6:** 13 errores, todos anteriores (eran 14; la reescritura de `RankingApiController` quitó uno). **Bundle: 149.53 KB gzip** (+5.7 KB).
+
+#### Limitaciones que quedan
+
+- **JUGAR nada más abrir la ficha puede pasar de 2 s** en este entorno: el decodificado de MP3 de Chrome tarda **~1.2 s para una canción de 3 min** en esta máquina (cargada) y el servidor de desarrollo responde en 0.6-1.5 s por petición (Docker Desktop con bind mount en Windows: hasta `/api/health` tarda eso). Con que el jugador mire la ficha un segundo y medio, o con el nivel ya jugado, baja de 1 s.
+- El E2E embebido usó una clave RSA de prueba en la caché JWKS y un JWT firmado con ella, no un login real en Vout. La renovación del token confía en que Vout reenvíe `AUTH_TOKEN`; la guía de integración no lo documenta.
+- En «De la comunidad» siguen las filas duplicadas que D1 creó antes de la Ola 3 (no se borran datos).
+- Con el charter v1 casi todo sale de 3-5★: todavía no sabe generar niveles suaves (Ola 5).
 
 ---
 
@@ -479,7 +541,7 @@ Tests: **77 JS** (`bun run test`) y **18 PHP** (`docker compose exec -T php comp
 
 - **Ruta local conservada.** El generador JS actual sigue existiendo para "subir mi canción" sin publicar — es el invariante *Local-First* del `CLAUDE.md` y lo que permite jugar música propia sin sesión. Se mueve a un **Web Worker** para que deje de congelar la UI, y produce el **mismo esquema** `analysis.json` con menos riqueza. El charter, compartido, funciona igual con ambos.
 
-- **Seed del catálogo oficial:** `composer seed:official` copia de `docs/legacy/audios/` a `storage/official/`, crea las filas con `is_official = TRUE` y encola el análisis de cada una.
+- **Seed del catálogo oficial:** ✅ adelantado a la Ola 2 con el analizador JS (`bun run bake:official` + `composer seed:official`). Aquí queda re-hornear los 8 oficiales con el analizador Python (`--rechart`) y enganchar el script de horneado al servicio.
 
 **Notas técnicas que no se pueden pasar por alto:**
 - **Desfase del decodificador.** `ffmpeg` y el decodificador MP3 del navegador tratan el encoder delay/padding de forma distinta (~26 ms, a veces hasta ~100 ms). El reloj del juego es `ctx.currentTime − _playStartedAt` sobre el buffer decodificado *por el navegador*. Por eso `chart.json` lleva `audio.offsetSec`: permite corregirlo sin regenerar nada.
@@ -562,14 +624,15 @@ Si hay que elegir una sola cosa: **Ola 3**. Es la que cambia cómo se siente el 
 |---|---|---|---|
 | D1 fila duplicada por partida | 3 ✅ | D9 modal sin precarga | 0 ✅ |
 | D2 título `.mp3.mp3` | 0 ✅ | D10 `sampleRate` no fijado | 0 ✅ |
-| D3 validación 200 vs col 120 | 0 ✅ | D11 nivel privado no jugable | 2 |
-| D4 botón "Jugar" bloqueado | 0 ✅ | D12 identidad en iframe | 2 |
+| D3 validación 200 vs col 120 | 0 ✅ | D11 nivel privado no jugable | 2 ✅ |
+| D4 botón "Jugar" bloqueado | 0 ✅ | D12 identidad en iframe | 2 ✅ |
 | D5 `file_path` expuesto | 0 ✅ | D13 orden `filterSpacing` | 3 ✅ |
-| D6 `difficulty` hardcodeada | 5 | D14 espaciado en s, no en px | 5 |
+| D6 `difficulty` hardcodeada | 5 (medida en 2) | D14 espaciado en s, no en px | 5 |
 | D7 `?public=1` muerto | 0 ✅ | D15 sin validación de jugabilidad | 5 |
 | D8 sin índice `is_public` | 0 ✅ | D16 sin suelo de energía en `pickPeaks` | 5 (mitigado en 3) |
 | D17 relleno a 0.15 s del siguiente | 3 ✅ | D18 onsets 23 ms adelantados | 3 ✅ |
 | D19 física detrás del reloj de audio | 3 ✅ | D20 salto de `outputLatency` | 3 ✅ |
+| D21 `X-Frame-Options` impedía el iframe de Vout | 2 ✅ | | |
 
 ---
 
