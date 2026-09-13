@@ -45,6 +45,55 @@ services:
     networks:
       - daino
 
+  # Analizador musical (Ola 4): Python + ffmpeg + beat_this (PyTorch CPU) + Node.
+  # Saca trabajos de la tabla `analysis_jobs` y guarda análisis y charts.
+  # Escalar: `docker compose up -d --scale analyzer=3` (se reparten la cola).
+  analyzer:
+    build:
+      context: ./analyzer
+    image: daino-analyzer:dev
+    restart: unless-stopped
+    command: ["worker"]
+    # El código se monta en vivo desde ./analyzer (desarrollo): cambiarlo no
+    # exige reconstruir la imagen, solo reiniciar el servicio.
+    working_dir: /srv/daino/analyzer
+    environment:
+      PYTHONPATH: /srv/daino/analyzer
+      DAINO_ROOT: /srv/daino
+      # Solo lo que necesita: nada de secretos OAuth ni APP_KEY del .env.
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE:-daino}
+      DB_USER: ${DB_USER:-daino}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      ANALYZER_TORCH_THREADS: ${ANALYZER_TORCH_THREADS:-4}
+      ANALYZER_JOB_TIMEOUT_SECONDS: ${ANALYZER_JOB_TIMEOUT_SECONDS:-900}
+      ANALYZER_POLL_SECONDS: ${ANALYZER_POLL_SECONDS:-2}
+    # Solo lo que usa y en solo lectura (escribe únicamente en BD). NUNCA la raíz
+    # del proyecto: ahí están .env (secretos OAuth, APP_KEY), storage/sessions
+    # (tokens de sesión) y el volcado del legacy con datos personales.
+    volumes:
+      - ./analyzer:/srv/daino/analyzer:ro                           # código del worker
+      - ./package.json:/srv/daino/package.json:ro                   # "type": "module" del charter JS
+      - ./node_modules:/srv/daino/node_modules:ro                   # pixi.js (physics → Dino lo importa)
+      - ./resources/js:/srv/daino/resources/js:ro                   # charter compartido con el navegador
+      - ./scripts:/srv/daino/scripts:ro                             # chart-from-analysis.mjs, bake-official.mjs
+      - ./database:/srv/daino/database:ro                           # migraciones (tests) y manifiesto oficial
+      - ./storage/uploads/levels:/srv/daino/storage/uploads/levels:ro
+      - ./storage/official:/srv/daino/storage/official:ro
+    mem_limit: ${ANALYZER_MEM_LIMIT:-3g}
+    healthcheck:
+      test: ["CMD", "python", "-m", "daino_analyzer", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - daino
+
   mariadb:
     image: mariadb:11.4
     container_name: daino-mariadb

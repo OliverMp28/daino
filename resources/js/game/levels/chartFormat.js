@@ -43,7 +43,7 @@ export const CHART_FORMAT_VERSION = 1;
  * así los charts cacheados o persistidos con una versión anterior se detectan
  * como obsoletos en lugar de mezclarse con los nuevos.
  */
-export const CHARTER_VERSION = 1;
+export const CHARTER_VERSION = 2;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */

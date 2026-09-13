@@ -33,8 +33,19 @@
 // detectado tiene 0.7-1.3 % de error (medido). Sobre una rejilla global eso son
 // 1.3-2.4 s de deriva en tres minutos — los obstáculos acabarían entre beats.
 // Anclando cada relleno al último golpe real, el error se queda en unos
-// milisegundos. La rejilla global robusta llega con el beat tracking del
-// analizador de la Ola 4.
+// milisegundos.
+//
+// Charter v2 (Ola 4), para análisis de formato 2 (analizador del servidor):
+//
+//   7. Los rellenos caen en los BEATS REALES del analizador (seguimiento con
+//      beat_this, afinado a pocos ms), no en una extrapolación.
+//   8. La velocidad de scroll sale del pulso JUGABLE (`gameplayTempo`): una
+//      canción a 63 BPM se juega a la velocidad de 126. El análisis del servidor
+//      reporta el tempo que marcaría una persona, que en canciones lentas es la
+//      mitad del que usaba el analizador JS; sin esto, esas canciones pasarían a
+//      scroll lento y márgenes de acierto más estrechos.
+//
+// Con un análisis de formato 1 (JS local, sin `beats`) solo aplica el punto 8.
 
 import { OBSTACLE_KIND, SPAWN_WINDOW_S, speedFromBpm } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
@@ -78,7 +89,35 @@ export const CHARTER_RULES = Object.freeze({
      */
     localStrengthRatio: 0.3,
     strengthWindowS: 4,
+    /**
+     * Rango del tempo que decide la VELOCIDAD de scroll (v2). Una canción a 63
+     * BPM se juega con la velocidad de 126: mismo pulso musical (múltiplo
+     * métrico), y evita el scroll lento, que estrecha el margen de error de cada
+     * salto (hallazgo de la Ola 2: 116 ms a 250 px/s frente a 398 ms a 600).
+     * Afecta solo a `world.speedPxS`; `music.bpm` sigue siendo el real.
+     */
+    speedTempoMin: 90,
+    speedTempoMax: 200,
+    /**
+     * Un relleno se lleva al beat real más cercano si está a menos de esta
+     * fracción de periodo (v2, análisis con `beats`).
+     */
+    fillerSnapFraction: 0.3,
 });
+
+/**
+ * Tempo con el que se calcula la velocidad: el real, doblado o dividido por dos
+ * hasta caer en [speedTempoMin, speedTempoMax].
+ *
+ * @param {number} bpm
+ * @returns {number}
+ */
+export function gameplayTempo(bpm) {
+    let t = bpm > 0 ? bpm : 120;
+    for (let i = 0; i < 3 && t < CHARTER_RULES.speedTempoMin; i++) t *= 2;
+    for (let i = 0; i < 3 && t > CHARTER_RULES.speedTempoMax; i++) t /= 2;
+    return t;
+}
 
 /**
  * @typedef {Object} ChartReport
@@ -101,7 +140,8 @@ export function buildChart(analysis, opts = {}) {
     const prng = new Seeded(seedInput);
 
     const durationSec = analysis.durationSec;
-    const speedPxS = speedFromBpm(analysis.bpm);
+    const speedPxS = speedFromBpm(gameplayTempo(analysis.bpm));
+    const realBeats = Array.isArray(analysis.beats) && analysis.beats.length >= 8 ? analysis.beats : null;
     const beatPeriodS = analysis.beatPeriodS > 0 ? analysis.beatPeriodS : 60 / analysis.bpm;
     const rules = CHARTER_RULES;
 
@@ -125,9 +165,16 @@ export function buildChart(analysis, opts = {}) {
         fromOnsets = accepted.length;
 
         // (4) Rellenos en beats, anclados localmente.
-        const filled = fillGapsOnBeats(accepted, {
+        let filled = fillGapsOnBeats(accepted, {
             beatPeriodS, minGapS: rules.minGapS, maxGapS: rules.maxGapS, tMin, tMax,
         });
+        // (7) Con beats reales del analizador (formato 2), los rellenos caen en
+        // ESOS beats y no en una extrapolación desde el último golpe.
+        if (realBeats !== null) {
+            filled = snapFillersToBeats(filled, accepted, realBeats, {
+                maxShiftS: rules.fillerSnapFraction * beatPeriodS, minGapS: rules.minGapS, tMin, tMax,
+            });
+        }
         fillers = filled.length - accepted.length;
         times = filled;
     }
@@ -269,6 +316,36 @@ export function fillGapsOnBeats(accepted, p) {
         } else if (p.tMax - a > p.maxGapS) {
             for (let t = a + step; t <= p.tMax + EPS; t += step) out.push(t);
         }
+    }
+    return out;
+}
+
+/**
+ * Lleva cada relleno al beat real más cercano, sin romper el hueco mínimo ni la
+ * ventana. Los eventos que salen de onsets no se tocan: ya están en su golpe.
+ *
+ * @param {number[]} times     ordenados: onsets aceptados + rellenos
+ * @param {number[]} accepted  los que vienen de onsets reales
+ * @param {number[]} beats     beats del análisis, ordenados
+ * @param {{ maxShiftS: number, minGapS: number, tMin: number, tMax: number }} p
+ * @returns {number[]}
+ */
+export function snapFillersToBeats(times, accepted, beats, p) {
+    const real = new Set(accepted);
+    const out = times.slice();
+    for (let i = 0; i < out.length; i++) {
+        if (real.has(out[i])) continue;
+        const j = lowerBound(beats, out[i]);
+        let best = null;
+        for (const k of [j - 1, j]) {
+            if (k < 0 || k >= beats.length) continue;
+            if (best === null || Math.abs(beats[k] - out[i]) < Math.abs(best - out[i])) best = beats[k];
+        }
+        if (best === null || Math.abs(best - out[i]) > p.maxShiftS) continue;
+        if (best < p.tMin - EPS || best > p.tMax + EPS) continue;
+        const prevOk = i === 0 || best - out[i - 1] >= p.minGapS - EPS;
+        const nextOk = i === out.length - 1 || out[i + 1] - best >= p.minGapS - EPS;
+        if (prevOk && nextOk) out[i] = best;
     }
     return out;
 }

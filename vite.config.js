@@ -15,7 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 //
 // El PHP nunca necesita saber que Vite existe más allá de leer ese manifest.
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   // loadEnv lee el .env del proyecto. Pasamos prefix '' para incluir TODAS las
   // variables (no solo las que arrancan por VITE_), porque también queremos
   // VITE_DEV_PORT que no se inyecta al cliente — solo al config server-side.
@@ -41,10 +41,14 @@ export default defineConfig(({ mode }) => {
       }),
     ],
 
-    // NO definimos `base`: en dev queremos que Vite sirva en la raíz del puerto
-    // (para que `http://localhost:<port>/resources/js/main.js` funcione tal
-    // cual lo emite ViteAssets.php). En producción, ViteAssets ya antepone
-    // `/build/` manualmente al leer el manifest — así que tampoco hace falta aquí.
+    // `base` solo en build. En dev Vite sirve en la raíz del puerto (para que
+    // `http://localhost:<port>/resources/js/main.js` funcione tal cual lo emite
+    // ViteAssets.php). En build los assets viven en /build/: las entradas las
+    // resuelve ViteAssets con el manifest (rutas relativas, no le afecta), pero
+    // lo que Vite referencia DESDE el propio bundle necesita el prefijo real. Sin
+    // él, el Web Worker del análisis (Ola 4) salía como `/assets/…` → 404 → todo
+    // el análisis en el hilo principal sin ningún error visible.
+    base: command === 'build' ? '/build/' : '/',
 
     server: {
       host: '127.0.0.1',

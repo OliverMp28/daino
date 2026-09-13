@@ -18,7 +18,9 @@ import {
     CHARTER_RULES,
     dropWeakOnsets,
     fillGapsOnBeats,
+    gameplayTempo,
     selectStrongestSpaced,
+    snapFillersToBeats,
 } from '../../resources/js/game/levels/charter.js';
 import { normalizeChart, seedFromSha256 } from '../../resources/js/game/levels/chartFormat.js';
 import { OBSTACLE_KIND } from '../../resources/js/game/config.js';
@@ -165,6 +167,50 @@ test('los rellenos se anclan localmente: un error de BPM no los saca del beat', 
         const err = Math.abs(t - (3 + Math.round((t - 3) / 0.5) * 0.5));
         assert.ok(err < 0.1, `relleno en ${t.toFixed(3)} a ${(err * 1000).toFixed(0)} ms del beat real`);
     }
+});
+
+test('v2: la velocidad sale del pulso jugable; el bpm del chart sigue siendo el real', () => {
+    assert.equal(gameplayTempo(63), 126);
+    assert.equal(gameplayTempo(40), 160, 'dos doblados');
+    assert.equal(gameplayTempo(145.9), 145.9);
+    assert.equal(gameplayTempo(250), 125);
+    const slow = buildChart(makeSyntheticAnalysis({ bpm: 63, durationSec: 40 }), { seed: 1 }).chart;
+    const fast = buildChart(makeSyntheticAnalysis({ bpm: 126, durationSec: 40 }), { seed: 1 }).chart;
+    assert.equal(slow.music.bpm, 63);
+    assert.equal(slow.world.speedPxS, fast.world.speedPxS);
+});
+
+test('v2: con beats reales del analizador, los rellenos caen EN esos beats', () => {
+    // Beats reales con swing y pequeñas irregularidades (lo que devuelve un
+    // seguidor de beats de verdad); el análisis dice el periodo medio.
+    const beats = [];
+    for (let i = 0, t = 1; t < 120; i++) {
+        beats.push(Math.round(t * 1000) / 1000);
+        t += 0.5 + (i % 2 === 0 ? 0.012 : -0.012) + ((i % 7) - 3) * 0.002;
+    }
+    const analysis = {
+        ...makeSyntheticAnalysis({ bpm: 120, durationSec: 120, noisePerBeat: 0 }),
+        // Casi ningún golpe utilizable: el nivel es sobre todo relleno. Los
+        // onsets de un análisis real caen en su golpe, que coincide con su beat.
+        onsets: [[beats[8], 1], [beats[79], 1], [beats[159], 1]],
+        beats,
+    };
+    const { chart, report } = buildChart(analysis, { seed: 3 });
+    assert.ok(report.fillers > 30);
+    for (const e of chart.events) {
+        const nearest = beats.reduce((best, b) => (Math.abs(b - e.t) < Math.abs(best - e.t) ? b : best), beats[0]);
+        assert.ok(Math.abs(nearest - e.t) <= 0.0011, `evento en ${e.t} a ${((e.t - nearest) * 1000).toFixed(1)} ms de un beat real`);
+    }
+    for (let i = 1; i < chart.events.length; i++) {
+        assert.ok(chart.events[i].t - chart.events[i - 1].t >= CHARTER_RULES.minGapS - 1e-9);
+    }
+    assert.ok(validatePlayability(toSimObstacles(chart.events), chart.world.speedPxS).ok);
+});
+
+test('v2: llevar un relleno a su beat nunca rompe el hueco mínimo', () => {
+    const out = snapFillersToBeats([3.0, 3.72, 4.44], [3.0], [3.0, 3.6, 4.2, 4.44], { maxShiftS: 0.15, minGapS: 0.7, tMin: 3, tMax: 10 });
+    assert.equal(out[1], 3.72, '3.6 quedaría a 0.6 s del golpe anterior: se respeta el relleno');
+    assert.equal(out[2], 4.44);
 });
 
 test('D13: los onsets anteriores a la ventana no suprimen onsets válidos', () => {

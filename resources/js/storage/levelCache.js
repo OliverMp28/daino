@@ -45,9 +45,16 @@ export const DEFAULT_LIMITS = Object.freeze({
  * @property {string} kind  'indexeddb' | 'memory'
  */
 
-/** Clave de chart de un nivel del servidor. Una versión nueva no pisa la vieja. */
-export function catalogChartKey(levelId, chartVersion) {
-    return `level:${levelId}:v${chartVersion}`;
+/**
+ * Clave de chart de un nivel del servidor. Una versión nueva no pisa la vieja.
+ *
+ * Con `chartHash` (Ola 4) la clave identifica el chart EXACTO: el servidor puede
+ * sustituir el chart de un nivel sin cambiar de versión del charter (reanálisis
+ * con el analizador del servidor), y sin el hash se seguiría sirviendo el viejo.
+ */
+export function catalogChartKey(levelId, chartVersion, chartHash = null) {
+    const base = `level:${levelId}:v${chartVersion}`;
+    return typeof chartHash === 'string' && /^[0-9a-f]{64}$/.test(chartHash) ? `${base}:${chartHash.slice(0, 16)}` : base;
 }
 
 /**

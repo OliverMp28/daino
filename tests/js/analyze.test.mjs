@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { analyzeAudio, isUsableAnalysis, ANALYZER_KEY } from '../../resources/js/game/levels/analyze.js';
+import { analyzeAudio, isChartableAnalysis, isUsableAnalysis, ANALYZER_KEY } from '../../resources/js/game/levels/analyze.js';
 import { generate } from '../../resources/js/game/levels/LevelGenerator.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
 import { detectBpm } from '../../resources/js/game/levels/Bpm.js';
@@ -61,6 +61,23 @@ test('el análisis es JSON plano, versionado y descartable si cambia de versión
     assert.equal(ANALYZER_KEY, 'daino-flux-js@1');
     assert.equal(isUsableAnalysis({ ...analysis, analyzer: { name: 'daino-flux-js', version: 0 } }), false);
     assert.equal(isUsableAnalysis(null), false);
+});
+
+test('isChartableAnalysis acepta el formato del servidor, pero la caché local no lo reutiliza', async () => {
+    const local = await analysisOf(128);
+    const server = {
+        ...local, formatVersion: 2, analyzer: { name: 'daino-mir-py', version: 1, models: { beats: 'x' } },
+        beats: [0.5, 1.0], downbeats: [0.5], meter: 4, sections: [], features: {},
+    };
+    assert.ok(isChartableAnalysis(local));
+    assert.ok(isChartableAnalysis(server));
+    // La caché local solo reutiliza análisis de ESTE analizador.
+    assert.equal(isUsableAnalysis(server), false);
+    assert.equal(isChartableAnalysis({ ...server, beats: undefined }), false, 'formato 2 sin beats');
+    assert.equal(isChartableAnalysis({ ...server, formatVersion: 3 }), false, 'formato futuro');
+    assert.equal(isChartableAnalysis({ ...server, analyzer: { name: 'x', version: '1' } }), false);
+    assert.equal(isChartableAnalysis({ ...local, bpm: 0 }), false);
+    assert.equal(isChartableAnalysis(null), false);
 });
 
 test('de punta a punta: con audio real los eventos caen sobre los golpes', async () => {

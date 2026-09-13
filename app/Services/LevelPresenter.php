@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\AnalysisJob;
 use App\Models\Level;
 use App\Models\Progress;
 use App\Models\User;
@@ -36,8 +37,15 @@ final class LevelPresenter
         $players = Progress::playerCounts($ids);
         $bests = $viewer === null ? [] : Progress::bestForUserOnLevels($viewer->id, $ids);
 
+        // El estado del análisis solo interesa (y solo se enseña) a su autor.
+        $ownIds = $viewer === null ? [] : array_values(array_map(
+            static fn (Level $l): int => $l->id,
+            array_filter($levels, static fn (Level $l): bool => $l->userId === $viewer->id),
+        ));
+        $jobs = AnalysisJob::latestForLevels($ownIds);
+
         return array_map(
-            static fn (Level $l): array => self::shape($l, $viewer, $authors, $players, $bests),
+            static fn (Level $l): array => self::shape($l, $viewer, $authors, $players, $bests, $jobs),
             $levels,
         );
     }
@@ -54,10 +62,12 @@ final class LevelPresenter
      * @param array<int, array{vout_id: string, username: string, avatar_url: ?string}> $authors
      * @param array<int, int> $players
      * @param array<int, array{points: int, percentage: int}> $bests
+     * @param array<int, AnalysisJob> $jobs
      * @return array<string, mixed>
      */
-    private static function shape(Level $level, ?User $viewer, array $authors, array $players, array $bests): array
+    private static function shape(Level $level, ?User $viewer, array $authors, array $players, array $bests, array $jobs): array
     {
+        $isMine = $viewer !== null && $level->userId === $viewer->id;
         return [
             'id'             => $level->id,
             'user_id'        => $level->userId,
@@ -78,13 +88,20 @@ final class LevelPresenter
             'audio_sha256'   => $level->audioSha256,
             'has_chart'      => $level->hasChart(),
             'chart_version'  => $level->chartVersion,
+            // Ola 4: identifica el chart guardado. La caché del cliente lo usa en
+            // la clave: un chart sustituido por otro de la misma versión del
+            // charter (otro analizador) no puede servirse viejo.
+            'chart_hash'     => $level->chartHash,
+            'difficulty_ceiling' => $level->difficultyCeiling,
+            'pending_public' => $level->pendingPublic,
             'created_at'     => $level->createdAt,
             'updated_at'     => $level->updatedAt,
             // Ola 2: lo que pinta una tarjeta.
             'author'         => $level->userId === null ? null : ($authors[$level->userId] ?? null),
-            'is_mine'        => $viewer !== null && $level->userId === $viewer->id,
+            'is_mine'        => $isMine,
             'players'        => $players[$level->id] ?? 0,
             'my_best'        => $bests[$level->id] ?? null,
+            'analysis'       => $isMine && isset($jobs[$level->id]) ? $jobs[$level->id]->summary() : null,
         ];
     }
 }

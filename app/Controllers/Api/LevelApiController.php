@@ -4,18 +4,19 @@ declare(strict_types=1);
 namespace App\Controllers\Api;
 
 use App\Core\AuthContext;
-use App\Core\Database;
 use App\Core\Env;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
+use App\Models\AnalysisJob;
 use App\Models\Level;
 use App\Models\Progress;
 use App\Models\User;
 use App\Services\ChartValidator;
 use App\Services\FileUploadService;
 use App\Services\LevelPresenter;
+use App\Services\PublishService;
 use PDOException;
 
 /**
@@ -27,9 +28,11 @@ use PDOException;
  *   - GET  /api/levels/{id}              (mixto)   público si is_public; 404 a no-autores si privado
  *   - GET  /api/levels/{id}/chart        (mixto)   chart del nivel, con ETag
  *   - GET  /api/levels/{id}/ranking      (mixto)   mejores marcas del nivel + la de quien mira
- *   - POST /api/levels/{id}/upload       (auth)    multipart `file` MP3
+ *   - POST /api/levels/{id}/upload       (auth)    multipart `file` MP3 → 200 publicado | 202 analizándose (Ola 4)
  *   - GET  /api/levels/{id}/file         (mixto)   stream MP3 si is_public, con ETag
  *   - POST /api/levels/{id}/visibility   (auth)    {is_public: bool}
+ *   - GET  /api/levels/{id}/analysis     (auth)    estado del análisis del servidor (solo el autor)
+ *   - POST /api/levels/{id}/analysis     (auth)    reintentar el análisis tras un fallo (solo el autor)
  *
  * Autoría: cualquier mutación valida `$level->userId === AuthContext::user()->id`,
  * 403 si no.
@@ -303,9 +306,59 @@ final class LevelApiController
 
         $relative = FileUploadService::storeLevelMp3($level->id, $file);
         $level->setAudioHashIfMissing($uploadedSha);
-        $level->setPublic(true, $relative);
 
-        return Response::json(self::serialize($level));
+        // Ola 4: con analizador, el nivel queda pendiente hasta que el servidor
+        // lo analiza (202 + estado del análisis); sin él, se publica ya (200).
+        $result = PublishService::requestPublish($level, $relative, $uploadedSha);
+        $fresh = Level::findById($level->id) ?? $level;
+        return Response::json(self::serialize($fresh), $result['published'] ? 200 : 202);
+    }
+
+    /**
+     * Estado del análisis de un nivel propio (la UI lo consulta mientras publica).
+     *
+     * @param array<string, string> $params
+     */
+    public function analysisStatus(Request $req, array $params): Response
+    {
+        $level = self::ownLevel(self::parseId($params));
+        if ($level === null) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        $job = AnalysisJob::latestForLevel($level->id);
+        return Response::json([
+            'level_id'       => $level->id,
+            'is_public'      => $level->isPublic,
+            'pending_public' => $level->pendingPublic,
+            'has_chart'      => $level->hasChart(),
+            'chart_version'  => $level->chartVersion,
+            'chart_hash'     => $level->chartHash,
+            'analysis'       => $job?->summary(),
+        ]);
+    }
+
+    /**
+     * Reintenta el análisis de un nivel propio (tras un fallo).
+     *
+     * @param array<string, string> $params
+     */
+    public function retryAnalysis(Request $req, array $params): Response
+    {
+        $level = self::ownLevel(self::parseId($params));
+        if ($level === null) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        if (!PublishService::analyzerEnabled()) {
+            return Response::json(['error' => 'analyzer_disabled', 'message' => 'El análisis en servidor no está activo.'], 409);
+        }
+        try {
+            $job = PublishService::retry($level);
+        } catch (\DomainException $e) {
+            return $e->getMessage() === 'no_audio'
+                ? Response::json(['error' => 'no_audio', 'message' => 'Sube primero el MP3 del nivel.'], 409)
+                : Response::json(['error' => 'already_active', 'message' => 'Ya se está analizando.'], 409);
+        }
+        return Response::json(['level_id' => $level->id, 'analysis' => $job->summary()], 202);
     }
 
     /**
@@ -358,17 +411,19 @@ final class LevelApiController
                     409,
                 );
             }
+            // Con analizador, publicar pasa SIEMPRE por el análisis del servidor:
+            // este camino no puede saltárselo.
+            if (!$level->isPublic && PublishService::analyzerEnabled()) {
+                if (!AnalysisJob::hasActive($level->id)) {
+                    PublishService::retry($level);
+                }
+                return Response::json(self::serialize(Level::findById($level->id) ?? $level), 202);
+            }
             $level->setPublic(true);
         } else {
-            // Pasar a privado: borra el archivo físico y resetea file_path.
-            // Si en el futuro vuelve a público, deberá re-subir el MP3.
-            if ($level->filePath !== null) {
-                FileUploadService::deleteLevelMp3($level->filePath);
-            }
-            $stmt = Database::getInstance()->prepare(
-                'UPDATE levels SET is_public = 0, file_path = NULL WHERE id = :id',
-            );
-            $stmt->execute(['id' => $level->id]);
+            // Pasar a privado: cancela un análisis en curso, borra el archivo
+            // físico y resetea file_path. Para volver a publicar, se re-sube.
+            PublishService::unpublish($level);
             $level = Level::findById($level->id);
         }
 
@@ -376,6 +431,14 @@ final class LevelApiController
     }
 
     // --------------------------- Helpers ---------------------------
+
+    /** Nivel del usuario autenticado, o null (→ 404: no se filtra que existe). */
+    private static function ownLevel(int $id): ?Level
+    {
+        $user = AuthContext::tryUser();
+        $level = Level::findById($id);
+        return $level !== null && $user !== null && $level->userId === $user->id ? $level : null;
+    }
 
     /**
      * Nivel si quien pregunta puede verlo: público, o privado y es su autor.

@@ -99,6 +99,27 @@ export function isUsableAnalysis(a) {
         && Array.isArray(a.onsets);
 }
 
+/**
+ * ¿Puede el charter trabajar con este análisis, venga del analizador que venga?
+ * Formato 1 (este analizador) o 2 (el del servidor, Ola 4, con beats, secciones
+ * y rasgos). A diferencia de `isUsableAnalysis`, no exige que lo haya producido
+ * ESTE analizador: es la comprobación de los análisis horneados o guardados en
+ * el servidor, no la de la caché local.
+ *
+ * @param {unknown} a
+ * @returns {boolean}
+ */
+export function isChartableAnalysis(a) {
+    return a !== null
+        && typeof a === 'object'
+        && (a.formatVersion === 1 || (a.formatVersion === 2 && Array.isArray(a.beats)))
+        && typeof a.analyzer?.name === 'string'
+        && Number.isInteger(a.analyzer?.version)
+        && Number.isFinite(a.durationSec) && a.durationSec > 0
+        && Number.isFinite(a.bpm) && a.bpm > 0
+        && Array.isArray(a.onsets);
+}
+
 function round3(v) {
     return Math.round(v * 1000) / 1000;
 }

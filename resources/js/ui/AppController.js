@@ -24,6 +24,7 @@
 import { readSeedFromUrl } from '../game/levels/Seed.js';
 import { createLevelLoader, LevelLoadError, LOAD_STAGE } from '../game/levels/levelLoader.js';
 import { analyzeAudio } from '../game/levels/analyze.js';
+import { createWorkerAnalyzer, spawnAnalysisWorker } from '../game/levels/analysisClient.js';
 import { buildChart } from '../game/levels/charter.js';
 import { chartStats, difficultyFromStats } from '../game/levels/chartStats.js';
 import { GameSession } from '../game/GameSession.js';
@@ -77,6 +78,15 @@ let playingLevelId = null;
 let playRequestSeq = 0;
 
 /**
+ * Análisis de canciones locales en un Web Worker (Ola 4), con el hilo principal
+ * como respaldo. Mismo resultado en ambos: la caché de análisis no distingue.
+ */
+const localAnalyzer = createWorkerAnalyzer({
+    spawn: typeof Worker === 'function' ? spawnAnalysisWorker : null,
+    analyzeInline: (audioBuffer, opts) => analyzeAudio(audioBuffer, opts),
+});
+
+/**
  * @param {{ engine: any }} cfg
  */
 export function start(cfg) {
@@ -94,7 +104,7 @@ export function start(cfg) {
         decodeDetached: typeof OfflineAudioContext === 'function'
             ? (bytes) => new OfflineAudioContext(2, 1, ANALYSIS_SAMPLE_RATE).decodeAudioData(bytes)
             : undefined,
-        analyze: (audioBuffer, opts) => analyzeAudio(audioBuffer, opts),
+        analyze: (audioBuffer, opts) => localAnalyzer.analyze(audioBuffer, opts),
         buildChart,
         hash: sha256Hex,
     });
@@ -200,10 +210,10 @@ async function handlePlayRequest(request) {
     let renderPaused = false;
     const onStage = (stage, progress) => {
         if (seq !== playRequestSeq) return;
-        // El análisis corre en el hilo principal: mientras dura, se congela el
-        // render para darle toda la CPU (y no animar a trompicones). El resto
-        // de fases no compiten por CPU y el render sigue vivo.
-        const analyzing = stage === LOAD_STAGE.ANALYZING;
+        // Si el análisis corre en el hilo principal (sin Web Worker), mientras
+        // dura se congela el render para darle toda la CPU y no animar a
+        // trompicones. En el Worker (Ola 4) no compite y el fondo sigue vivo.
+        const analyzing = stage === LOAD_STAGE.ANALYZING && !localAnalyzer.offThread;
         if (analyzing !== renderPaused) {
             engineApi.setRenderPaused(analyzing);
             renderPaused = analyzing;

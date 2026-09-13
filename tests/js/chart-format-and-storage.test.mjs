@@ -150,6 +150,16 @@ test('la caché devuelve lo guardado y copias independientes del audio', async (
     assert.equal(await cache.getChart('level:7:v2'), null, 'una versión nueva del chart no pisa la vieja');
 });
 
+test('catalogChartKey: con hash, un chart sustituido en la misma versión no se sirve viejo (Ola 4)', () => {
+    const a = 'ab'.repeat(32);
+    const b = 'cd'.repeat(32);
+    assert.equal(catalogChartKey(7, 2, a), `level:7:v2:${a.slice(0, 16)}`);
+    assert.notEqual(catalogChartKey(7, 2, a), catalogChartKey(7, 2, b));
+    // Sin hash válido (servidor anterior a la Ola 4) se mantiene la clave de siempre.
+    assert.equal(catalogChartKey(7, 2, null), 'level:7:v2');
+    assert.equal(catalogChartKey(7, 2, 'no-es-un-hash'), 'level:7:v2');
+});
+
 test('la caché desaloja lo menos usado al pasar del presupuesto', async () => {
     const cache = createMemoryLevelCache({ limits: { audioMaxEntries: 2, audioMaxBytes: 1000 } });
     await cache.putAudio('a', new Uint8Array(10));

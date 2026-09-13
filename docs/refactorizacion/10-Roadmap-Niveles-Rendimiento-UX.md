@@ -189,7 +189,7 @@ Se separan dos responsabilidades que hoy están fundidas en `LevelGenerator`:
 |---|---|---|
 | Qué hace | DSP: onsets, beats, downbeats, secciones, energía | Decide qué obstáculo va dónde, con qué dificultad |
 | Coste | Alto, segundos o minutos | Trivial, milisegundos |
-| Dónde corre | **Sidecar Python** (`librosa`/`madmom`), offline, una vez por canción | **JS puro, compartido**, en el navegador |
+| Dónde corre | **Sidecar Python** (`librosa`/`madmom` → en la Ola 4 `librosa` + `beat_this`), offline, una vez por canción | **JS puro, compartido**, en el navegador |
 | Salida | `analysis.json` | `chart.json` |
 
 Ventaja de la separación: **el charting, que es donde vive la jugabilidad, tiene una sola implementación**. No hay riesgo de que un nivel se comporte distinto según dónde se generó. Y re-chartear (otra dificultad, mejor algoritmo, edición manual) no exige re-analizar.
@@ -521,7 +521,7 @@ Tests: **77 JS** (`bun run test`) y **18 PHP** (`docker compose exec -T php comp
 
 ---
 
-### Ola 4 — Motor de niveles II: analizador en servidor
+### Ola 4 — Motor de niveles II: analizador en servidor ✅
 
 **Objetivo.** Mover el coste del análisis al momento de publicar, de una vez y para siempre. A partir de aquí, **el jugador no analiza nada nunca**.
 
@@ -548,6 +548,74 @@ Tests: **77 JS** (`bun run test`) y **18 PHP** (`docker compose exec -T php comp
 - **Duración.** Guardar la del servidor pero dejar que el cliente prefiera `audioBuffer.duration` para la condición de victoria.
 
 **Verificación.** Publicar una canción, ver progreso de análisis real, y que otro usuario (otra sesión, otro navegador) la juegue **sin ninguna fase de análisis**. Ejecutar el seed en una BD limpia y comprobar 8 niveles oficiales jugables.
+
+#### Qué se construyó (y en qué se desvió del plan, con motivo)
+
+**Cola en la base de datos, no una API HTTP interna.** El plan pedía `POST /analyze` + `GET /jobs/{id}`. Se hizo una tabla `analysis_jobs` (migración `009`) que PHP rellena y el worker Python consume con `SELECT … FOR UPDATE SKIP LOCKED`. Motivos: encolar va **en la misma transacción** que marcar el nivel como pendiente (no hay nivel "analizándose" sin trabajo, ni trabajo sin nivel); los trabajos sobreviven a reinicios de cualquiera de los dos servicios; escalar es `docker compose up --scale analyzer=N` sin coordinación; y no se abre ninguna superficie HTTP nueva. El worker renueva una reserva de 90 s (por tiempo, no solo al llegar progreso), se reintenta con espera exponencial ante fallos transitorios, falla sin reintentar ante los permanentes, detecta cancelaciones al renovar y un `docker stop` devuelve el trabajo sin gastar intento. `audio_analyses` cachea el análisis por `(sha256, analizador)`: la misma canción subida por otra persona no se vuelve a analizar.
+
+**Publicación diferida.** `POST /api/levels/{id}/upload` guarda el MP3 y, con `ANALYZER_ENABLED=true`, responde **202**: el nivel queda `pending_public` y **no aparece en el catálogo hasta que el servidor lo ha analizado** (así todo nivel público se juega con el chart del servidor, no con el del navegador de quien lo subió). `GET /api/levels/{id}/analysis` da estado, etapa, progreso y posición en la cola; `POST` reintenta tras un fallo. Con `ANALYZER_ENABLED=false` se publica al instante como en la Ola 3: el sistema degrada, no se rompe. Retirar un nivel cancela su análisis; un nivel ya público conserva su chart salvo reanálisis explícito (`composer analysis:enqueue -- --level=…`).
+
+**beat_this en vez de madmom.** madmom está sin mantenimiento (última versión en 2018) y no instala en Python 3.12 con NumPy 2. beat_this (CPJKU, ISMIR 2024, MIT) es el estado del arte en beats y downbeats. Su rejilla es de 20 ms, así que cada beat se afina al pico de ataque real en ±35 ms. Encima: normalización del nivel métrico (una canción no salta de 80 a 160 BPM a mitad), relleno de beats en huecos sin percusión y ninguno en los silencios, onsets en dB con suelo absoluto (**D16 resuelto en el servidor**: un acorde sostenido da ≤ 3 onsets; el JS daba 237 en un drone), latencia del detector corregida (−9 ms, medida por instrumento) y "color" de cada ataque (graves/medios/agudos) en vez de clasificar bandas con umbrales. Secciones por segmentación laplaciana (McFee & Ellis 2014) con rol heurístico (intro, estrofa, estribillo, puente, break, outro), curva de energía y rasgos (`percussiveRatio`, eventos fuertes por minuto, estabilidad del tempo…). Todo en `analysis.json` formato 2, validado igual en Python (`schema.py`) y en PHP (`ChartValidator`).
+
+**El charting sigue siendo JS, uno solo.** El worker llama a `node scripts/chart-from-analysis.mjs`, que usa el mismo `charter.js` que el navegador. **Charter v2**: con beats reales los rellenos caen en ESOS beats (no en una extrapolación), y la velocidad sale del pulso jugable (`gameplayTempo`: una canción a 63 BPM se juega con la velocidad de 126). Hacía falta porque el servidor reporta el tempo que marcaría una persona, que en las canciones lentas es la mitad del que daba el analizador JS; sin ello pasarían a scroll lento, que es donde **menos** margen hay (hallazgo de la Ola 2).
+
+**Techo de dificultad calculado y guardado, pero el selector se aplaza a la Ola 5.** `difficultyCeiling.js` lo deriva de la densidad musical efectiva, calibrado con 10 temas reales, y se guarda en `difficulty_ceiling`. **No se ofrece elegir dificultad todavía**: el charter aún no genera un nivel distinto por dificultad, y ofrecer la etiqueta sería exactamente el "añadido con calzador" que la decisión §2.3 prohíbe. La prueba de que hace falta: HOPE y Time tienen techo 2 y su chart actual mide 4★.
+
+**Sin `audio.offsetSec`.** El plan temía un desfase entre ffmpeg y el navegador. Medido: el ffmpeg 7.1 de Debian trixie (el de la imagen) decodifica **bit a bit** igual que ffmpeg 8.1, que ya coincidía con Chrome (Ola 2), en los 13 MP3 disponibles (los 11 del legacy y 2 subidos por usuarios). Por eso la imagen es trixie y no hace falta corregir nada.
+
+**Catálogo oficial re-horneado con el servidor.** `docker compose run … analyzer bake-official` analiza en Python y chartea con `bake-official.mjs`; `composer seed:official -- --rechart` lo aplica. El test de horneados exige ahora análisis de formato 2 y comprueba techo y densidad.
+
+**Interfaz de publicación.** La ficha enseña el progreso real con palabras de jugador ("Buscando el pulso", "Reconociendo estrofas y estribillos"), la posición en la cola, y ante un fallo un texto comprensible con "Reintentar análisis" solo si reintentar puede salir bien (un archivo que no es audio pide publicar otro). `api/analysisWatcher.js` hace un solo sondeo por nivel con ritmo adaptado (1.5 s analizando, 4 s en cola, 15 s con la pestaña oculta, espera creciente ante errores) y sigue aunque se cierre el catálogo: al terminar avisa con un toast, que espera si se está jugando. Recargar a mitad de un análisis lo retoma. La caché de charts del cliente usa `chart_hash` en la clave: un chart sustituido en la misma versión del charter no se sirve viejo.
+
+**Ruta local en un Web Worker.** "Subir mi canción" analiza en `analysisWorker.js`. El hilo principal solo mezcla a mono y transfiere el buffer; el resultado es **idéntico bit a bit** al del hilo principal (misma caché), y si el Worker no puede crearse o se cae se analiza en el hilo principal. El render ya no se congela durante el análisis.
+
+**Limpieza de D1.** `composer levels:dedupe-legacy` (simulación por defecto, `--apply`) fusiona las filas duplicadas anteriores a la Ola 3: conserva una por canción y mueve progreso (la mejor marca gana) y comentarios. Aplicado sobre la BD de desarrollo.
+
+**Defectos encontrados en la verificación de esta ola, corregidos antes de cerrarla:**
+- En desarrollo, el Worker no arrancaba: el script llega del servidor de Vite (otro origen) y el navegador lo prohíbe. Arranque desde un Blob solo en desarrollo.
+- En producción tampoco habría arrancado, por dos motivos que el E2E en desarrollo no podía ver: Vite solo empaqueta un Worker si ve la expresión `new Worker(new URL(…))` literal (con la URL construida en otra función lo metía como `data:` sin sus imports), y sin `base` en `vite.config.js` la URL salía como `/assets/…` en vez de `/build/assets/…`. Ambos fallos acababan analizando en el hilo principal **sin ningún error visible**. Verificado después con el bundle real en Chrome.
+- `GET /analysis` devolvía el mensaje del worker, que incluye la salida de ffmpeg y rutas internas del servidor. Ahora solo el código; la UI lo traduce.
+- La reserva del trabajo solo se renovaba al llegar progreso: la etapa del pulso de una canción muy larga podía superar los 90 s sin mensajes y otro worker habría repetido el trabajo.
+- Un `docker stop` gastaba un intento y retrasaba 30 s el trabajo: tres despliegues seguidos habrían dado por fallida una canción buena.
+- Un fallo de hash detectado al completar dejaba el nivel pendiente para siempre.
+- El contenedor montaba la raíz del proyecto: no recibía secretos por entorno, pero podía leer `.env`, las sesiones y el volcado del legacy. Ahora monta solo lo que usa.
+- `torchaudio` iba sin versión (la imagen instalaba 2.11 con torch 2.14 mientras el comentario decía "misma versión"). Fijado y explicado.
+
+#### Verificación — hecha, con medidas reales
+
+Tests: **136 JS** (+28), **53 PHP** (+17) y **70 Python** (50 de análisis contra música sintética con verdad conocida y `mir_eval`, 20 de cola y worker contra una BD real desechable). Los arreglos clave se comprobaron por mutación (renovación de la reserva, mezcla a mono del Worker: el test falla).
+
+| Qué | Resultado |
+|---|---|
+| Beats / downbeats (sintético, F-measure) | **≥ 0.95 / ≥ 0.90**; sesgo mediano ≤ 3 ms, p90 ≤ 6 ms, peor beat ≤ 25 ms; tempo ±1 %; accelerando seguido (F ≥ 0.9) |
+| Onsets | sesgo ≤ 3 ms; bombo, caja y hi-hat, en silencio y sobre colchón, ≤ 5.5 ms; acorde sostenido ≤ 3 onsets (D16) |
+| Secciones (sintético) | fronteras con F ≥ 0.8 dentro de un compás; el estribillo repetido se reconoce como el mismo material |
+| Tempo en temas reales, JS → servidor | HOPE 161.5 → **79.9**, Time 126 → **63.0**, Dawn of Faith 132.5 → **65.0** (el JS doblaba las lentas); el resto igual ±1 BPM |
+| Decodificado ffmpeg de la imagen vs ffmpeg 8.1 | **PCM idéntico bit a bit** en 13/13 MP3 (hash del float32 decodificado) |
+| Horneado de los 8 oficiales | 2 min 36 s (6.5-28 s por canción, el primero con carga del modelo) |
+| Publicar Time (2:46) desde la ficha | 202 → progreso en vivo → **publicado en ~20 s** → toast → la ficha pasa a "Jugar" |
+| Publicar HOPE (1:19) | etapas visibles (11 % pulso → 76 % secciones) → **publicado en 13 s** |
+| Reanálisis de una canción ya analizada | **1.65 s** (análisis de caché), chart idéntico |
+| Archivo que no es audio | fallo en 3 s, "Sin publicar", texto comprensible, sin "Reintentar"; reintento de un fallo transitorio → vuelve a la cola → aviso |
+| Niveles sin chart anteriores a la Ola 3 (backfill) | 2/2 analizados y charteados (20-26 s) |
+| Oficial y nivel de comunidad desde el catálogo | juegan con el chart del servidor; claves de caché con `chart_hash`; **0 errores de consola** |
+| "Subir mi canción" con Time (2:46) | análisis en el Worker **2.8 s** con el hilo principal a **61 FPS** (antes: render congelado) |
+| Worker del bundle de producción en Chrome | carga desde `/build/assets/`, 120.2 BPM sobre un metrónomo de 120, buffer transferido |
+| `docker stop` durante un análisis / etapa larga sin progreso | trabajo de vuelta a la cola sin gastar intento / reserva renovada |
+
+**PHPStan nivel 6:** 13 errores, todos anteriores. **Bundle: 153.58 KB gzip** (+4.05 KB) + Worker de 5 KB aparte. Imagen del analizador: 2.16 GB (PyTorch CPU y modelo dentro).
+
+#### Limitaciones que quedan
+
+- **El charter todavía no usa secciones, downbeats ni el techo.** Todos los oficiales salen a 3-4★ con 50-64 acciones/min, incluidas canciones suaves de techo 2. Es el trabajo de la Ola 5, que ahora sí tiene los hechos musicales que necesita.
+- **Quien sube no elige dificultad todavía** (ver arriba, Ola 5).
+- La etapa del pulso (la más larga, ~60 % del tiempo) no informa de progreso intermedio: la barra se queda en ~11 % con un brillo que indica que sigue vivo.
+- Los roles de sección son heurísticos: comprobados con verdad conocida en sintético y plausibles en los 10 temas reales, sin anotación humana de esos temas.
+- El charter importa `pixi.js` en Node (vía `physics.js → Dino.js`): el contenedor necesita `node_modules` y cada chart paga ese arranque. Candidato a separar en la Ola 5.
+- El primer trabajo tras arrancar el servicio carga el modelo (~10 s más).
+- Seguimiento por sondeo adaptativo, no por eventos del servidor: suficiente a esta escala.
+- Los niveles privados guardados con el análisis JS no se reanalizan hasta que se publican.
+- El E2E volvió a usar una clave RSA de prueba en la caché JWKS con un usuario desechable (borrado al terminar), no un login real en Vout.
 
 ---
 
@@ -622,14 +690,14 @@ Si hay que elegir una sola cosa: **Ola 3**. Es la que cambia cómo se siente el 
 
 | Defecto | Ola | Defecto | Ola |
 |---|---|---|---|
-| D1 fila duplicada por partida | 3 ✅ | D9 modal sin precarga | 0 ✅ |
+| D1 fila duplicada por partida | 3 ✅ (filas antiguas fusionadas en 4) | D9 modal sin precarga | 0 ✅ |
 | D2 título `.mp3.mp3` | 0 ✅ | D10 `sampleRate` no fijado | 0 ✅ |
 | D3 validación 200 vs col 120 | 0 ✅ | D11 nivel privado no jugable | 2 ✅ |
 | D4 botón "Jugar" bloqueado | 0 ✅ | D12 identidad en iframe | 2 ✅ |
 | D5 `file_path` expuesto | 0 ✅ | D13 orden `filterSpacing` | 3 ✅ |
 | D6 `difficulty` hardcodeada | 5 (medida en 2) | D14 espaciado en s, no en px | 5 |
 | D7 `?public=1` muerto | 0 ✅ | D15 sin validación de jugabilidad | 5 |
-| D8 sin índice `is_public` | 0 ✅ | D16 sin suelo de energía en `pickPeaks` | 5 (mitigado en 3) |
+| D8 sin índice `is_public` | 0 ✅ | D16 sin suelo de energía en `pickPeaks` | 4 ✅ en el servidor (JS local: mitigado en 3) |
 | D17 relleno a 0.15 s del siguiente | 3 ✅ | D18 onsets 23 ms adelantados | 3 ✅ |
 | D19 física detrás del reloj de audio | 3 ✅ | D20 salto de `outputLatency` | 3 ✅ |
 | D21 `X-Frame-Options` impedía el iframe de Vout | 2 ✅ | | |

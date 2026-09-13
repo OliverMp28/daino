@@ -36,7 +36,10 @@
         "analyse": "phpstan analyse -l 6 app/",
         "clean:sessions": "php scripts/clean-sessions.php",
         "test": "php tests/php/run.php",
-        "seed:official": "php scripts/seed-official.php"
+        "seed:official": "php scripts/seed-official.php",
+        "levels:dedupe-legacy": "php scripts/dedupe-legacy-levels.php",
+        "analysis:status": "php scripts/analysis-queue.php status",
+        "analysis:enqueue": "php scripts/analysis-queue.php enqueue"
     },
     "minimum-stability": "stable",
     "prefer-stable": true

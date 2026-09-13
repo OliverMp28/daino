@@ -6,6 +6,7 @@
 // acumula condiciones sueltas.
 
 import { mergeBest } from '../storage/localBests.js';
+import { publishView } from './publishModel.js';
 
 export const DIFFICULTY_NAMES = Object.freeze({
     1: 'Relajado',
@@ -98,6 +99,7 @@ export function playModeFor(level) {
 export function cardView(level, localBest = null) {
     const best = mergeBest(level.my_best, localBest);
     const playMode = playModeFor(level);
+    const publish = publishView(level);
     // La insignia ya dice "Oficial": un oficial sin artista no repite nada.
     let byline;
     if (level.artist) byline = level.artist;
@@ -110,7 +112,7 @@ export function cardView(level, localBest = null) {
         id: level.id,
         title: level.title,
         byline,
-        badge: level.is_official ? 'Oficial' : (level.is_mine && !level.is_public ? 'Privado' : null),
+        badge: level.is_official ? 'Oficial' : (level.is_mine ? publish.badge : null),
         difficulty: difficultyView(level.difficulty),
         bpm: Number.isFinite(level.bpm) && level.bpm > 0 ? `${level.bpm} BPM` : null,
         duration: formatDuration(level.duration_ms ? level.duration_ms / 1000 : level.duration_sec),
@@ -118,7 +120,9 @@ export function cardView(level, localBest = null) {
         players: level.players > 0 ? `${level.players} ${level.players === 1 ? 'jugador' : 'jugadores'}` : null,
         hue: coverHue(level),
         playMode,
-        canPublish: level.is_mine === true && level.is_public !== true && level.is_official !== true,
+        canPublish: publish.canPublish,
+        /** Ola 4: estado de publicación y del análisis del servidor. */
+        publish,
         playLabel: playMode === PLAY_MODE.NEEDS_FILE ? 'Elegir MP3 y jugar' : 'Jugar',
     };
 }

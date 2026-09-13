@@ -1,0 +1,16 @@
+# Dependencias directas del analizador (Ola 4). Las versiones exactas, con todas
+# las transitivas, están en requirements.lock (lo genera `pip freeze` dentro del
+# contenedor; ver analyzer/README.md). torch se instala aparte desde el índice
+# de CPU de PyTorch: el de PyPI arrastra ~2.5 GB de librerías CUDA que aquí no
+# se usan.
+
+numpy
+scipy
+librosa          # onsets por banda, HPSS, energía, segmentación estructural
+beat-this        # beats y downbeats (CPJKU, 2024, MIT) — red neuronal, estado del arte
+soxr             # remuestreo que usa beat-this
+PyMySQL          # cola de trabajos en MariaDB (puro Python, sin libmysqlclient)
+
+# Solo para tests y evaluación de calidad
+pytest
+mir_eval         # métricas estándar de MIR: F-measure de beats, onsets, segmentos

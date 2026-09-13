@@ -107,9 +107,10 @@ export async function computeOnsetEnvelope(audioBuffer, opts = {}) {
 
     let maxFlux = 0;
     // Yield al event loop cada YIELD_EVERY hops para no congelar la UI durante
-    // canciones largas. 0 = nunca ceder (Worker / Node).
+    // canciones largas. 0 = nunca ceder (Worker / Node). El progreso se informa
+    // con la misma cadencia aunque no se ceda: un Worker también lo enseña.
     const yieldEvery = opts.yieldEvery ?? DEFAULT_YIELD_EVERY;
-    const yieldMask = yieldEvery > 0 ? yieldEvery - 1 : 0;
+    const stepMask = (yieldEvery > 0 ? yieldEvery : DEFAULT_YIELD_EVERY) - 1;
 
     for (let h = 0; h < numHops; h++) {
         const offset = h * HOP_SIZE;
@@ -137,9 +138,9 @@ export async function computeOnsetEnvelope(audioBuffer, opts = {}) {
         prevMag = curMag;
         curMag = tmp;
 
-        if (yieldEvery > 0 && (h & yieldMask) === 0 && h > 0) {
+        if ((h & stepMask) === 0 && h > 0) {
             if (opts.onProgress) opts.onProgress(h / numHops);
-            await yieldToEventLoop();
+            if (yieldEvery > 0) await yieldToEventLoop();
         }
     }
 
@@ -239,8 +240,16 @@ export function pickPeaks(env, opts = {}) {
 
 // --------------------------- Helpers ---------------------------
 
-/** Promedia todos los canales del buffer a un único Float32Array mono. */
-function mixToMono(audioBuffer) {
+/**
+ * Promedia todos los canales del buffer a un único Float32Array mono (copia
+ * nueva, nunca una vista del buffer).
+ *
+ * Exportada para el análisis en Web Worker (Ola 4): el hilo principal mezcla
+ * con ESTA función y transfiere solo el mono, y el analizador lo recibe como
+ * buffer de un canal. Mismas operaciones en el mismo orden ⇒ mismos bits que
+ * analizar el estéreo aquí: la caché de análisis no distingue por dónde se hizo.
+ */
+export function mixToMono(audioBuffer) {
     const ch = audioBuffer.numberOfChannels;
     const len = audioBuffer.length;
     if (ch === 1) return audioBuffer.getChannelData(0).slice();

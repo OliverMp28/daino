@@ -27,6 +27,10 @@ import { renderAvatar } from './avatar.js';
 import { cardView, emptyView, tabsFor, PLAY_MODE, formatPoints } from './catalogModel.js';
 import { createModal } from './modals.js';
 import { showToast } from './toast.js';
+import { analysisView, PUBLISH_STATE } from './publishModel.js';
+import {
+    LEVEL_UPDATED_EVENT, retryAnalysis, subscribeAnalysis, trackPending, trackPublish,
+} from './publishTracker.js';
 
 const DIALOG_ID = 'modal-catalog';
 const SKELETON_CARDS = 8;
@@ -45,7 +49,15 @@ const ui = {
     renderSeq: 0,
     /** Tarjeta que abrió la ficha, para devolverle el foco al volver. */
     returnFocusId: null,
+    /** Suscripciones al progreso del análisis de lo que hay pintado (Ola 4). */
+    unsubscribers: [],
 };
+
+/** Suelta las suscripciones de la vista anterior antes de pintar otra. */
+function releaseSubscriptions() {
+    for (const off of ui.unsubscribers) off();
+    ui.unsubscribers = [];
+}
 
 // --------------------------- API pública ---------------------------
 
@@ -133,6 +145,8 @@ function ensureDialog() {
     dialog.addEventListener('close', () => {
         ui.detail = null;
         ui.renderSeq++;
+        // El seguimiento del análisis continúa (publishTracker); solo se deja de pintar.
+        releaseSubscriptions();
     });
 
     root.appendChild(dialog);
@@ -148,6 +162,20 @@ function ensureDialog() {
     };
     window.addEventListener('daino:auth:login', onAuthChange);
     window.addEventListener('daino:auth:logout', onAuthChange);
+
+    // Un nivel terminó de analizarse (publicado o fallido): la vista abierta se
+    // repinta con el nivel nuevo. La caché ya viene actualizada por el tracker.
+    window.addEventListener(LEVEL_UPDATED_EVENT, (ev) => {
+        if (!dialog.open) return;
+        const { levelId, level, status } = ev.detail;
+        if (ui.detail !== null) {
+            if (ui.detail.id !== levelId) return;
+            const fresh = level ?? { is_public: status?.is_public === true, analysis: status?.analysis ?? null };
+            openDetail({ ...ui.detail, ...fresh, pending_public: false }, null);
+            return;
+        }
+        void renderGrid();
+    });
     return dialog;
 }
 
@@ -255,6 +283,9 @@ function paintGrid(main, tab, page) {
     main.removeAttribute('aria-busy');
     const scroll = main.scrollTop;
     main.innerHTML = '';
+    releaseSubscriptions();
+    // Pendientes de una sesión anterior (recarga a mitad de análisis): se retoman.
+    trackPending(page.items);
 
     if (page.items.length === 0) {
         const view = emptyView(tab);
@@ -310,7 +341,20 @@ function renderCard(level) {
 
     const cover = el('div', 'daino-card__cover');
     cover.appendChild(renderEq(level.id));
-    if (view.badge) cover.appendChild(el('span', 'daino-card__badge', view.badge));
+    if (view.badge) {
+        const badge = el('span', 'daino-card__badge', view.badge);
+        badge.dataset.state = view.publish.state;
+        cover.appendChild(badge);
+        if (view.publish.state === PUBLISH_STATE.ANALYZING) {
+            // Porcentaje en la insignia mientras se analiza. Solo texto: el
+            // progreso detallado (y anunciado) está en la ficha.
+            ui.unsubscribers.push(subscribeAnalysis(level.id, (status) => {
+                const v = analysisView(status.analysis);
+                const text = v?.progress != null ? `Analizando ${Math.round(v.progress * 100)} %` : 'En cola';
+                if (badge.textContent !== text) badge.textContent = text;
+            }));
+        }
+    }
     cover.appendChild(renderStars(view.difficulty));
 
     const body = el('div', 'daino-card__body');
@@ -368,6 +412,7 @@ function openDetail(level, fromButton) {
     const main = mainEl();
     main.innerHTML = '';
     main.scrollTop = 0;
+    releaseSubscriptions();
 
     // Intención clara de jugar: se adelanta la descarga de audio y chart.
     if (view.playMode === PLAY_MODE.CATALOG) requestPrefetch(level);
@@ -422,12 +467,21 @@ function openDetail(level, fromButton) {
     if (view.playMode === PLAY_MODE.NEEDS_FILE) {
         status.textContent = 'Es privado: su audio está en tu equipo. Elige el MP3 con el que lo creaste.';
     }
+    const failed = view.publish.state === PUBLISH_STATE.FAILED;
+    if (view.publish.canRetry) {
+        const retry = button('Reintentar análisis', 'daino-btn');
+        retry.addEventListener('click', () => { void retryLevelAnalysis(level, retry, status); });
+        actions.appendChild(retry);
+    }
     if (view.canPublish) {
-        const publish = button('Publicar', 'daino-btn');
+        const publish = button(failed ? 'Publicar de nuevo' : 'Publicar', 'daino-btn');
         publish.addEventListener('click', () => { void publishLevel(level, publish, status); });
         actions.appendChild(publish);
     }
     info.append(actions, status);
+    if (view.publish.analysis !== null) {
+        info.appendChild(renderAnalysisPanel(level, view.publish));
+    }
 
     hero.append(cover, info);
 
@@ -531,7 +585,17 @@ async function publishLevel(level, btn, status) {
     fd.append('file', file);
     const res = await apiUpload(`/api/levels/${level.id}/upload`, fd);
 
+    if (res.status === 202 && res.data?.id === level.id) {
+        // Ola 4: subido; el servidor lo analiza y lo publica al terminar. La
+        // ficha pasa a enseñar el progreso y el tracker sigue aunque se cierre.
+        patchCachedLevel(res.data);
+        trackPublish(res.data);
+        if (ui.detail?.id === level.id) openDetail(res.data, null);
+        showToast('Subido. Analizamos la canción y se publicará sola al terminar.', 'info');
+        return;
+    }
     if (res.ok && res.data?.id === level.id) {
+        // Sin analizador en el servidor: publicado al instante con el chart local.
         patchCachedLevel(res.data);
         invalidateLevels('community');
         // La ficha se repinta ya como pública; el aviso va aparte para que el
@@ -546,6 +610,80 @@ async function publishLevel(level, btn, status) {
         : res.status === 413 ? 'Archivo demasiado grande.'
             : res.status === 422 ? (res.data?.fields?.file ?? 'El archivo no es válido.')
                 : `No se pudo publicar (error ${res.status}).`;
+}
+
+async function retryLevelAnalysis(level, btn, status) {
+    btn.disabled = true;
+    status.textContent = '';
+    const res = await retryAnalysis(level);
+    if (!res.ok) {
+        btn.disabled = false;
+        status.textContent = res.message;
+        return;
+    }
+    if (ui.detail?.id === level.id) {
+        openDetail({ ...level, pending_public: true, analysis: { status: 'queued', attempts: 0, queue_position: null } }, null);
+    }
+}
+
+/**
+ * Progreso del análisis en la ficha, en vivo. El título y la etapa se anuncian
+ * (cambian pocas veces); el porcentaje no, que cambia cada segundo.
+ *
+ * @param {object} level
+ * @param {{ state: string, analysis: object | null }} publish  `publishView(level)`
+ */
+function renderAnalysisPanel(level, publish) {
+    const panel = el('div', 'daino-analysis');
+    const head = el('div', 'daino-analysis__head');
+    const title = el('strong', 'daino-analysis__title');
+    const pct = el('span', 'daino-analysis__pct');
+    pct.setAttribute('aria-hidden', 'true');
+    head.append(title, pct);
+
+    const bar = el('div', 'daino-analysis__bar');
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+    bar.appendChild(el('span', 'daino-analysis__fill'));
+
+    const detail = el('p', 'daino-analysis__detail');
+    detail.setAttribute('role', 'status');
+    detail.setAttribute('aria-live', 'polite');
+    const note = el('p', 'daino-analysis__note');
+
+    panel.append(head, bar, detail, note);
+
+    const paint = (view) => {
+        if (view === null) return;
+        panel.dataset.tone = view.tone;
+        if (title.textContent !== view.title) title.textContent = view.title;
+        if (detail.textContent !== view.detail) detail.textContent = view.detail;
+        const working = view.progress !== null;
+        bar.hidden = view.tone === 'error';
+        bar.dataset.indeterminate = String(!working);
+        pct.textContent = working ? `${Math.round(view.progress * 100)} %` : '';
+        if (working) {
+            bar.style.setProperty('--progress', String(view.progress));
+            bar.setAttribute('aria-valuenow', String(Math.round(view.progress * 100)));
+        } else {
+            bar.removeAttribute('aria-valuenow');
+        }
+        note.textContent = view.tone === 'error'
+            ? ''
+            : 'Se publicará solo al terminar. Puedes cerrar esto y seguir jugando: te avisaremos.';
+    };
+
+    paint(publish.analysis);
+    if (publish.state === PUBLISH_STATE.ANALYZING) {
+        // Solo estados en curso: el desenlace (publicado o fallido) lo pinta la
+        // ficha entera al recibir LEVEL_UPDATED_EVENT, con sus acciones nuevas.
+        ui.unsubscribers.push(subscribeAnalysis(level.id, (s) => {
+            const view = analysisView(s.analysis);
+            if (view?.active) paint(view);
+        }));
+    }
+    return panel;
 }
 
 // --------------------------- Helpers ---------------------------

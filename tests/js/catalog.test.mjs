@@ -16,7 +16,8 @@ import {
     cardView, coverHue, difficultyView, emptyView, formatDuration, playModeFor, tabsFor, PLAY_MODE,
 } from '../../resources/js/ui/catalogModel.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
-import { ANALYZER_KEY, isUsableAnalysis } from '../../resources/js/game/levels/analyze.js';
+import { ANALYZER_KEY, isChartableAnalysis } from '../../resources/js/game/levels/analyze.js';
+import { difficultyCeiling } from '../../resources/js/game/levels/difficultyCeiling.js';
 import { CHARTER_NAME, CHARTER_VERSION, normalizeChart, seedFromSha256 } from '../../resources/js/game/levels/chartFormat.js';
 import { toAudioBufferShape } from '../../scripts/lib/ffmpegDecode.mjs';
 
@@ -205,8 +206,8 @@ test('toAudioBufferShape: desentrelaza estéreo y expone la forma que usa el ana
 });
 
 test('los oficiales horneados del repo están al día con el analizador, el charter y la escala', async () => {
-    // Guardia de CI: si alguien cambia el charter o la escala de dificultad y
-    // no vuelve a hornear, este test lo dice (sin necesitar los MP3 ni ffmpeg).
+    // Guardia de CI: si alguien cambia el charter, la escala de dificultad o la
+    // del techo y no vuelve a hornear, este test lo dice (sin MP3, ffmpeg ni Python).
     const dir = path.join(ROOT, 'database/seeds/official');
     const manifest = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'));
     const files = (await readdir(path.join(dir, 'baked'))).filter((f) => f.endsWith('.json'));
@@ -214,15 +215,23 @@ test('los oficiales horneados del repo están al día con el analizador, el char
 
     for (const entry of manifest.levels) {
         const baked = JSON.parse(await readFile(path.join(dir, 'baked', `${entry.slug}.json`), 'utf8'));
+        const a = baked.analysis;
         assert.equal(baked.file, entry.file, entry.slug);
-        assert.equal(baked.bakedWith.analyzer, ANALYZER_KEY, `${entry.slug}: analizador`);
+        assert.ok(isChartableAnalysis(a), `${entry.slug}: análisis utilizable`);
+        // Los oficiales se hornean con el analizador del servidor (Ola 4): el del
+        // navegador no da beats, secciones ni techo de dificultad.
+        assert.equal(a.formatVersion, 2, `${entry.slug}: análisis del servidor`);
+        assert.notEqual(`${a.analyzer.name}@${a.analyzer.version}`, ANALYZER_KEY, `${entry.slug}: no es el analizador JS`);
+        assert.equal(baked.bakedWith.analyzer, `${a.analyzer.name}@${a.analyzer.version}`, `${entry.slug}: analizador`);
         assert.equal(baked.bakedWith.charter, `${CHARTER_NAME}@${CHARTER_VERSION}`, `${entry.slug}: charter`);
-        assert.ok(isUsableAnalysis(baked.analysis), `${entry.slug}: análisis utilizable`);
 
         const sha = baked.audio.sha256;
-        const rebuilt = buildChart(baked.analysis, { sha256: sha, seed: seedFromSha256(sha) }).chart;
+        const rebuilt = buildChart(a, { sha256: sha, seed: seedFromSha256(sha) }).chart;
         assert.deepEqual(rebuilt, baked.chart, `${entry.slug}: el chart se reproduce desde su análisis`);
         assert.equal(normalizeChart(baked.chart).warnings.length, 0, `${entry.slug}: chart limpio`);
         assert.equal(difficultyFromStats(chartStats(normalizeChart(rebuilt).chart)), baked.difficulty, `${entry.slug}: dificultad`);
+        const ceiling = difficultyCeiling(a);
+        assert.equal(baked.difficultyCeiling, ceiling.ceiling, `${entry.slug}: techo de dificultad`);
+        assert.equal(baked.stats.musicalDensity, ceiling.density, `${entry.slug}: densidad musical`);
     }
 });

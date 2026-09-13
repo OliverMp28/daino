@@ -30,8 +30,8 @@ final class Level
 {
     /** Columnas de metadata. Nunca incluir `chart_json` ni `analysis_json` aquí. */
     private const LIST_COLUMNS = 'id, user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
-        difficulty, file_path, audio_sha256, generator_seed, is_public, chart_status, chart_version,
-        difficulty_ceiling, is_official, official_slug, created_at, updated_at';
+        difficulty, file_path, audio_sha256, generator_seed, is_public, pending_public, chart_status, chart_version,
+        chart_hash, difficulty_ceiling, is_official, official_slug, created_at, updated_at';
 
     /** Pestañas públicas del catálogo. */
     public const SCOPE_OFFICIAL  = 'official';
@@ -65,8 +65,10 @@ final class Level
         public ?string $audioSha256,
         public string $generatorSeed,
         public bool $isPublic,
+        public bool $pendingPublic,
         public string $chartStatus,
         public ?int $chartVersion,
+        public ?string $chartHash,
         public ?int $difficultyCeiling,
         public bool $isOfficial,
         public readonly ?string $officialSlug,
@@ -208,13 +210,13 @@ final class Level
     }
 
     /**
-     * Existe ya un nivel público con este (user_id, title)? Anti-spam para
-     * cuando un user intenta publicar dos veces el mismo título. Case-insensitive
-     * gracias al collation `utf8mb4_unicode_ci` del schema.
+     * Existe ya un nivel público (o en camino de serlo) con este (user_id,
+     * title)? Anti-spam para cuando un user intenta publicar dos veces el mismo
+     * título. Case-insensitive gracias al collation `utf8mb4_unicode_ci`.
      */
     public static function publicTitleExistsForUser(int $userId, string $title, ?int $excludeId = null): bool
     {
-        $sql = 'SELECT 1 FROM levels WHERE user_id = :user_id AND title = :title AND is_public = TRUE';
+        $sql = 'SELECT 1 FROM levels WHERE user_id = :user_id AND title = :title AND (is_public = TRUE OR pending_public = TRUE)';
         $params = ['user_id' => $userId, 'title' => $title];
         if ($excludeId !== null) {
             $sql .= ' AND id <> :exclude';
@@ -245,7 +247,8 @@ final class Level
      *     file_path?: ?string,
      *     is_public?: bool,
      *     is_official?: bool,
-     *     official_slug?: ?string
+     *     official_slug?: ?string,
+     *     difficulty_ceiling?: ?int
      * } $data
      */
     public static function create(array $data): self
@@ -255,10 +258,12 @@ final class Level
         $stmt = $pdo->prepare(
             'INSERT INTO levels (user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
                                  difficulty, file_path, audio_sha256, generator_seed, is_public,
-                                 chart_json, analysis_json, chart_status, chart_version, is_official, official_slug)
+                                 chart_json, analysis_json, chart_status, chart_version, chart_hash,
+                                 difficulty_ceiling, is_official, official_slug)
              VALUES (:user_id, :title, :artist, :duration_sec, :duration_ms, :bpm, :bpm_exact, :game_speed,
                      :difficulty, :file_path, :audio_sha256, :generator_seed, :is_public,
-                     :chart_json, :analysis_json, :chart_status, :chart_version, :is_official, :official_slug)',
+                     :chart_json, :analysis_json, :chart_status, :chart_version, :chart_hash,
+                     :difficulty_ceiling, :is_official, :official_slug)',
         );
         $stmt->execute([
             'user_id'        => $data['user_id'],
@@ -278,6 +283,8 @@ final class Level
             'analysis_json'  => $data['analysis_json'] ?? null,
             'chart_status'   => $chartJson !== null ? 'ready' : 'none',
             'chart_version'  => $chartJson !== null ? ($data['chart_version'] ?? null) : null,
+            'chart_hash'     => $chartJson !== null ? hash('sha256', $chartJson) : null,
+            'difficulty_ceiling' => $data['difficulty_ceiling'] ?? null,
             'is_official'    => ($data['is_official'] ?? false) ? 1 : 0,
             'official_slug'  => $data['official_slug'] ?? null,
         ]);
@@ -300,17 +307,20 @@ final class Level
              SET chart_json = :chart_json,
                  analysis_json = COALESCE(:analysis_json, analysis_json),
                  chart_status = 'ready',
-                 chart_version = :chart_version
+                 chart_version = :chart_version,
+                 chart_hash = :chart_hash
              WHERE id = :id",
         );
         $stmt->execute([
             'chart_json'    => $chartJson,
             'analysis_json' => $analysisJson,
             'chart_version' => $chartVersion,
+            'chart_hash'    => hash('sha256', $chartJson),
             'id'            => $this->id,
         ]);
         $this->chartStatus = 'ready';
         $this->chartVersion = $chartVersion;
+        $this->chartHash = hash('sha256', $chartJson);
     }
 
     /**
@@ -350,18 +360,21 @@ final class Level
      *
      * @param array{audio_sha256: string, duration_sec: int, duration_ms: int, bpm: int, bpm_exact: float,
      *              game_speed: int, generator_seed: string, chart_json: string, analysis_json: ?string,
-     *              chart_version: int} $data
+     *              chart_version: int, difficulty_ceiling?: ?int} $data
      */
     public function replaceAudioAndChart(array $data): void
     {
+        $data += ['difficulty_ceiling' => null];
         Database::getInstance()->prepare(
             "UPDATE levels
              SET audio_sha256 = :audio_sha256, duration_sec = :duration_sec, duration_ms = :duration_ms,
                  bpm = :bpm, bpm_exact = :bpm_exact, game_speed = :game_speed, generator_seed = :generator_seed,
-                 chart_json = :chart_json, analysis_json = :analysis_json,
-                 chart_status = 'ready', chart_version = :chart_version
+                 chart_json = :chart_json, analysis_json = :analysis_json, difficulty_ceiling = :difficulty_ceiling,
+                 chart_status = 'ready', chart_version = :chart_version, chart_hash = :chart_hash
              WHERE id = :id",
-        )->execute($data + ['id' => $this->id]);
+        )->execute($data + ['id' => $this->id, 'chart_hash' => hash('sha256', $data['chart_json'])]);
+        $this->chartHash = hash('sha256', $data['chart_json']);
+        $this->difficultyCeiling = $data['difficulty_ceiling'];
         $this->audioSha256 = $data['audio_sha256'];
         $this->durationSec = $data['duration_sec'];
         $this->durationMs = $data['duration_ms'];
@@ -439,8 +452,10 @@ final class Level
             audioSha256:       $row['audio_sha256'] === null ? null : (string) $row['audio_sha256'],
             generatorSeed:     (string) $row['generator_seed'],
             isPublic:          (bool) $row['is_public'],
+            pendingPublic:     (bool) $row['pending_public'],
             chartStatus:       (string) $row['chart_status'],
             chartVersion:      $row['chart_version'] === null ? null : (int) $row['chart_version'],
+            chartHash:         $row['chart_hash'] === null ? null : (string) $row['chart_hash'],
             difficultyCeiling: $row['difficulty_ceiling'] === null ? null : (int) $row['difficulty_ceiling'],
             isOfficial:        (bool) $row['is_official'],
             officialSlug:      $row['official_slug'] === null ? null : (string) $row['official_slug'],

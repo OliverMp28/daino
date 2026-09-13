@@ -1293,6 +1293,107 @@ dialog.daino-catalog::backdrop {
     color: color-mix(in oklch, var(--color-daino-fg) 65%, transparent);
 }
 
+/* ----- Análisis en servidor (Ola 4): progreso al publicar ----- */
+
+.daino-card__badge[data-state="analyzing"] {
+    color: var(--color-daino-high);
+    font-variant-numeric: tabular-nums;
+}
+
+.daino-card__badge[data-state="failed"] {
+    color: color-mix(in oklch, var(--color-daino-beat) 85%, white);
+}
+
+.daino-analysis {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin-top: 0.2rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-high) 35%, transparent);
+    border-radius: 0.75rem;
+    background: color-mix(in oklch, var(--color-daino-high) 7%, transparent);
+}
+
+.daino-analysis[data-tone="error"] {
+    border-color: color-mix(in oklch, var(--color-daino-beat) 45%, transparent);
+    background: color-mix(in oklch, var(--color-daino-beat) 8%, transparent);
+}
+
+.daino-analysis__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+}
+
+.daino-analysis__title { font-size: 0.95rem; }
+
+.daino-analysis__pct {
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-daino-high);
+}
+
+.daino-analysis__bar {
+    --progress: 0;
+    position: relative;
+    height: 0.4rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--color-daino-fg) 12%, transparent);
+}
+
+.daino-analysis__fill {
+    position: absolute;
+    inset: 0;
+    transform-origin: left center;
+    transform: scaleX(var(--progress));
+    background: linear-gradient(90deg, var(--color-daino-high), var(--color-daino-beat));
+    transition: transform 0.6s ease-out;
+}
+
+/* Analizando: un brillo recorre lo ya hecho. El pulso de la canción es la etapa
+ * más larga y reporta al empezar; el brillo dice "sigue vivo" sin inventar %. */
+.daino-analysis[data-tone="working"] .daino-analysis__bar[data-indeterminate="false"] .daino-analysis__fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent) no-repeat;
+    background-size: 40% 100%;
+    animation: daino-analysis-sheen 1.8s linear infinite;
+}
+
+@keyframes daino-analysis-sheen {
+    from { background-position: -40% 0; }
+    to   { background-position: 140% 0; }
+}
+
+/* En cola no hay porcentaje: una franja que recorre la barra dice "esperando". */
+.daino-analysis__bar[data-indeterminate="true"] .daino-analysis__fill {
+    transform: none;
+    width: 35%;
+    animation: daino-analysis-wait 1.6s ease-in-out infinite;
+    transition: none;
+}
+
+@keyframes daino-analysis-wait {
+    from { left: -35%; }
+    to   { left: 100%; }
+}
+
+.daino-analysis__detail,
+.daino-analysis__note {
+    margin: 0;
+    font-size: 0.85rem;
+}
+
+.daino-analysis__note {
+    color: color-mix(in oklch, var(--color-daino-fg) 55%, transparent);
+}
+
+.daino-analysis__note:empty { display: none; }
+
 .daino-detail__ranking h4 {
     margin: 0 0 0.6rem;
     font-size: 0.8rem;
@@ -1439,6 +1540,15 @@ body[data-drag="active"] .daino-upload__drop {
     .daino-card--skeleton .daino-card__cover,
     .daino-card--skeleton .daino-card__body { animation: none; }
     dialog.daino-catalog::backdrop { animation: none; }
+
+    .daino-analysis__fill { transition: none; }
+    .daino-analysis__fill::after { animation: none !important; display: none; }
+    .daino-analysis__bar[data-indeterminate="true"] .daino-analysis__fill {
+        animation: none;
+        left: 0;
+        width: 100%;
+        opacity: 0.35;
+    }
 }
 
 /* ---------------------------------------------------------------------------

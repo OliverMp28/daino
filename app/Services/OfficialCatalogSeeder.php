@@ -120,6 +120,11 @@ final class OfficialCatalogSeeder
         if (!is_int($difficulty) || $difficulty < 1 || $difficulty > 5) {
             throw new SeedSkip('horneado sin dificultad válida');
         }
+        // Techo de dificultad (Ola 4): solo existe con análisis del servidor.
+        $ceiling = $baked['difficultyCeiling'] ?? null;
+        if ($ceiling !== null && (!is_int($ceiling) || $ceiling < 1 || $ceiling > 5)) {
+            throw new SeedSkip('horneado con techo de dificultad inválido');
+        }
 
         $audioColumns = [
             'audio_sha256'   => $sha,
@@ -132,6 +137,7 @@ final class OfficialCatalogSeeder
             'chart_json'     => $chart['json'],
             'analysis_json'  => $analysisJson,
             'chart_version'  => $chart['charterVersion'],
+            'difficulty_ceiling' => $ceiling,
         ];
         $metadata = [
             'title'      => $title,

@@ -101,6 +101,15 @@ test('una versión nueva del chart en el servidor invalida la cacheada', async (
     assert.equal(calls.getJson, 2);
 });
 
+test('un chart sustituido en el servidor con la misma versión también invalida la cacheada (Ola 4)', async () => {
+    const { sha, calls, loader } = await makeWorld();
+    await loader.loadCatalog(catalogLevel(sha, { chart_version: 2, chart_hash: '1'.repeat(64) }));
+    await loader.loadCatalog(catalogLevel(sha, { chart_version: 2, chart_hash: '1'.repeat(64) }));
+    assert.equal(calls.getJson, 1, 'mismo hash: sale de la caché');
+    await loader.loadCatalog(catalogLevel(sha, { chart_version: 2, chart_hash: '2'.repeat(64) }));
+    assert.equal(calls.getJson, 2, 'hash nuevo (reanálisis del servidor): se pide otra vez');
+});
+
 test('si el audio descargado no coincide con el hash del nivel, se rechaza', async () => {
     const { calls, loader } = await makeWorld();
     await assert.rejects(

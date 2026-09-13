@@ -141,7 +141,7 @@ export function createLevelLoader(deps) {
      */
     async function serverChart(level, fromCache) {
         if (level.has_chart !== true || !Number.isInteger(level.chart_version)) return null;
-        const key = catalogChartKey(level.id, level.chart_version);
+        const key = catalogChartKey(level.id, level.chart_version, level.chart_hash);
         // Precarga y carga real pueden pedir el mismo chart a la vez: una sola
         // petición, compartida.
         let request = chartRequests.get(key);

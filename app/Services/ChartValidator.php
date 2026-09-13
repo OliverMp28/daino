@@ -32,7 +32,28 @@ use App\Core\ValidationException;
 final class ChartValidator
 {
     public const CHART_FORMAT_VERSION = 1;
-    public const ANALYSIS_FORMAT_VERSION = 1;
+
+    /**
+     * 1 = analizador JS del navegador (bpm + onsets). 2 = analizador del servidor
+     * (Ola 4): el 1 más beats, downbeats, secciones, energía y rasgos.
+     */
+    public const ANALYSIS_FORMAT_VERSIONS = [1, 2];
+
+    public const MAX_BEATS = 30_000;
+    public const MAX_SECTIONS = 200;
+    private const SECTION_ROLES = ['intro', 'verse', 'chorus', 'bridge', 'break', 'outro'];
+
+    /** @var array<string, array{0: int|float, 1: int|float}> */
+    private const FEATURE_RANGES = [
+        'tempoStability'     => [0, 1],
+        'beatSupport'        => [0, 1],
+        'percussiveRatio'    => [0, 1],
+        'eventsPerMin'       => [0, 10000],
+        'strongEventsPerMin' => [0, 10000],
+        'loudnessDbfs'       => [-200, 10],
+        'dynamicRangeDb'     => [0, 200],
+        'silenceRatio'       => [0, 1],
+    ];
 
     /** Techo del chart codificado. Una canción de 20 min ronda los 60 KB. */
     public const CHART_MAX_BYTES = 256 * 1024;
@@ -186,13 +207,28 @@ final class ChartValidator
         if (!is_array($analysis) || array_is_list($analysis)) {
             self::fail($f, 'Debe ser un objeto.');
         }
-        if (($analysis['formatVersion'] ?? null) !== self::ANALYSIS_FORMAT_VERSION) {
+        $formatVersion = $analysis['formatVersion'] ?? null;
+        if (!in_array($formatVersion, self::ANALYSIS_FORMAT_VERSIONS, true)) {
             self::fail($f, 'formatVersion no soportado.');
         }
         $analyzer = $analysis['analyzer'] ?? null;
         if (!is_array($analyzer) || !is_string($analyzer['name'] ?? null) || strlen($analyzer['name']) > 64
             || !is_int($analyzer['version'] ?? null)) {
             self::fail($f, 'analyzer inválido.');
+        }
+        $cleanAnalyzer = ['name' => $analyzer['name'], 'version' => $analyzer['version']];
+        if (isset($analyzer['models'])) {
+            $models = $analyzer['models'];
+            if (!is_array($models) || array_is_list($models) || count($models) > 8) {
+                self::fail($f, 'analyzer.models inválido.');
+            }
+            $cleanAnalyzer['models'] = [];
+            foreach ($models as $k => $v) {
+                if (!is_string($k) || preg_match('/^[a-zA-Z]{1,32}$/', $k) !== 1 || !is_string($v) || strlen($v) > 64) {
+                    self::fail($f, 'analyzer.models inválido.');
+                }
+                $cleanAnalyzer['models'][$k] = $v;
+            }
         }
 
         $durationSec = self::number($analysis['durationSec'] ?? null, $f, 'durationSec', 0.001, self::MAX_DURATION_SEC);
@@ -216,21 +252,120 @@ final class ChartValidator
             ];
         }
 
-        $json = json_encode([
-            'formatVersion' => self::ANALYSIS_FORMAT_VERSION,
-            'analyzer'      => ['name' => $analyzer['name'], 'version' => $analyzer['version']],
+        $normalized = [
+            'formatVersion' => $formatVersion,
+            'analyzer'      => $cleanAnalyzer,
             'durationSec'   => $durationSec,
             'sampleRate'    => $sampleRate,
             'bpm'           => $bpm,
             'bpmConfidence' => $bpmConfidence,
             'beatPeriodS'   => $beatPeriodS,
             'onsets'        => $clean,
-        ], self::JSON_FLAGS);
+        ];
+        if ($formatVersion === 2) {
+            $normalized += self::validateAnalysisV2($analysis, $durationSec, count($clean));
+        }
+        $json = json_encode($normalized, self::JSON_FLAGS);
 
         if (strlen($json) > self::ANALYSIS_MAX_BYTES) {
             self::fail($f, 'El análisis es demasiado grande.');
         }
         return $json;
+    }
+
+    /**
+     * Campos del formato 2 (analizador del servidor, Ola 4). Mismas reglas que
+     * `analyzer/daino_analyzer/schema.py`: lo que allí pasa, aquí pasa.
+     *
+     * @param array<string, mixed> $a
+     * @return array<string, mixed>
+     */
+    private static function validateAnalysisV2(array $a, float $duration, int $onsetCount): array
+    {
+        $f = 'analysis';
+        $out = [];
+
+        $colors = $a['onsetColor'] ?? null;
+        if (!is_array($colors) || !array_is_list($colors) || count($colors) !== $onsetCount) {
+            self::fail($f, 'onsetColor debe ser paralelo a onsets.');
+        }
+        $out['onsetColor'] = [];
+        foreach ($colors as $i => $c) {
+            if (!is_array($c) || !array_is_list($c) || count($c) !== 3) {
+                self::fail($f, "onsetColor[{$i}] debe ser [grave, medio, agudo].");
+            }
+            $out['onsetColor'][] = array_map(static fn ($v) => self::number($v, $f, "onsetColor[{$i}]", 0, 1), $c);
+        }
+
+        foreach (['beats', 'downbeats'] as $key) {
+            $list = $a[$key] ?? null;
+            if (!is_array($list) || !array_is_list($list) || count($list) > self::MAX_BEATS) {
+                self::fail($f, "{$key} inválido.");
+            }
+            $prev = -INF;
+            $out[$key] = [];
+            foreach ($list as $i => $t) {
+                $t = self::number($t, $f, "{$key}[{$i}]", 0, $duration + 0.001);
+                if ($t <= $prev) {
+                    self::fail($f, "{$key} debe ser estrictamente creciente.");
+                }
+                $prev = $t;
+                $out[$key][] = $t;
+            }
+        }
+
+        $meter = $a['meter'] ?? null;
+        if ($meter !== null && (!is_int($meter) || $meter < 2 || $meter > 12)) {
+            self::fail($f, 'meter debe ser nulo o un entero de 2 a 12.');
+        }
+        $out['meter'] = $meter;
+
+        $sections = $a['sections'] ?? null;
+        if (!is_array($sections) || !array_is_list($sections) || count($sections) > self::MAX_SECTIONS) {
+            self::fail($f, 'sections inválido.');
+        }
+        $out['sections'] = [];
+        foreach ($sections as $i => $s) {
+            if (!is_array($s) || array_is_list($s)) {
+                self::fail($f, "sections[{$i}] no es un objeto.");
+            }
+            $start = self::number($s['startSec'] ?? null, $f, "sections[{$i}].startSec", 0, $duration);
+            $end = self::number($s['endSec'] ?? null, $f, "sections[{$i}].endSec", 0, $duration + 0.001);
+            $cluster = $s['cluster'] ?? null;
+            $role = $s['role'] ?? null;
+            if ($end <= $start || !is_string($cluster) || preg_match('/^[A-Z]{1,2}$/', $cluster) !== 1
+                || !in_array($role, self::SECTION_ROLES, true)) {
+                self::fail($f, "sections[{$i}] inválida.");
+            }
+            $out['sections'][] = [
+                'startSec' => $start,
+                'endSec'   => $end,
+                'cluster'  => $cluster,
+                'role'     => $role,
+                'energy'   => self::number($s['energy'] ?? null, $f, "sections[{$i}].energy", 0, 1),
+                'density'  => self::number($s['density'] ?? null, $f, "sections[{$i}].density", 0, 1000),
+            ];
+        }
+
+        $energy = $a['energy'] ?? null;
+        $values = is_array($energy) ? ($energy['values'] ?? null) : null;
+        if (!is_array($values) || !array_is_list($values) || count($values) > (int) (self::MAX_DURATION_SEC * 10 + 10)) {
+            self::fail($f, 'energy inválido.');
+        }
+        $out['energy'] = [
+            'hopSec' => self::number($energy['hopSec'] ?? null, $f, 'energy.hopSec', 0.01, 10),
+            'values' => array_map(static fn ($v) => self::number($v, $f, 'energy.values', 0, 1), $values),
+        ];
+
+        $features = $a['features'] ?? null;
+        if (!is_array($features) || array_is_list($features) || !is_bool($features['pulseDoubled'] ?? null)) {
+            self::fail($f, 'features inválido.');
+        }
+        $out['features'] = ['pulseDoubled' => $features['pulseDoubled']];
+        foreach (self::FEATURE_RANGES as $key => [$lo, $hi]) {
+            $out['features'][$key] = self::number($features[$key] ?? null, $f, "features.{$key}", $lo, $hi);
+        }
+        return $out;
     }
 
     /**

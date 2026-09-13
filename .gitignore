@@ -32,6 +32,8 @@ CLAUDE.md
 /storage/uploads/levels/*
 !/storage/uploads/levels/.gitkeep
 /storage/sessions/
+# WAV de escucha del analizador (python -m daino_analyzer sonify), Ola 4
+/storage/analysis-debug/
 # MP3 del catálogo oficial: pistas comerciales, el remote es público.
 /storage/official/
 
