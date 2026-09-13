@@ -108,3 +108,51 @@ export function makeDrone(opts = {}) {
         getChannelData: () => mono,
     };
 }
+
+/**
+ * Análisis sintético con la forma exacta que produce `analyzeAudio`, sin DSP.
+ *
+ * El charter es una función pura del análisis, así que sus tests no necesitan
+ * pasar por la FFT: basta con un análisis realista. La distribución de fuerzas
+ * imita la medida sobre click tracks reales (golpes 0.32-1.0 con acento cada
+ * 4, picos de ruido fuera de beat ≤ 0.1). Así los tests del charter corren en
+ * milisegundos aunque la máquina esté cargada, y el DSP se prueba aparte.
+ *
+ * @param {{ bpm?: number, durationSec?: number, seed?: number,
+ *           noisePerBeat?: number, firstBeatS?: number }} [opts]
+ */
+export function makeSyntheticAnalysis(opts = {}) {
+    const bpm = opts.bpm ?? 128;
+    const durationSec = opts.durationSec ?? 60;
+    const noisePerBeat = opts.noisePerBeat ?? 3;
+    const firstBeatS = opts.firstBeatS ?? 0;
+    const rand = makeNoise(opts.seed ?? 99);
+    const period = 60 / bpm;
+
+    const onsets = [];
+    for (let b = 0; firstBeatS + b * period < durationSec; b++) {
+        const t = firstBeatS + b * period;
+        onsets.push([round3(t), b % 4 === 0 ? 1 : round3(0.32 + 0.1 * (rand() + 1) / 2)]);
+        for (let k = 0; k < noisePerBeat; k++) {
+            // Ruido estrictamente entre beats (30-70 % del periodo).
+            const tn = t + period * (0.3 + 0.4 * (rand() + 1) / 2);
+            if (tn < durationSec) onsets.push([round3(tn), round3(0.1 * (rand() + 1) / 2)]);
+        }
+    }
+    onsets.sort((a, b) => a[0] - b[0]);
+
+    return {
+        formatVersion: 1,
+        analyzer: { name: 'daino-flux-js', version: 1 },
+        durationSec,
+        sampleRate: 44100,
+        bpm,
+        bpmConfidence: 0.9,
+        beatPeriodS: period,
+        onsets,
+    };
+}
+
+function round3(v) {
+    return Math.round(v * 1000) / 1000;
+}

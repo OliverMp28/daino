@@ -3,27 +3,39 @@
 // Centraliza el ciclo "menú ↔ partida" para que main.js sea solo un entry
 // point. Estados:
 //
-//   MENU       Estado base. Menú visible, HUD oculto. Drop o JUGAR → LOADING.
-//   LOADING    Análisis offline del MP3 (LevelGenerator). Hint visible con
-//              progreso. Cuando resuelve → fadeToBlack → PLAYING.
+//   MENU       Estado base. Menú visible, HUD oculto.
+//   LOADING    Preparando la partida: audio (caché o red), chart (caché, red o
+//              generado aquí). Hint visible con la fase y su progreso real.
 //   PLAYING    Partida en curso. Menú oculto, HUD visible.
-//   PAUSED     Pausa explícita (Lote E). PLAYING ↔ PAUSED.
+//   PAUSED     Pausa explícita. PLAYING ↔ PAUSED.
 //   GAME_OVER  Efímero — entra y sale solo a MENU (con toast del score).
 //
 // Eventos consumidos:
-//   - 'audio:ready'      MP3 listo a reproducir → LOADING.
-//   - 'daino:gamestate'  GameSession terminó (win/collision/stopped) → MENU.
+//   - 'daino:play-request'  Alguien pidió jugar (ui/playRequests.js) → LOADING.
+//   - 'daino:gamestate'     GameSession terminó (win/collision/stopped) → MENU.
 //
-// El AppController es el único dueño de `activeSession` (ya no main.js).
+// Ola 3: la preparación de la partida la hace `levelLoader`, que decide qué
+// sale de la caché, qué se descarga y qué se analiza. Aquí solo se traduce eso
+// a estados y mensajes, y se decide qué persistir en el servidor.
+//
+// El AppController es el único dueño de `activeSession`.
 
-import { generate } from '../game/levels/LevelGenerator.js';
 import { readSeedFromUrl } from '../game/levels/Seed.js';
+import { createLevelLoader, LevelLoadError, LOAD_STAGE } from '../game/levels/levelLoader.js';
+import { analyzeAudio } from '../game/levels/analyze.js';
+import { buildChart } from '../game/levels/charter.js';
 import { GameSession } from '../game/GameSession.js';
+import { getAudioEngine } from '../game/audio/sharedEngine.js';
+import { createLevelCache } from '../storage/levelCache.js';
+import { sha256Hex } from '../storage/hash.js';
 import * as menu from './menu.js';
 import { fadeOverlay } from './transitions.js';
 import { closeAllModals, openSettingsModal, openPauseModal } from './modals.js';
+import { PLAY_REQUEST_EVENT } from './playRequests.js';
+import { showToast } from './toast.js';
 import { Input } from '../game/systems/input.js';
 import { getUser, request as apiRequest } from '../api/client.js';
+import { invalidateLevels } from '../api/levelsCache.js';
 import { getSkin, getQuality } from './settings.js';
 
 const STATE = Object.freeze({
@@ -34,13 +46,24 @@ const STATE = Object.freeze({
     GAME_OVER: 'GAME_OVER',
 });
 
+/** Dificultad por defecto hasta que la elija quien sube la canción (Olas 4-5, defecto D6). */
+const DEFAULT_DIFFICULTY = 3;
+
 let state = STATE.MENU;
 let engineApi = null;
 let activeSession = null;
-let lastAudioEngine = null;   // último AudioEngine visto vía audio:ready (Settings lo usa)
-let onAudioReady = null;
+let lastAudioEngine = null;   // AudioEngine de la partida en curso (Settings lo usa)
+let onPlayRequest = null;
 let onGameState = null;
 let onPause = null;
+let loader = null;
+
+/**
+ * Número de la petición de partida vigente. Si llega otra mientras la
+ * anterior carga (soltar un MP3 con otro descargándose), la vieja descubre al
+ * terminar que ya no es la vigente y se descarta en silencio.
+ */
+let playRequestSeq = 0;
 
 /**
  * @param {{ engine: any }} cfg
@@ -48,36 +71,33 @@ let onPause = null;
 export function start(cfg) {
     engineApi = cfg.engine;
 
-    // Mount inicial del menú. Visible al boot — sin sesión, esperando un MP3.
-    // Sin pasar `onPlay`: el menú usa su fallback (pickFileViaInput de upload.js),
-    // que dispara `audio:ready` igual que el drag&drop. handleAudioReady toma
-    // el control desde ahí; el ciclo es agnóstico al origen del archivo.
-    //
-    // `onSettings` SÍ lo inyectamos para pasar el getter del AudioEngine al
-    // modal — así el slider de volumen aplica live cuando hay audio sonando.
+    loader = createLevelLoader({
+        cache: createLevelCache(),
+        fetchAudio: (url) => fetch(url, { credentials: 'same-origin' }),
+        getJson: (path) => apiRequest('GET', path),
+        decode: (bytes) => getAudioEngine().decode(bytes),
+        analyze: (audioBuffer, opts) => analyzeAudio(audioBuffer, opts),
+        buildChart,
+        hash: sha256Hex,
+    });
+
+    // `onSettings` inyectado para pasar el getter del AudioEngine al modal: el
+    // slider de volumen aplica en vivo cuando hay audio sonando.
     menu.mount({
         onSettings: () => openSettingsModal({ getActiveAudioEngine }),
     });
 
-    // Inicializar atributo desde el primer paint (sin esto el CSS no tiene
-    // forma de saber el estado base).
     setState(STATE.MENU);
 
-    onAudioReady = (ev) => { void handleAudioReady(ev); };
+    onPlayRequest = (ev) => { void handlePlayRequest(ev.detail); };
     onGameState = (ev) => { handleGameState(ev); };
-    window.addEventListener('audio:ready', onAudioReady);
+    window.addEventListener(PLAY_REQUEST_EVENT, onPlayRequest);
     window.addEventListener('daino:gamestate', onGameState);
 
-    // ESC durante partida → pausa explícita. Input.setup() ya se llama en
-    // GameSession.start; Input.on persiste mientras el handler exista, así
-    // que registrar aquí basta — emit solo dispara cuando hay listeners.
+    // ESC durante partida → pausa explícita.
     onPause = () => handlePauseRequested();
     Input.on('pause', onPause);
 
-    // Skin del dino: aplicar la persistida al dino ambiente del menú y
-    // reaccionar en vivo cuando el user la cambie en AJUSTES (settings.js
-    // dispatcha 'daino:skinchange'). La GameSession la lee al arrancar cada
-    // partida — no hay que tocar una partida en curso.
     // Calidad gráfica persistida (Ola 1). 'auto' deja que el engine degrade
     // solo si mide frames lentos sostenidos durante la partida.
     engineApi.setQualityTier?.(getQuality());
@@ -85,6 +105,8 @@ export function start(cfg) {
         engineApi.setQualityTier?.(ev.detail?.quality ?? getQuality());
     });
 
+    // Skin del dino: la persistida al dino ambiente del menú, y en vivo al
+    // cambiarla en AJUSTES. La GameSession la lee al arrancar cada partida.
     engineApi.setAmbientDinoSkin?.(getSkin());
     window.addEventListener('daino:skinchange', (ev) => {
         engineApi.setAmbientDinoSkin?.(ev.detail?.skinId ?? getSkin());
@@ -92,10 +114,10 @@ export function start(cfg) {
 }
 
 export function dispose() {
-    if (onAudioReady) window.removeEventListener('audio:ready', onAudioReady);
+    if (onPlayRequest) window.removeEventListener(PLAY_REQUEST_EVENT, onPlayRequest);
     if (onGameState) window.removeEventListener('daino:gamestate', onGameState);
     if (onPause) Input.off('pause', onPause);
-    onAudioReady = null;
+    onPlayRequest = null;
     onGameState = null;
     onPause = null;
     if (activeSession) {
@@ -114,8 +136,8 @@ export function getActiveSession() {
 }
 
 /**
- * Devuelve el AudioEngine de la última partida (o null). El modal Settings
- * lo consume para aplicar volumen en vivo cuando hay audio sonando.
+ * AudioEngine de la partida en curso (o null). El modal Settings lo consume
+ * para aplicar volumen en vivo cuando hay audio sonando.
  */
 export function getActiveAudioEngine() {
     return lastAudioEngine;
@@ -123,135 +145,104 @@ export function getActiveAudioEngine() {
 
 // --------------------------- Handlers ---------------------------
 
-async function handleAudioReady(ev) {
-    const { audioBuffer, audioEngine, name } = ev.detail ?? {};
-    if (!audioBuffer || !audioEngine) {
-        console.warn('[AppController] audio:ready sin audioBuffer/audioEngine');
-        return;
-    }
-    lastAudioEngine = audioEngine;
+/**
+ * @param {{ source: 'local', file: File } | { source: 'catalog', level: object }} request
+ */
+async function handlePlayRequest(request) {
+    if (request?.source !== 'local' && request?.source !== 'catalog') return;
 
-    // Si había sesión activa, despedirla limpio (el user soltó otro MP3
-    // mientras jugaba o desde el menú estado intermedio).
+    // Durante el fundido de fin de partida el menú todavía no está listo:
+    // arrancar otra encima dejaría dos transiciones pisándose.
+    if (state === STATE.GAME_OVER) return;
+
+    const seq = ++playRequestSeq;
+
     if (activeSession) {
         activeSession.stop();
         activeSession = null;
+        engineApi.detachAudio();
     }
-
-    // Cualquier modal abierto se cierra al arrancar partida — la pausa real
-    // se modela con estado PAUSED (Lote E), no con modales fortuitos.
     closeAllModals();
 
-    // 1. Parar la canción que upload.js arrancó automáticamente — la
-    //    queremos sincronizada desde 0 con el primer tick de la GameSession.
-    if (audioEngine.source) {
-        try { audioEngine.source.stop(); } catch { /* idempotente */ }
-    }
-
     setState(STATE.LOADING);
-    // Ocultamos el menú ya en LOADING — durante la generación el user solo
-    // debe ver el hint sobre el shader, sin chrome del menú compitiendo.
     menu.setVisible(false);
-    showHintWithText('Generando nivel…');
+    showHintWithText(request.source === 'local' ? 'Leyendo tu canción…' : 'Preparando nivel…');
 
-    // Congelar el render loop de Pixi durante el análisis: el LevelGenerator
-    // corre en el main thread y compartir CPU con el shader/scenery a 60fps
-    // ralentizaba la generación Y hacía que las animaciones fueran a
-    // trompicones. Canvas quieto (el hint DOM sigue vivo) + análisis a tope.
-    engineApi.setRenderPaused(true);
+    let loaded;
+    let renderPaused = false;
+    const onStage = (stage, progress) => {
+        if (seq !== playRequestSeq) return;
+        // El análisis corre en el hilo principal: mientras dura, se congela el
+        // render para darle toda la CPU (y no animar a trompicones). El resto
+        // de fases no compiten por CPU y el render sigue vivo.
+        const analyzing = stage === LOAD_STAGE.ANALYZING;
+        if (analyzing !== renderPaused) {
+            engineApi.setRenderPaused(analyzing);
+            renderPaused = analyzing;
+        }
+        showHintWithText(stageText(stage, progress));
+    };
 
-    let level;
     try {
-        const seed = readSeedFromUrl();
-        level = await generate(audioBuffer, {
-            seed: seed ?? undefined,
-            sourceName: name ?? 'unknown.mp3',
-            onProgress: (msg) => {
-                if (typeof msg === 'string') showHintWithText(msg);
-                // si es número (ratio), ignoramos en este handler — el progreso
-                // por hop del SpectralFlux es demasiado granular para mostrarlo.
-            },
-        });
+        loaded = request.source === 'local'
+            ? await loader.loadLocal(request.file, { onStage, seed: readSeedFromUrl() ?? undefined })
+            : await loader.loadCatalog(request.level, { onStage });
     } catch (err) {
-        engineApi.setRenderPaused(false);
-        console.error('[AppController] generate() falló:', err);
-        showHintWithText('Error generando nivel — vuelve a soltar el MP3');
-        setTimeout(() => hideHint(), 4000);
-        menu.setVisible(true);    // restauramos menú tras error
+        if (renderPaused) engineApi.setRenderPaused(false);
+        if (seq !== playRequestSeq) return;
+        console.error('[AppController] no se pudo preparar la partida:', err);
+        hideHint();
+        showToast(err instanceof LevelLoadError ? err.message : 'No se pudo preparar el nivel. Inténtalo de nuevo.');
+        menu.setVisible(true);
         setState(STATE.MENU);
         return;
     }
+    if (renderPaused) engineApi.setRenderPaused(false);
+    if (seq !== playRequestSeq) return;   // llegó otra petición mientras cargaba
 
-    engineApi.setRenderPaused(false);
-
-    console.info('[daino] level ready:', {
-        bpm: level.bpm.toFixed(1),
-        gameSpeed: level.gameSpeed.toFixed(0),
-        seed: level.seed,
-        confidence: level.stats.confidence.toFixed(2),
-        onsetsKept: level.stats.onsetsKept,
-        durationSec: level.durationSec.toFixed(1),
+    console.info('[daino] nivel listo:', {
+        origen: request.source,
+        eventos: loaded.chart.events.length,
+        bpm: loaded.chart.music.bpm.toFixed(1),
+        velocidad: loaded.chart.world.speedPxS.toFixed(0),
+        seed: loaded.chart.seed,
+        cache: loaded.fromCache,
     });
 
-    // Bloque 7: si hay sesión, crear Level row server-side antes de jugar
-    // para que GameSession pueda persistir progreso al final. Anónimo: levelId
-    // queda null y GameSession no llama POST /api/progress. Hacemos esto
-    // ANTES del fadeOverlay para que la latencia (10-50ms) no se note —
-    // se solapa con el final del análisis offline. Si la creación falla,
-    // logueamos y seguimos en modo "anónimo de facto" — la UX no debe
-    // bloquearse por un fallo de persistencia.
+    // `levelId` para la GameSession solo sirve para GUARDAR PROGRESO, así que
+    // únicamente existe con sesión iniciada. Un nivel del catálogo jugado sin
+    // sesión se juega igual, pero sin intentar un POST que el servidor
+    // rechazaría con 401. Canción local con sesión: se registra (o se recupera,
+    // si ya se jugó) para poder guardar el progreso.
     let levelId = null;
     if (getUser() !== null) {
-        try {
-            const res = await apiRequest('POST', '/api/levels', {
-                body: {
-                    title: level.sourceName ?? 'Untitled',
-                    duration_sec: Math.max(1, Math.round(level.durationSec)),
-                    bpm: Math.max(30, Math.min(300, Math.round(level.bpm))),
-                    difficulty: 3,
-                    generator_seed: String(level.seed),
-                },
-            });
-            if (res.ok && typeof res.data?.id === 'number') {
-                levelId = res.data.id;
-            } else {
-                console.warn('[AppController] POST /api/levels falló:', res.status, res.data);
-            }
-        } catch (err) {
-            console.warn('[AppController] POST /api/levels error:', err);
-        }
+        levelId = loaded.levelId ?? (await persistLocalLevel(loaded));
     }
+    if (seq !== playRequestSeq) return;
 
-    // 2. fadeToBlack 600ms total — durante el black mountamos la sesión
-    //    y arrancamos el audio desde 0. El user no ve el "flash" del cambio.
-    //    El menú ya está oculto desde LOADING; aquí solo escondemos el hint
-    //    y arrancamos la partida.
+    const audioEngine = getAudioEngine();
+    lastAudioEngine = audioEngine;
+
     await fadeOverlay({
         totalMs: 600,
         onMidpoint: () => {
+            if (seq !== playRequestSeq) return;
             hideHint();
-
-            // Defensa: si el user abrió un modal (chip de auth) durante el
-            // análisis, lo cerramos antes de mostrar el juego. Aunque el
-            // chip ya está oculto fuera de MENU, esta belt-and-suspenders
-            // cubre cualquier path futuro que abra modal en LOADING.
             closeAllModals();
 
-            // El shader necesita estar atachado al audio activo para
-            // reaccionar al FFT/RMS. El detach se hace al salir a MENU.
+            // El shader lee el FFT del audio activo; se desconecta al volver al menú.
             engineApi.attachAudio(audioEngine);
 
-            audioEngine.play(audioBuffer);
-
+            // La sesión arranca ella misma la reproducción cuando termina de
+            // montarse: es la única dueña del reloj de la partida.
             activeSession = new GameSession({
                 engine: engineApi,
                 audioEngine,
-                level,
+                audioBuffer: loaded.audioBuffer,
+                chart: loaded.chart,
+                title: loaded.title,
                 levelId,
                 skinId: getSkin(),
-                // onGameOver se queda como fallback — la transición real la
-                // dispara `daino:gamestate` que escuchamos arriba.
-                onGameOver: () => {},
             });
             activeSession.start();
             setState(STATE.PLAYING);
@@ -259,33 +250,74 @@ async function handleAudioReady(ev) {
     });
 }
 
+/**
+ * Registra en el servidor una canción local jugada con sesión iniciada.
+ *
+ * Idempotente por hash del audio (defecto D1): la misma canción devuelve el
+ * mismo nivel en vez de crear otro. Se envían el chart y el análisis para que,
+ * si el usuario la publica, los demás jueguen exactamente este nivel sin
+ * analizar nada. Un fallo aquí no impide jugar: solo no se guardará el progreso.
+ *
+ * @returns {Promise<number|null>}
+ */
+async function persistLocalLevel(loaded) {
+    if (getUser() === null) return null;
+    try {
+        const res = await apiRequest('POST', '/api/levels', {
+            body: {
+                title: loaded.title.slice(0, 120),
+                audio_sha256: loaded.sha256,
+                difficulty: DEFAULT_DIFFICULTY,
+                generator_seed: String(loaded.chart.seed),
+                chart: loaded.chart,
+                analysis: loaded.analysis ?? undefined,
+            },
+        });
+        if (res.ok && typeof res.data?.id === 'number') {
+            // "Mis niveles" cambió si el nivel es nuevo.
+            if (res.status === 201) invalidateLevels('mine');
+            return res.data.id;
+        }
+        console.warn('[AppController] POST /api/levels falló:', res.status, res.data);
+    } catch (err) {
+        console.warn('[AppController] POST /api/levels error:', err);
+    }
+    return null;
+}
+
+function stageText(stage, progress) {
+    const pct = Number.isFinite(progress) ? ` ${Math.round(progress * 100)} %` : '';
+    switch (stage) {
+        case LOAD_STAGE.READING: return 'Leyendo tu canción…';
+        case LOAD_STAGE.DOWNLOADING: return `Descargando nivel…${pct}`;
+        case LOAD_STAGE.DECODING: return 'Preparando el audio…';
+        case LOAD_STAGE.ANALYZING: return `Analizando la canción…${pct}`;
+        case LOAD_STAGE.CHARTING: return 'Colocando obstáculos…';
+        default: return 'Cargando…';
+    }
+}
+
 function handlePauseRequested() {
-    // Solo aplica durante PLAYING. En MENU/LOADING/PAUSED ignoramos.
+    // Solo aplica durante PLAYING.
     if (state !== STATE.PLAYING) return;
     if (!lastAudioEngine) return;
 
     setState(STATE.PAUSED);
 
-    // Suspend del AudioContext congela todo automáticamente: dispatcha
-    // 'audio:pause' por su statechange handler (AudioEngine.js Bloque 4),
-    // GameSession lo escucha y congela su tick interno. El reloj de la
-    // canción no avanza, así que al resumir todo retoma sincronizado.
+    // Suspend del AudioContext congela todo: dispatcha 'audio:pause', la
+    // GameSession congela su tick y el reloj de la canción no avanza.
     void lastAudioEngine.ctx?.suspend?.();
 
     openPauseModal({
         onResume: () => {
-            // Solo resumimos si seguimos en PAUSED — si el user salió al
-            // menú entre medias, no queremos arrancar audio sobre menú.
             if (state !== STATE.PAUSED) return;
             void lastAudioEngine.ctx?.resume?.();
             setState(STATE.PLAYING);
         },
         onExit: () => {
-            // Marcamos GAME_OVER ANTES de llamar transitionToMenu. Sin esto,
-            // el activeSession.stop() del midpoint dispara `_end('stopped')`
-            // → daino:gamestate → handleGameState → segunda transitionToMenu
-            // encima del primero. "Doble carga" visible al user. El guard de
-            // handleGameState ahora chequea state y evita el re-entry.
+            // GAME_OVER ANTES de transitionToMenu: el stop() del midpoint
+            // dispara `_end('stopped')` → daino:gamestate, y el guard de
+            // handleGameState lo ignora en vez de lanzar otra transición.
             setState(STATE.GAME_OVER);
             const score = activeSession?._score ?? 0;
             try {
@@ -300,11 +332,7 @@ function handleGameState(ev) {
     const { kind, score } = ev.detail ?? {};
     if (kind !== 'win' && kind !== 'collision' && kind !== 'stopped') return;
 
-    // Guard de re-entry: solo procesamos si veníamos de PLAYING o PAUSED.
-    // Si ya estamos en GAME_OVER o MENU, otro path (ej. handlePauseRequested
-    // .onExit) ya inició la transición y este evento es un eco del stop()
-    // que ese path disparó internamente. Sin este guard se solapaban dos
-    // fadeOverlay y se veía como "carga doble" del menú.
+    // Guard de re-entry: solo si veníamos de PLAYING o PAUSED.
     if (state !== STATE.PLAYING && state !== STATE.PAUSED) return;
 
     setState(STATE.GAME_OVER);
@@ -315,10 +343,8 @@ async function transitionToMenu(score, kind) {
     await fadeOverlay({
         totalMs: 600,
         onMidpoint: () => {
-            // Si venimos del modal de pausa, el AudioContext está suspended
-            // y nadie lo va a resumir — eso deja el ticker del engine
-            // pausado (audio:pause sigue activo) y el shader congelado en
-            // su último frame. Resume aquí, durante el black total del fade.
+            // Si venimos de la pausa el AudioContext está suspendido; sin
+            // resume el ticker del engine seguiría congelado en el menú.
             if (lastAudioEngine?.ctx?.state === 'suspended') {
                 void lastAudioEngine.ctx.resume();
             }
@@ -328,57 +354,45 @@ async function transitionToMenu(score, kind) {
                 activeSession = null;
             }
 
-            // Detach del audio: el shader pasa a modo idle (setMode('idle')
-            // dentro de detachAudio limpia uShaderMode + buffers band).
+            // Shader a modo idle.
             engineApi.detachAudio();
             lastAudioEngine = null;
 
             closeAllModals();
             menu.setVisible(true);
 
-            // setState aquí (no después del await): así body[data-app-state]
-            // pasa a "MENU" durante el black del fade. El chip de auth
-            // arranca su transición CSS de opacity desde dentro del black —
-            // cuando el fade-out se completa el chip ya está al 100%, sin
-            // pop visual ("parpadeo" reportado en Bloque 6 Lote E).
+            // setState dentro del negro del fundido: el chip de auth arranca
+            // su transición oculto y no hace "pop" al aparecer.
             setState(STATE.MENU);
         },
     });
 
-    // Toast con el score. Reusamos el patrón de upload.js (clase .daino-toast).
-    const toast = document.createElement('div');
-    toast.className = 'daino-toast';
-    toast.setAttribute('role', 'status');
-    toast.textContent = kind === 'win'
-        ? `Nivel completado — Score ${score}`
-        : `Score ${score} — pulsa cualquier MP3 para reintentar`;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
+    if (kind === 'win') {
+        showToast(`¡Nivel completado! Puntuación ${score}`, 'info');
+    } else if (kind === 'collision') {
+        showToast(`Puntuación ${score} — elige un nivel o suelta un MP3 para volver a jugar`, 'info');
+    }
 }
 
 // --------------------------- Helpers ---------------------------
 
 function setState(next) {
     state = next;
-    // Refleja el estado en `<body data-app-state>` para que el CSS pueda
-    // mostrar/ocultar UI según el modo (chip de auth visible solo en MENU,
-    // por ejemplo).
+    // `<body data-app-state>` permite al CSS mostrar/ocultar UI por modo.
     document.body.dataset.appState = next;
 
-    // El dino ambiente del scenery solo corre en el menú — durante la
-    // partida el Dino real de la GameSession ocupa el mismo sitio.
+    // El dino ambiente del scenery solo corre en el menú.
     engineApi?.setAmbientDinoVisible?.(next === STATE.MENU);
 
-    // Presupuesto de render del estado (Ola 1). Las claves de STATE y las de
-    // RENDER_PROFILES coinciden a propósito, así que no hay tabla de traducción
-    // que se pueda desincronizar al añadir un estado.
+    // Presupuesto de render del estado (Ola 1). Las claves de STATE y de
+    // RENDER_PROFILES coinciden a propósito.
     engineApi?.setRenderProfile?.(next);
 }
 
 function showHintWithText(text) {
     const hint = document.getElementById('hint');
     if (!hint) return;
-    hint.textContent = text;
+    if (hint.textContent !== text) hint.textContent = text;
     hint.classList.remove('is-hidden');
 }
 

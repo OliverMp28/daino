@@ -10,6 +10,11 @@
 //   'pause'     — Escape (delega al <dialog> nativo si hay uno abierto).
 //
 // Diseño:
+//   - Cada emisión lleva `{ timeStamp }`: el instante REAL de la pulsación en el
+//     reloj de `performance.now()` (Ola 3). Si el hilo principal va con retraso
+//     (un frame largo), la tecla se procesa tarde, pero la GameSession la aplica
+//     en el paso de física que corresponde a cuándo se pulsó, no a cuándo se
+//     leyó. En un juego de ritmo esa diferencia decide si el salto cae en el beat.
 //   - Singleton que la GameSession instancia en `start()` y dispone en `stop()`.
 //   - EventEmitter mínimo: `on(event, fn)`, `off(event, fn)`.
 //   - Touch: el lado se decide en touchstart y se recuerda por touch id — el
@@ -74,12 +79,12 @@ class InputHub {
                 // mantener pulsado NO re-salta (el jump buffer ya cubre el
                 // "pulsé un pelín antes de aterrizar").
                 ev.preventDefault();
-                if (!ev.repeat) this.emit('jump');
+                if (!ev.repeat) this.emit('jump', stamp(ev));
                 return;
             }
             if (KEYS_DUCK.has(ev.code)) {
                 ev.preventDefault();
-                if (!ev.repeat) this.emit('duckStart');
+                if (!ev.repeat) this.emit('duckStart', stamp(ev));
                 return;
             }
             if (KEYS_PAUSE.has(ev.code)) {
@@ -93,8 +98,8 @@ class InputHub {
             }
         };
         this._keyUp = (ev) => {
-            if (KEYS_JUMP.has(ev.code)) this.emit('jumpEnd');
-            else if (KEYS_DUCK.has(ev.code)) this.emit('duckEnd');
+            if (KEYS_JUMP.has(ev.code)) this.emit('jumpEnd', stamp(ev));
+            else if (KEYS_DUCK.has(ev.code)) this.emit('duckEnd', stamp(ev));
         };
         window.addEventListener('keydown', this._keyDown);
         window.addEventListener('keyup', this._keyUp);
@@ -114,7 +119,7 @@ class InputHub {
             for (const t of ev.changedTouches) {
                 const side = t.clientX < half ? 'jump' : 'duck';
                 this._touchSides.set(t.identifier, side);
-                this.emit(side === 'jump' ? 'jump' : 'duckStart');
+                this.emit(side === 'jump' ? 'jump' : 'duckStart', stamp(ev));
             }
         };
         this._touchEnd = (ev) => {
@@ -122,7 +127,7 @@ class InputHub {
                 const side = this._touchSides.get(t.identifier);
                 if (!side) continue;
                 this._touchSides.delete(t.identifier);
-                this.emit(side === 'jump' ? 'jumpEnd' : 'duckEnd');
+                this.emit(side === 'jump' ? 'jumpEnd' : 'duckEnd', stamp(ev));
             }
         };
         // passive:false porque hacemos preventDefault. En móviles el navegador
@@ -135,12 +140,14 @@ class InputHub {
         // se sintetiza con un timer corto (medio salto / agachada breve).
         if (isBridgeEmbedded()) {
             setOnGameAction((payload) => {
+                // postMessage no trae la marca de la pulsación original: la
+                // mejor aproximación es el instante en que llega el mensaje.
                 if (payload === 'JUMP') {
-                    this.emit('jump');
-                    setTimeout(() => this.emit('jumpEnd'), BRIDGE_TAP_MS);
+                    this.emit('jump', now());
+                    setTimeout(() => this.emit('jumpEnd', now()), BRIDGE_TAP_MS);
                 } else if (payload === 'DUCK') {
-                    this.emit('duckStart');
-                    setTimeout(() => this.emit('duckEnd'), BRIDGE_TAP_MS * 2);
+                    this.emit('duckStart', now());
+                    setTimeout(() => this.emit('duckEnd', now()), BRIDGE_TAP_MS * 2);
                 }
             });
         }
@@ -165,6 +172,19 @@ class InputHub {
         this._touchEnd = null;
         this._mounted = false;
     }
+}
+
+/**
+ * Payload de una emisión: el instante real del evento.
+ * `Event.timeStamp` usa el mismo reloj que `performance.now()` en todos los
+ * navegadores actuales. Si faltara, el instante de procesado es la alternativa.
+ */
+function stamp(ev) {
+    return { timeStamp: Number.isFinite(ev.timeStamp) && ev.timeStamp > 0 ? ev.timeStamp : performance.now() };
+}
+
+function now() {
+    return { timeStamp: performance.now() };
 }
 
 /** Instancia compartida. Daino es single-page, una sola sesión activa a la vez. */

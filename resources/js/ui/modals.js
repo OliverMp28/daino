@@ -19,7 +19,7 @@ import { getUser, logout, isAuthenticated, request as apiRequest, upload as apiU
 import { getLevels, invalidateLevels } from '../api/levelsCache.js';
 import { isBridgeEmbedded } from '../iframe/bridge.js';
 import { renderAvatar } from './avatar.js';
-import { getOrCreateAudioEngine } from './upload.js';
+import { requestCatalogPlay } from './playRequests.js';
 import {
     getVolume, setVolume,
     getReduceEffects, setReduceEffects,
@@ -210,9 +210,10 @@ export function openProfileModal() {
 /**
  * Niveles: tabs "Públicos" y "Mis niveles" (segunda solo con sesión).
  * Cada item con título / artist / BPM / dificultad. Los públicos tienen
- * botón "Jugar" que descarga el MP3 desde /api/levels/{id}/file y dispara
- * el flujo audio:ready (idéntico al drag&drop). Mis privados tienen
- * "Hacer público" (sube el MP3 que el user tenga localmente).
+ * botón "Jugar", que pide la partida (`requestCatalogPlay`); la descarga, la
+ * caché y el chart los gestiona AppController. Mis privados tienen "Hacer
+ * público" (sube el MP3 que el user tenga localmente; el servidor comprueba
+ * que es el mismo audio con el que se generó el nivel).
  *
  * Loading state: aria-busy true durante el fetch. Error: mensaje rojo
  * inline. Sin spinner externo — el browser ya pinta el estado naturalmente.
@@ -368,22 +369,12 @@ function renderLevelRow(level, tab, switchTab) {
         playBtn.className = 'daino-btn daino-btn--primary';
         playBtn.dataset.interactive = 'true';
         playBtn.textContent = 'Jugar';
-        playBtn.addEventListener('click', async () => {
-            playBtn.disabled = true;
-            playBtn.textContent = 'Descargando…';
-            try {
-                await playPublicLevel(level);
-                closeAllModals();
-            } catch (err) {
-                // Defecto D4: antes esto dejaba el botón deshabilitado con el
-                // texto "Error" de forma permanente — un fallo de red puntual
-                // obligaba a cerrar y reabrir el modal. Ahora se restaura el
-                // estado y se explica qué pasó, para poder reintentar.
-                console.error('[levels] play falló:', err);
-                playBtn.disabled = false;
-                playBtn.textContent = 'Reintentar';
-                showInlineError(playBtn, 'No se pudo cargar el nivel. ¿Sigue publicado?');
-            }
+        playBtn.addEventListener('click', () => {
+            // Ola 3: el modal solo PIDE la partida. AppController cierra los
+            // modales, muestra la carga con su progreso real (descarga,
+            // análisis si hace falta) y gestiona los errores. Así el audio y el
+            // chart pasan por la caché, y un segundo intento no descarga nada.
+            requestCatalogPlay(level);
         });
         actions.appendChild(playBtn);
     } else if (tab === 'mine') {
@@ -401,39 +392,6 @@ function renderLevelRow(level, tab, switchTab) {
     row.appendChild(meta);
     row.appendChild(actions);
     return row;
-}
-
-async function playPublicLevel(level) {
-    // El AudioEngine está en el módulo `engine`. La forma más limpia de
-    // arrancar una partida desde fuera del flujo upload es: descargar el MP3
-    // como ArrayBuffer, decodificar al AudioBuffer, y disparar `audio:ready`
-    // — exactamente la misma señal que dispara el drag&drop. AppController ya
-    // escucha esa señal y orquesta todo.
-    const r = await fetch(`/api/levels/${level.id}/file`);
-    if (!r.ok) {
-        throw new Error(`stream falló: ${r.status}`);
-    }
-    const arrayBuf = await r.arrayBuffer();
-
-    // Reusamos el AudioEngine singleton. start() es idempotente, decode
-    // necesita el ctx vivo (lo crea si no existía).
-    const audioEngine = getOrCreateAudioEngine();
-    await audioEngine.start();
-    const audioBuffer = await audioEngine.decode(arrayBuf);
-    audioEngine.play(audioBuffer);
-
-    window.dispatchEvent(new CustomEvent('audio:ready', {
-        detail: {
-            audioBuffer,
-            audioEngine,
-            // El título se manda TAL CUAL, sin volver a añadirle la extensión
-            // (defecto D2). AppController usa `name` como `title` al crear la
-            // fila del nivel, así que concatenar ".mp3" aquí hacía que cada
-            // rejugada de un nivel llamado "cancion.mp3" generase
-            // "cancion.mp3.mp3", luego "cancion.mp3.mp3.mp3"…
-            name: level.title,
-        },
-    }));
 }
 
 async function publishLevel(level, btn, switchTab) {

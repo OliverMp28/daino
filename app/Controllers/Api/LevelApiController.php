@@ -4,32 +4,39 @@ declare(strict_types=1);
 namespace App\Controllers\Api;
 
 use App\Core\AuthContext;
+use App\Core\Database;
 use App\Core\Env;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\ValidationException;
 use App\Core\Validator;
 use App\Models\Level;
+use App\Services\ChartValidator;
 use App\Services\FileUploadService;
+use PDOException;
 
 /**
- * LevelApiController — niveles (metadata + upload de MP3 + streaming).
+ * LevelApiController — niveles (metadata, chart, upload de MP3, streaming).
  *
  * Diseño:
- *   - POST /api/levels                        (auth)   metadata-only
- *   - GET  /api/levels                        (público) ?public=1 | ?mine=1 (auth)
- *   - GET  /api/levels/{id}                   (mixto)  público si is_public,
- *                                                      404 a no-autores si privado
- *   - POST /api/levels/{id}/upload            (auth)   multipart `file` MP3
- *   - GET  /api/levels/{id}/file              (mixto)  stream MP3 si is_public
- *   - POST /api/levels/{id}/visibility        (auth)   {is_public: bool}
+ *   - POST /api/levels                   (auth)    upsert por (usuario, audio_sha256)
+ *   - GET  /api/levels                   (público) ?mine=1 (auth) | públicos por defecto
+ *   - GET  /api/levels/{id}              (mixto)   público si is_public; 404 a no-autores si privado
+ *   - GET  /api/levels/{id}/chart        (mixto)   chart del nivel, con ETag
+ *   - POST /api/levels/{id}/upload       (auth)    multipart `file` MP3
+ *   - GET  /api/levels/{id}/file         (mixto)   stream MP3 si is_public, con ETag
+ *   - POST /api/levels/{id}/visibility   (auth)    {is_public: bool}
  *
  * Autoría: cualquier mutación valida `$level->userId === AuthContext::user()->id`,
  * 403 si no.
  *
- * Anti-spam de título: al pasar a público, chequea (user_id, title) duplicado.
- *
- * Storage: `storage/uploads/levels/` (out of docroot, vía FileUploadService).
+ * Ola 3 — identidad del audio. Un nivel se identifica por el hash de los bytes
+ * de su MP3, no por su título:
+ *   - Rejugar una canción ya no crea una fila nueva (defecto D1): el POST
+ *     devuelve el nivel existente.
+ *   - Un chart se genera para un audio concreto; al publicar se comprueba que
+ *     el MP3 subido es exactamente ese, o el nivel quedaría desincronizado para
+ *     todos los que lo jueguen.
  */
 final class LevelApiController
 {
@@ -39,63 +46,134 @@ final class LevelApiController
     /** Debe coincidir con `levels.artist VARCHAR(120)`. */
     private const ARTIST_MAX_LEN = 120;
 
+    private const SHA256_PATTERN = '/^[0-9a-f]{64}$/';
+
+    /** Código SQLSTATE de violación de restricción de unicidad. */
+    private const SQLSTATE_UNIQUE_VIOLATION = '23000';
+
+    /**
+     * Crea el nivel de un audio para el usuario, o devuelve el que ya tenía.
+     *
+     * 201 si lo crea, 200 si ya existía. El chart de un nivel existente solo se
+     * sustituye si llega uno de una versión MÁS NUEVA del charter y el nivel NO
+     * es público: el chart de un nivel publicado queda congelado, porque otros
+     * jugadores tienen marcas registradas sobre él.
+     */
     public function store(Request $req): Response
     {
         $user = AuthContext::user();
 
-        // `max` debe coincidir con el ancho real de la columna (VARCHAR(120),
-        // ver 002_create_levels_table.sql). Estaba a 200: un título más largo
-        // pasaba la validación y reventaba en MariaDB con el error 1406, que el
-        // handler global traduce a un 500 opaco en vez del 422 que corresponde
-        // a una entrada inválida del cliente. Defecto D3.
-        $title       = Validator::string($req->input('title'),       ['min' => 1, 'max' => self::TITLE_MAX_LEN, 'field' => 'title']);
-        $artist      = Validator::string($req->input('artist'),      ['min' => 0, 'max' => self::ARTIST_MAX_LEN, 'required' => false, 'field' => 'artist']);
-        $durationSec = Validator::int   ($req->input('duration_sec'), ['min' => 1, 'max' => 7200, 'field' => 'duration_sec']);
-        $bpm         = Validator::int   ($req->input('bpm'),         ['min' => 30, 'max' => 300, 'required' => false, 'field' => 'bpm']);
-        $difficulty  = Validator::int   ($req->input('difficulty'),  ['min' => 1, 'max' => 5, 'field' => 'difficulty']);
-        $seed        = Validator::string($req->input('generator_seed'), ['min' => 1, 'max' => 64, 'field' => 'generator_seed']);
+        // `max` de title/artist coincide con el ancho real de la columna
+        // (VARCHAR(120)): un valor más largo es un 422, no un 500 de MariaDB
+        // (defecto D3).
+        $title      = Validator::string($req->input('title'), ['min' => 1, 'max' => self::TITLE_MAX_LEN, 'field' => 'title']);
+        $artist     = Validator::string($req->input('artist'), ['min' => 0, 'max' => self::ARTIST_MAX_LEN, 'required' => false, 'field' => 'artist']);
+        $sha        = Validator::string($req->input('audio_sha256'), ['pattern' => self::SHA256_PATTERN, 'field' => 'audio_sha256']);
+        $difficulty = Validator::int($req->input('difficulty'), ['min' => 1, 'max' => 5, 'field' => 'difficulty']);
+        $seed       = Validator::string($req->input('generator_seed'), ['min' => 1, 'max' => 64, 'pattern' => '/^-?\d+$/', 'field' => 'generator_seed']);
 
-        $level = Level::create([
-            'user_id'        => $user->id,
-            'title'          => $title,
-            'artist'         => $artist === '' ? null : $artist,
-            'duration_sec'   => $durationSec,
-            'bpm'            => $bpm === 0 ? null : $bpm,
-            'difficulty'     => $difficulty,
-            'generator_seed' => $seed,
-            'is_public'      => false,
-            'file_path'      => null,
-        ]);
+        $chart = $req->input('chart');
+        if ($chart === null) {
+            throw new ValidationException(['chart' => 'Required.']);
+        }
+        // El chart manda: duración, tempo y velocidad salen de él una vez
+        // validado, en vez de aceptar del cliente copias que podrían no cuadrar.
+        $validChart = ChartValidator::validateChart($chart, $sha);
+        $analysisJson = $req->input('analysis') === null
+            ? null
+            : ChartValidator::validateAnalysis($req->input('analysis'));
+
+        $existing = Level::findByUserAndAudioHash($user->id, $sha);
+        if ($existing !== null) {
+            return Response::json(self::serialize(self::maybeUpgradeChart($existing, $validChart, $analysisJson)), 200);
+        }
+
+        $durationSec = $validChart['durationSec'];
+        try {
+            $level = Level::create([
+                'user_id'        => $user->id,
+                'title'          => $title,
+                'artist'         => $artist === '' ? null : $artist,
+                'duration_sec'   => max(1, (int) round($durationSec)),
+                'duration_ms'    => (int) round($durationSec * 1000),
+                'bpm'            => max(30, min(300, (int) round($validChart['bpm']))),
+                'bpm_exact'      => round($validChart['bpm'], 2),
+                'game_speed'     => (int) round($validChart['speedPxS']),
+                'difficulty'     => $difficulty,
+                'generator_seed' => $seed,
+                'audio_sha256'   => $sha,
+                'chart_json'     => $validChart['json'],
+                'analysis_json'  => $analysisJson,
+                'chart_version'  => $validChart['charterVersion'],
+                'is_public'      => false,
+                'file_path'      => null,
+            ]);
+        } catch (PDOException $e) {
+            // Dos peticiones simultáneas para el mismo audio (doble clic, dos
+            // pestañas): la segunda choca con la clave única. No es un error
+            // del cliente — devolvemos el nivel que ganó la carrera.
+            if ((string) $e->getCode() !== self::SQLSTATE_UNIQUE_VIOLATION) {
+                throw $e;
+            }
+            $winner = Level::findByUserAndAudioHash($user->id, $sha);
+            if ($winner === null) {
+                throw $e;
+            }
+            // Misma regla que si la búsqueda previa lo hubiera encontrado.
+            return Response::json(self::serialize(self::maybeUpgradeChart($winner, $validChart, $analysisJson)), 200);
+        }
 
         return Response::json(self::serialize($level), 201);
     }
 
+    /**
+     * @param array<string, string> $params
+     */
     public function show(Request $req, array $params): Response
     {
-        $id = self::parseId($params);
-        $level = Level::findById($id);
+        $level = self::visibleLevel(self::parseId($params));
         if ($level === null) {
             return Response::json(['error' => 'not_found'], 404);
         }
-        // Privado → solo el autor lo ve. Tratamos 404 (no 403) para no
-        // filtrar la existencia de niveles privados ajenos.
-        if (!$level->isPublic) {
-            $user = AuthContext::tryUser();
-            if ($user === null || $user->id !== $level->userId) {
-                return Response::json(['error' => 'not_found'], 404);
-            }
-        }
         return Response::json(self::serialize($level));
+    }
+
+    /**
+     * Chart de un nivel, servido tal cual está guardado.
+     *
+     * Con ETag: el chart de una versión dada es inmutable, así que una
+     * revalidación responde 304 sin cuerpo. El cliente además lo cachea en
+     * IndexedDB, por lo que en la práctica esta petición se hace una vez.
+     *
+     * @param array<string, string> $params
+     */
+    public function chart(Request $req, array $params): Response
+    {
+        $level = self::visibleLevel(self::parseId($params));
+        if ($level === null) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        $chart = Level::findChart($level->id);
+        if ($chart === null) {
+            return Response::json(['error' => 'no_chart', 'message' => 'Este nivel todavía no tiene chart.'], 404);
+        }
+
+        $etag = '"c' . $chart['version'] . '-' . substr(hash('sha256', $chart['json']), 0, 20) . '"';
+        if (self::etagMatches($req, $etag)) {
+            return (new Response('', 304))->header('ETag', $etag)->header('Cache-Control', 'private, no-cache');
+        }
+        return Response::rawJson($chart['json'])
+            ->header('ETag', $etag)
+            ->header('Cache-Control', 'private, no-cache');
     }
 
     public function index(Request $req): Response
     {
         // Nota: no existe un flag `public`. La lista pública es el comportamiento
-        // por defecto, así que `?public=1` es aceptado y redundante — se ignora
-        // a propósito en lugar de parsearse a una variable muerta (defecto D7).
+        // por defecto, así que `?public=1` es aceptado y redundante (defecto D7).
         $mine   = filter_var($req->query('mine', '0'), FILTER_VALIDATE_BOOLEAN);
-        $limit  = Validator::int($req->query('limit', 20),  ['min' => 1, 'max' => 50, 'required' => false, 'field' => 'limit']);
-        $offset = Validator::int($req->query('offset', 0),  ['min' => 0, 'max' => 100_000, 'required' => false, 'field' => 'offset']);
+        $limit  = Validator::int($req->query('limit', 20), ['min' => 1, 'max' => 50, 'required' => false, 'field' => 'limit']);
+        $offset = Validator::int($req->query('offset', 0), ['min' => 0, 'max' => 100_000, 'required' => false, 'field' => 'offset']);
 
         if ($mine) {
             $user = AuthContext::tryUser();
@@ -105,8 +183,6 @@ final class LevelApiController
             $items = Level::findByUser($user->id, $limit, $offset);
             $total = Level::countByUser($user->id);
         } else {
-            // Default: lista pública. `?public=1` y el default son equivalentes,
-            // para evitar el "no listado" silencioso.
             $items = Level::findPublic($limit, $offset);
             $total = Level::countPublic();
         }
@@ -119,11 +195,13 @@ final class LevelApiController
         ]);
     }
 
+    /**
+     * @param array<string, string> $params
+     */
     public function upload(Request $req, array $params): Response
     {
         $user = AuthContext::user();
-        $id = self::parseId($params);
-        $level = Level::findById($id);
+        $level = Level::findById(self::parseId($params));
         if ($level === null) {
             return Response::json(['error' => 'not_found'], 404);
         }
@@ -139,8 +217,18 @@ final class LevelApiController
         $maxBytes = Env::int('UPLOAD_MAX_SIZE_MB', 10) * 1024 * 1024;
         FileUploadService::validateAudioMp3($file, $maxBytes);
 
-        // Anti-spam de título: si va a quedar público, chequear duplicado
-        // ANTES de mover el archivo (evita escribir y luego desconectar).
+        // El chart de este nivel se generó para un audio concreto. Si se
+        // publica con otro MP3 (una versión distinta, otro corte, otro archivo
+        // con el mismo nombre), cada obstáculo caería fuera de su golpe para
+        // todos los jugadores. Se rechaza antes de mover nada.
+        $uploadedSha = FileUploadService::sha256OfUpload($file);
+        if ($level->audioSha256 !== null && !hash_equals($level->audioSha256, $uploadedSha)) {
+            throw new ValidationException([
+                'file' => 'Este MP3 no es el mismo con el que se creó el nivel. Sube exactamente ese archivo.',
+            ]);
+        }
+
+        // Anti-spam de título: chequear duplicado ANTES de mover el archivo.
         if (Level::publicTitleExistsForUser($user->id, $level->title, $level->id)) {
             return Response::json(
                 ['error' => 'duplicate_title', 'message' => 'Ya tienes un nivel público con ese título.'],
@@ -149,29 +237,40 @@ final class LevelApiController
         }
 
         $relative = FileUploadService::storeLevelMp3($level->id, $file);
+        $level->setAudioHashIfMissing($uploadedSha);
         $level->setPublic(true, $relative);
 
         return Response::json(self::serialize($level));
     }
 
+    /**
+     * @param array<string, string> $params
+     */
     public function streamFile(Request $req, array $params): Response
     {
-        $id = self::parseId($params);
-        $level = Level::findById($id);
+        $level = Level::findById(self::parseId($params));
         if ($level === null || !$level->isPublic || $level->filePath === null) {
             return Response::json(['error' => 'not_found'], 404);
         }
-        // streamLevelMp3 emite headers + body crudo. No llamamos Response::send;
-        // devolvemos noContent para que el front controller no escriba más.
-        FileUploadService::streamLevelMp3($level->filePath);
+
+        $etag = $level->audioSha256 !== null ? '"a-' . $level->audioSha256 . '"' : null;
+        if ($etag !== null && self::etagMatches($req, $etag)) {
+            return (new Response('', 304))->header('ETag', $etag)->header('Cache-Control', 'private, no-cache');
+        }
+
+        // streamLevelMp3 emite headers + body crudo. Devolvemos noContent para
+        // que el front controller no escriba nada más.
+        FileUploadService::streamLevelMp3($level->filePath, $etag);
         return Response::noContent();
     }
 
+    /**
+     * @param array<string, string> $params
+     */
     public function visibility(Request $req, array $params): Response
     {
         $user = AuthContext::user();
-        $id = self::parseId($params);
-        $level = Level::findById($id);
+        $level = Level::findById(self::parseId($params));
         if ($level === null) {
             return Response::json(['error' => 'not_found'], 404);
         }
@@ -201,15 +300,62 @@ final class LevelApiController
             if ($level->filePath !== null) {
                 FileUploadService::deleteLevelMp3($level->filePath);
             }
-            $stmt = \App\Core\Database::getInstance()->prepare(
+            $stmt = Database::getInstance()->prepare(
                 'UPDATE levels SET is_public = 0, file_path = NULL WHERE id = :id',
             );
             $stmt->execute(['id' => $level->id]);
-            // Re-fetch para devolver state actualizado.
             $level = Level::findById($level->id);
         }
 
         return Response::json(self::serialize($level));
+    }
+
+    // --------------------------- Helpers ---------------------------
+
+    /**
+     * Nivel si quien pregunta puede verlo: público, o privado y es su autor.
+     * Un privado ajeno devuelve null (→ 404, no 403) para no filtrar que existe.
+     */
+    private static function visibleLevel(int $id): ?Level
+    {
+        $level = Level::findById($id);
+        if ($level === null) {
+            return null;
+        }
+        if (!$level->isPublic) {
+            $user = AuthContext::tryUser();
+            if ($user === null || $user->id !== $level->userId) {
+                return null;
+            }
+        }
+        return $level;
+    }
+
+    /**
+     * @param array{json: string, charterVersion: int} $validChart
+     */
+    private static function maybeUpgradeChart(Level $level, array $validChart, ?string $analysisJson): Level
+    {
+        $isNewer = $level->chartVersion === null || $validChart['charterVersion'] > $level->chartVersion;
+        if ($isNewer && !$level->isPublic) {
+            $level->updateChart($validChart['json'], $analysisJson, $validChart['charterVersion']);
+        }
+        return $level;
+    }
+
+    private static function etagMatches(Request $req, string $etag): bool
+    {
+        $header = $req->header('if-none-match');
+        if ($header === null) {
+            return false;
+        }
+        foreach (explode(',', $header) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '*' || $candidate === $etag || $candidate === 'W/' . $etag) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -221,6 +367,9 @@ final class LevelApiController
     }
 
     /**
+     * Forma pública de un nivel. NUNCA incluye el chart ni el análisis (varios
+     * KB cada uno): se piden aparte con /chart cuando alguien va a jugar.
+     *
      * @return array<string, mixed>
      */
     private static function serialize(Level $level): array
@@ -231,18 +380,22 @@ final class LevelApiController
             'title'          => $level->title,
             'artist'         => $level->artist,
             'duration_sec'   => $level->durationSec,
+            'duration_ms'    => $level->durationMs,
             'bpm'            => $level->bpm,
+            'bpm_exact'      => $level->bpmExact,
+            'game_speed'     => $level->gameSpeed,
             'difficulty'     => $level->difficulty,
             'generator_seed' => $level->generatorSeed,
             'is_public'      => $level->isPublic,
-            // `file_path` NO se expone (defecto D5). Es una ruta interna del
-            // servidor y el cliente nunca la usa: descarga por
-            // `GET /api/levels/{id}/file`, que valida `is_public` antes de
-            // servir. Publicarla solo daba a cualquiera la estructura del
-            // almacenamiento. Se sustituye por un booleano derivado, que es
-            // lo único que la UI necesita saber ("¿tiene audio subido?").
+            'is_official'    => $level->isOfficial,
+            // `file_path` NO se expone (defecto D5): es una ruta interna del
+            // servidor. La UI solo necesita saber si hay audio subido.
             'has_audio'      => $level->filePath !== null,
+            'audio_sha256'   => $level->audioSha256,
+            'has_chart'      => $level->hasChart(),
+            'chart_version'  => $level->chartVersion,
             'created_at'     => $level->createdAt,
+            'updated_at'     => $level->updatedAt,
         ];
     }
 }

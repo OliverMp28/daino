@@ -71,6 +71,9 @@ function yieldToEventLoop() {
  * @property {number}       sampleRate   Sample rate del envelope (= audioRate / hopSize).
  * @property {number}       hopSize      Hop size usado en samples.
  * @property {number}       frameSize    Frame size usado en samples.
+ * @property {number}       latencyS     Adelanto sistemático del detector, en segundos.
+ *                                       Sumarlo a los tiempos de onset los alinea con el
+ *                                       ataque real (ver `detectorLatencyS`).
  */
 
 /**
@@ -153,6 +156,7 @@ export async function computeOnsetEnvelope(audioBuffer, opts = {}) {
     if (yieldEvery > 0) await yieldToEventLoop();
 
     return {
+        latencyS: detectorLatencyS(sampleRate),
         envelope,
         sampleRate: sampleRate / HOP_SIZE,
         hopSize: HOP_SIZE,
@@ -161,16 +165,41 @@ export async function computeOnsetEnvelope(audioBuffer, opts = {}) {
 }
 
 /**
- * Picos locales del envelope sobre la mediana móvil. Devuelve timestamps en
- * segundos absolutos del audio original.
+ * Adelanto sistemático con el que el flujo espectral fecha un ataque.
+ *
+ * El envelope asigna a cada hop el instante de INICIO de su frame, pero con
+ * ventana Hann la energía de un transitorio pesa al máximo cuando cae en el
+ * CENTRO del frame. Resultado: cada onset queda fechado medio frame antes de
+ * sonar. Medido sobre click tracks de 90, 128, 150 y 174 BPM: mediana de
+ * −23.0 a −23.4 ms en todos, que es exactamente `FRAME_SIZE / 2 / sampleRate`
+ * (23.2 ms a 44.1 kHz). Sin corregirlo, cada obstáculo llega ~23 ms antes que
+ * su golpe — por debajo de lo evidente pero dentro de lo que se nota como
+ * "ligeramente adelantado" en un juego de ritmo.
+ *
+ * @param {number} sampleRate
+ */
+export function detectorLatencyS(sampleRate) {
+    return FRAME_SIZE / 2 / sampleRate;
+}
+
+/**
+ * Picos locales del envelope por encima de la mediana móvil, con su fuerza (el
+ * valor normalizado del envelope en el pico). El charter usa la fuerza para
+ * decidir, ante dos onsets demasiado juntos, cuál conservar: el golpe fuerte en
+ * vez del primero que llegue.
+ *
+ *   thresholdRatio  Multiplicador sobre la mediana móvil (default 1.5).
+ *   windowSec       Ventana de la mediana móvil en segundos (default 0.4).
+ *
+ * Los tiempos NO incluyen la corrección de latencia: se devuelven en la misma
+ * escala que el envelope para que este módulo siga siendo una función pura del
+ * análisis. Quien los use como tiempos musicales debe sumar `env.latencyS`.
  *
  * @param {OnsetEnvelopeResult} env
  * @param {{ thresholdRatio?: number, windowSec?: number }} [opts]
- *   thresholdRatio  Multiplicador sobre la mediana móvil (default 1.5 — picos al menos 50% por encima de la mediana).
- *   windowSec       Tamaño de la ventana móvil para la mediana, en segundos (default 0.4).
- * @returns {number[]}  Timestamps en segundos de cada onset detectado.
+ * @returns {Array<{ t: number, strength: number }>}
  */
-export function pickPeaks(env, opts = {}) {
+export function pickOnsets(env, opts = {}) {
     const { envelope, sampleRate } = env;
     const thresholdRatio = opts.thresholdRatio ?? 1.5;
     const windowSec = opts.windowSec ?? 0.4;
@@ -180,27 +209,32 @@ export function pickPeaks(env, opts = {}) {
     const buf = new Float32Array(2 * halfWindow + 1);
 
     for (let i = 1; i < envelope.length - 1; i++) {
-        // Ventana móvil [i-half, i+half] clamp a bordes.
         const lo = Math.max(0, i - halfWindow);
         const hi = Math.min(envelope.length - 1, i + halfWindow);
         const n = hi - lo + 1;
         for (let j = 0; j < n; j++) buf[j] = envelope[lo + j];
-        // Sort en sub-rango — O(N log N) pero N pequeño (~70 con sr ~86Hz, half 0.2s).
         // `subarray` es una vista sobre `buf` (scratch reusable) y `sort()` de
-        // TypedArray ordena in-place, así que no se copia nada. La versión
-        // anterior intercalaba un `.slice()` que alocaba ~18.000 arrays por
-        // canción sin aportar nada: `buf` se reescribe entera cada iteración.
-        const sub = buf.subarray(0, n).sort();
-        const median = sub[(n / 2) | 0];
-        const threshold = median * thresholdRatio;
+        // TypedArray ordena in-place: sin copias por iteración.
+        const median = buf.subarray(0, n).sort()[(n / 2) | 0];
 
         const v = envelope[i];
-        // Pico estricto local + por encima del umbral.
-        if (v > threshold && v > envelope[i - 1] && v >= envelope[i + 1]) {
-            onsets.push(i / sampleRate);
+        if (v > median * thresholdRatio && v > envelope[i - 1] && v >= envelope[i + 1]) {
+            onsets.push({ t: i / sampleRate, strength: v });
         }
     }
     return onsets;
+}
+
+/**
+ * Tiempos de los onsets (sin fuerza). Se mantiene por compatibilidad; delega
+ * en {@link pickOnsets} para que exista una sola implementación del detector.
+ *
+ * @param {OnsetEnvelopeResult} env
+ * @param {{ thresholdRatio?: number, windowSec?: number }} [opts]
+ * @returns {number[]}
+ */
+export function pickPeaks(env, opts = {}) {
+    return pickOnsets(env, opts).map((o) => o.t);
 }
 
 // --------------------------- Helpers ---------------------------

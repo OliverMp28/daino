@@ -163,8 +163,41 @@ export const SPAWN_WINDOW_S = Object.freeze({ min: 0.7, max: 1.8 });
  */
 export const FALLBACK_BPM = 120;
 
-/** Cap del deltaTime en segundos. Evita saltos al volver de background. */
+/** Cap del deltaTime en segundos para lo VISUAL (animaciones, partículas, sacudida). */
 export const DT_CAP_S = 1 / 30;
+
+/**
+ * Paso fijo de la física del Dino (Ola 3). La física avanza en pasos de este
+ * tamaño hasta alcanzar el reloj de la canción, sin importar cuánto dure cada
+ * frame (patrón "fixed timestep").
+ *
+ * Por qué: los obstáculos se colocan desde el reloj de audio, que avanza en
+ * tiempo real. Si la física integrara con el delta del frame capado, un tirón
+ * de 160 ms haría avanzar la canción 160 ms pero el salto solo 33 ms: el Dino
+ * quedaría atrás del mundo y un jugador que pulsó a tiempo chocaría. Medido en
+ * navegador con la máquina cargada. Con paso fijo, física y música no se
+ * separan nunca.
+ *
+ * Es además el mismo paso que usa el simulador de jugabilidad
+ * (playability.js): lo que valida el charter es exactamente lo que se juega.
+ */
+export const PHYSICS_STEP_S = 1 / 120;
+
+/**
+ * Máximo tiempo de física a recuperar en un solo frame.
+ *
+ * Por debajo de esto, la física SIEMPRE alcanza a la música aunque el frame
+ * haya durado mucho: es barato (cada paso cuesta ~0.5 µs; 5 s son 600 pasos,
+ * ~0.3 ms) y es lo único que mantiene al Dino sincronizado. Un tope menor
+ * descartaría física en frames lentos pero legítimos — medido: con la pestaña
+ * estrangulada a 1 FPS y un tope de 0.5 s, se perdía medio segundo de salto
+ * por frame mientras los obstáculos seguían la canción.
+ *
+ * Solo por encima (depurador en pausa, suspensión del equipo) se descarta el
+ * exceso: a esas alturas la partida está perdida de todos modos, y no tiene
+ * sentido simular minutos de golpe.
+ */
+export const MAX_PHYSICS_CATCHUP_S = 5;
 
 // --------------------------- Scenery (parallax) ---------------------------
 

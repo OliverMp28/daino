@@ -34,7 +34,8 @@
     "scripts": {
         "migrate": "php scripts/migrate.php",
         "analyse": "phpstan analyse -l 6 app/",
-        "clean:sessions": "php scripts/clean-sessions.php"
+        "clean:sessions": "php scripts/clean-sessions.php",
+        "test": "php tests/php/run.php"
     },
     "minimum-stability": "stable",
     "prefer-stable": true

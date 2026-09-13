@@ -11,12 +11,9 @@
 // solo cambia el hitbox y el visual, nunca la física vertical.
 
 import { Container, Sprite } from 'pixi.js';
-import {
-    DINO_X, DINO_SIZE, DINO_HITBOX_PADDING,
-    DUCK_SIZE, DUCK_HITBOX_PADDING,
-    JUMP_VELOCITY, COYOTE_TIME_S, RUN_ANIM,
-} from '../config.js';
+import { DINO_X, DINO_SIZE, COYOTE_TIME_S, RUN_ANIM } from '../config.js';
 import { getTexture, normalizeSkinId, PIXEL_SCALE } from '../assets/pixelart.js';
+import { applyJump, applyDuckStart, applyDuckEnd, dinoHitbox } from '../systems/physics.js';
 
 export class Dino extends Container {
     /**
@@ -71,14 +68,9 @@ export class Dino extends Container {
      * @returns {boolean} true si el salto se ejecutó.
      */
     jump() {
-        if (this.dead) return false;
-        if (!this.grounded && this.coyoteT <= 0) return false;
-        this.vy = -JUMP_VELOCITY;
-        this.grounded = false;
-        this.coyoteT = 0;
-        this.jumpHeld = true;
-        this.ducking = false;
-        this.fastFall = false;
+        // Las reglas físicas (coyote, impulso, cancelar agachado) viven en
+        // physics.js para que el simulador de jugabilidad use las mismas.
+        if (!applyJump(this)) return false;
         // Stretch vertical al despegar — el lerp de tickVisual lo devuelve a 1.
         this._squashX = 0.82;
         this._squashY = 1.22;
@@ -92,12 +84,8 @@ export class Dino extends Container {
 
     /** Mantener ↓: agachado en suelo, fast-fall en el aire (y agachado al caer). */
     duckStart() {
-        if (this.dead) return;
-        const wasStanding = !this.ducking;
-        this.ducking = true;
-        if (!this.grounded) {
-            this.fastFall = true;
-        } else if (wasStanding) {
+        const wasStanding = applyDuckStart(this);
+        if (wasStanding && this.grounded) {
             // Squash rápido al tirarse al suelo — vende el gesto.
             this._squashX = 1.12;
             this._squashY = 0.82;
@@ -106,8 +94,7 @@ export class Dino extends Container {
 
     /** Soltar ↓. */
     duckEnd() {
-        this.ducking = false;
-        this.fastFall = false;
+        applyDuckEnd(this);
     }
 
     /** Pose de muerte (ojo en X). La llama GameSession al chocar. */
@@ -160,29 +147,11 @@ export class Dino extends Container {
     }
 
     /**
-     * Rectángulo de colisión en coordenadas del stage. Agachado EN EL SUELO
-     * usa el box bajo (DUCK_SIZE anclado a los pies); en el aire o de pie usa
-     * el box normal. Padding para que el hitbox perdone más que la silueta.
+     * Rectángulo de colisión en coordenadas del stage. La geometría vive en
+     * `physics.dinoHitbox` — la comparte el simulador de jugabilidad.
      * @returns {{ x: number, y: number, w: number, h: number }}
      */
     getHitbox() {
-        if (this.ducking && this.grounded) {
-            const p = DUCK_HITBOX_PADDING;
-            const baseY = this.y + DINO_SIZE.h;             // pies (== groundY)
-            const left = this.x + (DINO_SIZE.w - DUCK_SIZE.w) / 2;
-            return {
-                x: left + p.left,
-                y: baseY - DUCK_SIZE.h + p.top,
-                w: DUCK_SIZE.w - p.left - p.right,
-                h: DUCK_SIZE.h - p.top - p.bottom,
-            };
-        }
-        const p = DINO_HITBOX_PADDING;
-        return {
-            x: this.x + p.left,
-            y: this.y + p.top,
-            w: DINO_SIZE.w - p.left - p.right,
-            h: DINO_SIZE.h - p.top - p.bottom,
-        };
+        return dinoHitbox(this);
     }
 }

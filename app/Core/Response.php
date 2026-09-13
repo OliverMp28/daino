@@ -41,6 +41,15 @@ final class Response
         return new self($body, $status, ['content-type' => 'application/json; charset=utf-8']);
     }
 
+    /**
+     * Body JSON ya codificado (p. ej. un chart guardado tal cual en BD): se
+     * sirve sin decodificar y recodificar varios KB por petición.
+     */
+    public static function rawJson(string $json, int $status = 200): self
+    {
+        return new self($json, $status, ['content-type' => 'application/json; charset=utf-8']);
+    }
+
     public static function html(string $html, int $status = 200): self
     {
         return new self($html, $status, ['content-type' => 'text/html; charset=utf-8']);
@@ -65,6 +74,17 @@ final class Response
     public function status(): int
     {
         return $this->status;
+    }
+
+    /** Body tal cual se enviará. Útil en tests de controllers. */
+    public function body(): string
+    {
+        return $this->body;
+    }
+
+    public function headerValue(string $name): ?string
+    {
+        return $this->headers[strtolower($name)] ?? null;
     }
 
     public function send(): void

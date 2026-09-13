@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0 y 1 ✅ completas (Sep 2026). Resto pendiente.
+> **Estado:** Olas 0, 1 y 3 ✅ completas (Sep 2026). Olas 2 y 4-7 pendientes.
 
 ---
 
@@ -168,7 +168,11 @@ Lo único que hoy está realmente gateado por estado es la visibilidad del dino 
 | **D13** | `filterSpacing` corre *antes* del filtro `t >= 1.5`, así que onsets descartados consumen presupuesto de espaciado y pueden suprimir un onset legítimo en t=1.6 | `LevelGenerator.js:55` vs `:144` |
 | **D14** | `SPAWN_WINDOW_S` está en **segundos**, no en píxeles: a 250 px/s el hueco mínimo son 175 px y a 600 px/s son 420 px. La dificultad efectiva varía **2.4×** según el BPM sin que nadie lo haya afinado | `config.js:158` |
 | **D15** | Nada valida que un patrón sea superable: el salto completo dura `2 × 900 / 2500 = 0.72 s`, **más** que el hueco mínimo de 0.70 s | `config.js:15,18,158` |
-| **D16** | `pickPeaks` umbraliza solo contra la mediana móvil, sin suelo de energía absoluto, y el envelope se normaliza por su máximo. En un tramo plano el ruido se amplifica y genera onsets: medido, un drone tonal de 10 s produce **237 onsets frente a los 112 de un click track percusivo**. Intros suaves y pistas ambientales reciben obstáculos sin relación con su contenido musical. Descubierto al escribir los tests de la Ola 0; cubierto por un test que documenta el comportamiento actual | `SpectralFlux.js:172-199` |
+| **D16** | `pickPeaks` umbraliza solo contra la mediana móvil, sin suelo de energía absoluto, y el envelope se normaliza por su máximo. En un tramo plano el ruido se amplifica y genera onsets: medido, un drone tonal de 10 s produce **237 onsets frente a los 112 de un click track percusivo**. Intros suaves y pistas ambientales reciben obstáculos sin relación con su contenido musical. Descubierto al escribir los tests de la Ola 0; cubierto por un test que documenta el comportamiento actual. **Mitigado en el charter en la Ola 3** (suelo local de fuerza: los picos de ruido ya no llegan a ser obstáculos); la causa en el detector sigue abierta | `SpectralFlux.js` |
+| **D17** | `fillGaps` insertaba rellenos a `prev + 1.8 s` con solo 0.1 s de margen al siguiente onset: podía dejar **dos obstáculos a 0.15 s**, muy por debajo del hueco mínimo. Descubierto en la Ola 3 | `LevelGenerator.js` (sustituido por `charter.js`) |
+| **D18** | El onset se fechaba **~23 ms antes** de sonar: el flujo espectral asigna al hop el inicio de su frame, pero con ventana Hann la energía pesa en el centro. Medido: mediana −23.0 a −23.4 ms a 90-174 BPM = `FRAME_SIZE/2/sampleRate`. Descubierto en la Ola 3 | `SpectralFlux.js` |
+| **D19** | Con los obstáculos ya colocados desde el reloj de audio, la física del Dino integraba con `dt` capado a 33 ms: en cada tirón de frames el salto **se quedaba atrás del mundo** y un jugador que pulsó a tiempo chocaba. Descubierto en el E2E de la Ola 3 (frames de 90-160 ms con la máquina cargada) | `GameSession.js` |
+| **D20** | `AudioContext.outputLatency` **vale 0 al empezar a sonar y salta a 40 ms** ~117 ms después (medido en Chrome). Restarla tal cual hacía retroceder el reloj de canción 40 ms de golpe. Descubierto en el E2E de la Ola 3 | `AudioEngine.js` |
 
 ---
 
@@ -332,7 +336,7 @@ Tiers forzados desde AJUSTES verificados (`medium` → 0.70 / 48 motas / 60 fps;
 
 ---
 
-### Ola 3 — Motor de niveles I: formato Chart y sincronía real
+### Ola 3 — Motor de niveles I: formato Chart y sincronía real ✅
 
 > **Ola bisagra.** Sin esto, las olas 4–7 no tienen sobre qué apoyarse. Cambia el *contrato*, no todavía el algoritmo.
 
@@ -405,7 +409,53 @@ Endpoint aparte `GET /api/levels/{id}/chart`: **`chart_json` no puede ir en el l
 
 **6. Detalles de serialización.** Redondear `tHit` a 3 decimales (1 ms): los floats crudos son `i / 86.1328125` y se serializan con 17 dígitos significativos — **~30 % del payload es ruido**. Validar `kind` al cargar: un kind desconocido hace que `Obstacle.js:29` lea `.w` de `undefined` y reviente a mitad de partida.
 
-**Verificación.** Reproducir una canción con un click de metrónomo superpuesto y comprobar que los obstáculos llegan al Dino **sobre el beat**. Jugar el mismo nivel dos veces y comprobar en la pestaña Network que la segunda no hace ninguna petición ni muestra la fase de análisis. Redimensionar la ventana entre dos partidas del mismo nivel y comprobar que los obstáculos caen en los mismos instantes.
+#### Qué se construyó (y en qué se desvió del plan, con motivo)
+
+**Semántica del tiempo: `event.t` = instante de ACCIÓN, no "tHit".** El plan decía guardar el instante de impacto. Antes de escribirlo se midió con la física real: la pulsación que maximiza el margen de error ante un cactus cae **0.355-0.36 s antes** del cruce a 250, 350, 450 y 600 px/s — exactamente el tiempo al ápice del salto. Guardando el instante de acción, **pulsar sobre el beat es la jugada correcta**, y el adelanto (`actionLeadS`) se deriva de la física en runtime: retocar el salto no invalida ningún chart publicado.
+
+**Separación análisis / charting ya en esta ola.** `analyze.js` (hechos musicales, caro, cacheable por hash) y `charter.js` (decisiones de juego, puro, milisegundos). El plan la dejaba implícita para la Ola 4; hacerla ahora es lo que permite cachear el análisis y re-chartear gratis, y que el analizador Python de la Ola 4 produzca el mismo esquema sin tocar el charter.
+
+**Sin cuantización a rejilla global — deliberado.** Medido: el BPM detectado tiene 0.7-1.3 % de error, que son 1.3-2.4 s de deriva en 3 minutos. Cuantizar a una rejilla global habría sacado los obstáculos del beat. Los rellenos se anclan localmente al último golpe real (error ≤ 20 ms); la rejilla global robusta queda para el beat tracking de la Ola 4.
+
+**Física a paso fijo sincronizada con el reloj de audio + pulsaciones fechadas.** No estaba en el plan; lo exigió el E2E (D19). La física avanza en pasos de 1/120 s hasta alcanzar la canción, con la colisión evaluada en el instante exacto de cada paso. Cada pulsación lleva su `event.timeStamp`, se convierte a tiempo de canción y se aplica en su paso. Resultado: el mismo nivel se completa a 144, 60, 30 y **1 FPS**. Además el simulador de jugabilidad usa el mismo paso: lo que valida el charter es exactamente lo que se juega.
+
+**Validación de jugabilidad en el charter.** Simulador headless (`playability.js`) que juega cada chart con la física real y un jugador de ±40 ms; lo imposible se elimina. Adelanta parte de la Ola 5 (D15) porque sin él la sincronía correcta no garantizaba justicia.
+
+**Caché: IndexedDB para todo (no Cache API para el audio).** Un único almacén permite llevar la contabilidad LRU en la misma transacción que los datos. Presupuesto 250 MB / 60 audios, desalojo por último uso, y nunca lanza: una caché rota solo significa volver a descargar.
+
+**Latencia de salida con velocidad de ajuste limitada** (D20): el reloj es siempre monótono.
+
+**SHA-256 con fallback propio.** `crypto.subtle` solo existe en contextos seguros; abrir Daino por `http://IP-de-la-red:8090` lo deja `undefined`. Fallback verificado contra los vectores FIPS 180-2.
+
+**Servidor.** Migración `007` (columnas del plan + CHECKs de formato de hash, `JSON_VALID` y coherencia `ready ⇒ chart`), `ChartValidator` (estructura y límites; el cliente valida la semántica), `POST /api/levels` como upsert por `(usuario, audio_sha256)` con congelado del chart de niveles públicos, `GET /api/levels/{id}/chart` con ETag/304, ETag = hash en `/file`, y **al publicar se rechaza un MP3 cuyo hash no coincide con el del chart**. Los listados ya no traen `chart_json` ni `analysis_json` del modelo.
+
+#### Verificación — hecha, con medidas reales
+
+Tests: **77 JS** (`bun run test`) y **18 PHP** (`docker compose exec -T php composer test`, dentro de una transacción que se revierte). Cada arreglo de defecto tiene un test de regresión, y los críticos se comprobaron por mutación (romper el código hace fallar el test).
+
+| Qué | Resultado |
+|---|---|
+| Eventos del chart sobre el golpe real (click tracks 90/128/150 BPM, 4 min) | **176/177, 250/250, 294/294 a ±15 ms; error mediano 0.0 ms** |
+| Picos de ruido convertidos en obstáculo (tras el suelo local) | **0** en 5 pistas; golpes reales conservados 134/134 … 346/347 |
+| Cruce real del obstáculo con el Dino vs. instante del chart (navegador) | **0 ms** de error, a 1536 y a 1024 px |
+| Charter de una canción de 4 min | **16.5 ms** (lineal: ×8 de duración → ×8.1 de tiempo) |
+| Nivel completo con un jugador que actúa en el beat (navegador, 40 s) | **Victoria**, 35/35 eventos, a ~50 FPS y a **1 FPS** |
+| Nivel del catálogo, 1ª partida | descarga audio + chart, **no analiza** |
+| Mismo nivel tras recargar la página | **0 peticiones**, audio y chart desde IndexedDB |
+| Mismo nivel sin recargar | **0 peticiones, 0 decodificación, 0 análisis** — solo "Preparando nivel…" |
+| MP3 local ya jugado antes | sin fase de análisis (análisis desde IndexedDB) |
+| Hash del navegador vs. `sha256sum` del archivo | **idénticos** |
+| Revalidación HTTP de chart y audio | **304, 0 bytes** |
+| Latencia de salida medida en Chrome | 0 → 40 ms a los 117 ms (D20) |
+
+**Bundle: 143.81 KB gzip** (+9.8 KB sobre la Ola 1: charter, simulador, caché, SHA-256, cargador). Holgado bajo 200 KB.
+
+#### Limitaciones que quedan
+
+- **Guardar niveles locales exige sesión con Vout**, que en desarrollo está apagado: el camino `POST /api/levels` está probado en PHP en proceso, no de extremo a extremo con un JWT real.
+- Niveles publicados antes de la Ola 3 (sin chart) se juegan generando el chart en el cliente con su `generator_seed`, así que el primer jugador de cada uno sí analiza. Se regenerarán en servidor con la Ola 4.
+- `difficulty` sigue fija en 3 (D6, Ola 5). Las filas duplicadas que D1 creó antes de esta ola siguen en la BD; no se han borrado datos.
+- Un tirón de frames muy largo con una tecla pulsada durante él se aplica bien gracias al sellado temporal, pero el jugador no ha podido VER nada en ese intervalo: a partir de cierto nivel de carga el juego no es jugable para una persona, aunque el motor siga en sincronía.
 
 ---
 
@@ -510,14 +560,16 @@ Si hay que elegir una sola cosa: **Ola 3**. Es la que cambia cómo se siente el 
 
 | Defecto | Ola | Defecto | Ola |
 |---|---|---|---|
-| D1 fila duplicada por partida | 3 | D9 modal sin precarga | 0 ✅ |
+| D1 fila duplicada por partida | 3 ✅ | D9 modal sin precarga | 0 ✅ |
 | D2 título `.mp3.mp3` | 0 ✅ | D10 `sampleRate` no fijado | 0 ✅ |
 | D3 validación 200 vs col 120 | 0 ✅ | D11 nivel privado no jugable | 2 |
 | D4 botón "Jugar" bloqueado | 0 ✅ | D12 identidad en iframe | 2 |
-| D5 `file_path` expuesto | 0 ✅ | D13 orden `filterSpacing` | 3 |
+| D5 `file_path` expuesto | 0 ✅ | D13 orden `filterSpacing` | 3 ✅ |
 | D6 `difficulty` hardcodeada | 5 | D14 espaciado en s, no en px | 5 |
 | D7 `?public=1` muerto | 0 ✅ | D15 sin validación de jugabilidad | 5 |
-| D8 sin índice `is_public` | 0 ✅ | D16 sin suelo de energía en `pickPeaks` | 5 |
+| D8 sin índice `is_public` | 0 ✅ | D16 sin suelo de energía en `pickPeaks` | 5 (mitigado en 3) |
+| D17 relleno a 0.15 s del siguiente | 3 ✅ | D18 onsets 23 ms adelantados | 3 ✅ |
+| D19 física detrás del reloj de audio | 3 ✅ | D20 salto de `outputLatency` | 3 ✅ |
 
 ---
 

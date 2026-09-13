@@ -83,6 +83,30 @@ final class Request
         return new self($spoofed, $path, $query, $post, $server, $headers, $json, $rawBody);
     }
 
+    /**
+     * Construye una request sin superglobales. Para tests y para invocar un
+     * controller desde código (CLI, jobs) con una entrada controlada.
+     *
+     * @param array<string, mixed>  $json     Body JSON ya decodificado.
+     * @param array<string, mixed>  $query
+     * @param array<string, string> $headers  Nombres en cualquier capitalización.
+     */
+    public static function make(
+        string $method,
+        string $path,
+        array $json = [],
+        array $query = [],
+        array $headers = [],
+    ): self {
+        $normalized = [];
+        foreach ($headers as $name => $value) {
+            $normalized[strtolower($name)] = $value;
+        }
+        $rawBody = $json === [] ? '' : (string) json_encode($json);
+        /** @var array<string, string|array<int|string, mixed>> $query */
+        return new self(strtoupper($method), $path, $query, [], [], $normalized, $json, $rawBody);
+    }
+
     public function method(): string
     {
         return $this->method;

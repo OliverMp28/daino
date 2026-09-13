@@ -37,6 +37,20 @@ const MAX_DB = -30;
  */
 export const ANALYSIS_SAMPLE_RATE = 44100;
 
+/**
+ * Velocidad máxima a la que la corrección de latencia de salida puede cambiar,
+ * como fracción del tiempo transcurrido: 0.05 = 50 ms de ajuste por segundo.
+ *
+ * `outputLatency` no es constante. Medido en Chrome: vale 0 al empezar a sonar
+ * y salta a 40 ms unos 117 ms después, y puede volver a cambiar si cambia el
+ * dispositivo de salida. Restarla tal cual haría retroceder el reloj de la
+ * canción 40 ms de golpe — los obstáculos darían un tirón hacia atrás y la
+ * física vería el tiempo retroceder. Limitando la velocidad de ajuste, el reloj
+ * es siempre monótono (avanza al menos al 95 % del ritmo real mientras se
+ * ajusta) y el cambio es imperceptible.
+ */
+const LATENCY_SLEW_RATE = 0.05;
+
 export class AudioEngine {
     constructor() {
         this.ctx = null;
@@ -48,6 +62,8 @@ export class AudioEngine {
         this._downsampled = null;    // Uint8Array(targetBins) reusado por getFrequencyData
         this._currentBuffer = null;  // último AudioBuffer reproducido (para test)
         this._playStartedAt = 0;     // ctx.currentTime cuando arrancó el play actual
+        this._latency = 0;           // corrección de latencia de salida aplicada (s)
+        this._latencyUpdatedAt = 0;  // ctx.currentTime de la última actualización
         this._onVisibilityChange = null;
     }
 
@@ -187,6 +203,10 @@ export class AudioEngine {
         // Stamp del reloj del ctx en el momento del start. getAudioTime()
         // resta esto a ctx.currentTime para devolver el "song time".
         this._playStartedAt = this.ctx.currentTime;
+        // La corrección de latencia arranca con lo que el navegador informe
+        // ahora; getSongTime la irá ajustando sin saltos si cambia.
+        this._latency = this._measuredLatency();
+        this._latencyUpdatedAt = this.ctx.currentTime;
 
         return {
             stop: () => {
@@ -277,5 +297,44 @@ export class AudioEngine {
         // delta directo es el tiempo de canción reproducido.
         const t = this.ctx.currentTime - this._playStartedAt;
         return t < 0 ? 0 : t;
+    }
+
+    /**
+     * Instante de canción que el jugador está OYENDO ahora mismo (Ola 3).
+     *
+     * `ctx.currentTime` marca lo que el motor de audio ha procesado, pero el
+     * sonido llega a los altavoces `outputLatency` segundos después (buffers
+     * del sistema operativo y del dispositivo: unos 10-40 ms en escritorio y
+     * bastante más con Bluetooth). En un juego de ritmo esa diferencia es
+     * exactamente la que separa "el obstáculo llega con el golpe" de "llega
+     * antes de que suene". Restarla alinea lo que se ve con lo que se oye.
+     *
+     * Puede ser ligeramente negativo en los primeros milisegundos; quien lo
+     * muestre al usuario debe acotarlo a 0. La GameSession lo usa como única
+     * fuente de verdad temporal de la partida.
+     *
+     * @returns {number}
+     */
+    getSongTime() {
+        if (this.ctx === null || this.source === null) return 0;
+        const now = this.ctx.currentTime;
+        const elapsed = now - this._latencyUpdatedAt;
+        if (elapsed > 0) {
+            // Converger hacia la latencia medida, a velocidad limitada.
+            const maxStep = elapsed * LATENCY_SLEW_RATE;
+            const delta = this._measuredLatency() - this._latency;
+            this._latency += Math.max(-maxStep, Math.min(maxStep, delta));
+            this._latencyUpdatedAt = now;
+        }
+        return now - this._playStartedAt - this._latency;
+    }
+
+    /**
+     * Latencia de salida que informa el navegador. `outputLatency` no existe en
+     * todos (Safari); `baseLatency` es la mejor aproximación y 0 si tampoco.
+     */
+    _measuredLatency() {
+        const v = this.ctx.outputLatency || this.ctx.baseLatency || 0;
+        return Number.isFinite(v) && v >= 0 && v < 1 ? v : 0;
     }
 }

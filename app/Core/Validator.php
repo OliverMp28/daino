@@ -93,6 +93,43 @@ final class Validator
     }
 
     /**
+     * Número real finito. Acepta enteros y strings numéricos; rechaza NaN,
+     * Infinity y booleanos (que PHP convertiría silenciosamente a 0/1).
+     *
+     * @param array{required?: bool, min?: float, max?: float, field?: string} $opts
+     */
+    public static function float(mixed $value, array $opts = []): float
+    {
+        $field = $opts['field'] ?? 'value';
+        $required = $opts['required'] ?? true;
+
+        if ($value === null || $value === '') {
+            if ($required) {
+                throw new ValidationException([$field => 'Required.']);
+            }
+            return 0.0;
+        }
+
+        if (is_bool($value) || (!is_int($value) && !is_float($value) && !is_string($value))) {
+            throw new ValidationException([$field => 'Must be a number.']);
+        }
+
+        $coerced = filter_var($value, FILTER_VALIDATE_FLOAT);
+        if ($coerced === false || !is_finite($coerced)) {
+            throw new ValidationException([$field => 'Must be a number.']);
+        }
+
+        if (isset($opts['min']) && $coerced < $opts['min']) {
+            throw new ValidationException([$field => "Must be ≥ {$opts['min']}."]);
+        }
+        if (isset($opts['max']) && $coerced > $opts['max']) {
+            throw new ValidationException([$field => "Must be ≤ {$opts['max']}."]);
+        }
+
+        return $coerced;
+    }
+
+    /**
      * @param array{required?: bool, field?: string} $opts
      */
     public static function bool(mixed $value, array $opts = []): bool

@@ -7,33 +7,73 @@ use App\Core\Database;
 use RuntimeException;
 
 /**
- * Level — nivel generado por un usuario a partir de un MP3.
+ * Level — nivel generado a partir de un MP3.
  *
  * Local-First por defecto: `filePath` es null y `isPublic = false`. Solo cuando
- * el usuario explícitamente publica (`setPublic(true, $path)`) se sube el MP3
- * y se persiste su ruta. El CHECK del schema garantiza la coherencia.
+ * el usuario publica (`setPublic(true, $path)`) se sube el MP3. El CHECK del
+ * schema garantiza la coherencia.
+ *
+ * Ola 3: un nivel guarda también su chart y la identidad de su audio
+ * (`audioSha256`). El chart y el análisis son textos de varios KB, así que el
+ * modelo NO los carga al hidratar: los listados solo traen metadata
+ * (`LIST_COLUMNS`) y el chart se lee aparte con `findChart()` cuando alguien va
+ * a jugar. Un listado de 20 niveles pasaría de ~2 KB a ~800 KB si trajera los
+ * blobs sin necesidad.
  */
 final class Level
 {
+    /** Columnas de metadata. Nunca incluir `chart_json` ni `analysis_json` aquí. */
+    private const LIST_COLUMNS = 'id, user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
+        difficulty, file_path, audio_sha256, generator_seed, is_public, chart_status, chart_version,
+        difficulty_ceiling, is_official, created_at, updated_at';
+
     public function __construct(
         public readonly int $id,
         public readonly int $userId,
         public string $title,
         public ?string $artist,
         public int $durationSec,
+        public ?int $durationMs,
         public ?int $bpm,
+        public ?float $bpmExact,
+        public ?int $gameSpeed,
         public int $difficulty,
         public ?string $filePath,
+        public ?string $audioSha256,
         public readonly string $generatorSeed,
         public bool $isPublic,
+        public string $chartStatus,
+        public ?int $chartVersion,
+        public ?int $difficultyCeiling,
+        public bool $isOfficial,
         public readonly string $createdAt,
+        public string $updatedAt,
     ) {
+    }
+
+    public function hasChart(): bool
+    {
+        return $this->chartStatus === 'ready' && $this->chartVersion !== null;
     }
 
     public static function findById(int $id): ?self
     {
-        $stmt = Database::getInstance()->prepare('SELECT * FROM levels WHERE id = :id');
+        $stmt = Database::getInstance()->prepare('SELECT ' . self::LIST_COLUMNS . ' FROM levels WHERE id = :id');
         $stmt->execute(['id' => $id]);
+        $row = $stmt->fetch();
+        return $row === false ? null : self::fromRow($row);
+    }
+
+    /**
+     * Nivel de un usuario para un audio concreto. Es la clave de deduplicado:
+     * rejugar la misma canción devuelve el mismo nivel en vez de crear otro.
+     */
+    public static function findByUserAndAudioHash(int $userId, string $audioSha256): ?self
+    {
+        $stmt = Database::getInstance()->prepare(
+            'SELECT ' . self::LIST_COLUMNS . ' FROM levels WHERE user_id = :user_id AND audio_sha256 = :sha',
+        );
+        $stmt->execute(['user_id' => $userId, 'sha' => $audioSha256]);
         $row = $stmt->fetch();
         return $row === false ? null : self::fromRow($row);
     }
@@ -44,7 +84,8 @@ final class Level
     public static function findByUser(int $userId, int $limit = 50, int $offset = 0): array
     {
         $stmt = Database::getInstance()->prepare(
-            'SELECT * FROM levels WHERE user_id = :user_id ORDER BY created_at DESC LIMIT :lim OFFSET :off',
+            'SELECT ' . self::LIST_COLUMNS . ' FROM levels WHERE user_id = :user_id
+             ORDER BY created_at DESC LIMIT :lim OFFSET :off',
         );
         $stmt->bindValue(':user_id', $userId, \PDO::PARAM_INT);
         $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
@@ -59,7 +100,8 @@ final class Level
     public static function findPublic(int $limit = 50, int $offset = 0): array
     {
         $stmt = Database::getInstance()->prepare(
-            'SELECT * FROM levels WHERE is_public = TRUE ORDER BY created_at DESC LIMIT :lim OFFSET :off',
+            'SELECT ' . self::LIST_COLUMNS . ' FROM levels WHERE is_public = TRUE
+             ORDER BY created_at DESC LIMIT :lim OFFSET :off',
         );
         $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
         $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
@@ -80,6 +122,24 @@ final class Level
         $stmt = Database::getInstance()->query('SELECT COUNT(*) AS c FROM levels WHERE is_public = TRUE');
         $row = $stmt->fetch();
         return $row === false ? 0 : (int) $row['c'];
+    }
+
+    /**
+     * Chart de un nivel, tal como está guardado. null si no tiene.
+     *
+     * @return array{json: string, version: int}|null
+     */
+    public static function findChart(int $id): ?array
+    {
+        $stmt = Database::getInstance()->prepare(
+            "SELECT chart_json, chart_version FROM levels WHERE id = :id AND chart_status = 'ready'",
+        );
+        $stmt->execute(['id' => $id]);
+        $row = $stmt->fetch();
+        if ($row === false || $row['chart_json'] === null || $row['chart_version'] === null) {
+            return null;
+        }
+        return ['json' => (string) $row['chart_json'], 'version' => (int) $row['chart_version']];
     }
 
     /**
@@ -107,30 +167,50 @@ final class Level
      *     title: string,
      *     artist?: ?string,
      *     duration_sec: int,
+     *     duration_ms?: ?int,
      *     bpm?: ?int,
+     *     bpm_exact?: ?float,
+     *     game_speed?: ?int,
      *     difficulty: int,
      *     generator_seed: string,
+     *     audio_sha256?: ?string,
+     *     chart_json?: ?string,
+     *     analysis_json?: ?string,
+     *     chart_version?: ?int,
      *     file_path?: ?string,
      *     is_public?: bool
      * } $data
      */
     public static function create(array $data): self
     {
+        $chartJson = $data['chart_json'] ?? null;
         $pdo = Database::getInstance();
         $stmt = $pdo->prepare(
-            'INSERT INTO levels (user_id, title, artist, duration_sec, bpm, difficulty, file_path, generator_seed, is_public)
-             VALUES (:user_id, :title, :artist, :duration_sec, :bpm, :difficulty, :file_path, :generator_seed, :is_public)',
+            'INSERT INTO levels (user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
+                                 difficulty, file_path, audio_sha256, generator_seed, is_public,
+                                 chart_json, analysis_json, chart_status, chart_version)
+             VALUES (:user_id, :title, :artist, :duration_sec, :duration_ms, :bpm, :bpm_exact, :game_speed,
+                     :difficulty, :file_path, :audio_sha256, :generator_seed, :is_public,
+                     :chart_json, :analysis_json, :chart_status, :chart_version)',
         );
         $stmt->execute([
             'user_id'        => $data['user_id'],
             'title'          => $data['title'],
             'artist'         => $data['artist'] ?? null,
             'duration_sec'   => $data['duration_sec'],
+            'duration_ms'    => $data['duration_ms'] ?? null,
             'bpm'            => $data['bpm'] ?? null,
+            'bpm_exact'      => $data['bpm_exact'] ?? null,
+            'game_speed'     => $data['game_speed'] ?? null,
             'difficulty'     => $data['difficulty'],
             'file_path'      => $data['file_path'] ?? null,
+            'audio_sha256'   => $data['audio_sha256'] ?? null,
             'generator_seed' => $data['generator_seed'],
             'is_public'      => ($data['is_public'] ?? false) ? 1 : 0,
+            'chart_json'     => $chartJson,
+            'analysis_json'  => $data['analysis_json'] ?? null,
+            'chart_status'   => $chartJson !== null ? 'ready' : 'none',
+            'chart_version'  => $chartJson !== null ? ($data['chart_version'] ?? null) : null,
         ]);
         $id = (int) $pdo->lastInsertId();
         $created = self::findById($id);
@@ -138,6 +218,47 @@ final class Level
             throw new RuntimeException("Level::create no pudo recuperar la fila recién creada (id={$id}).");
         }
         return $created;
+    }
+
+    /**
+     * Guarda (o sustituye) el chart y el análisis del nivel.
+     * El análisis es opcional: si no llega, se conserva el que hubiera.
+     */
+    public function updateChart(string $chartJson, ?string $analysisJson, int $chartVersion): void
+    {
+        $stmt = Database::getInstance()->prepare(
+            "UPDATE levels
+             SET chart_json = :chart_json,
+                 analysis_json = COALESCE(:analysis_json, analysis_json),
+                 chart_status = 'ready',
+                 chart_version = :chart_version
+             WHERE id = :id",
+        );
+        $stmt->execute([
+            'chart_json'    => $chartJson,
+            'analysis_json' => $analysisJson,
+            'chart_version' => $chartVersion,
+            'id'            => $this->id,
+        ]);
+        $this->chartStatus = 'ready';
+        $this->chartVersion = $chartVersion;
+    }
+
+    /**
+     * Fija el hash del audio de un nivel que aún no lo tenía (niveles anteriores
+     * a la Ola 3). No sustituye un hash existente: eso cambiaría el audio de un
+     * chart ya generado.
+     */
+    public function setAudioHashIfMissing(string $audioSha256): void
+    {
+        if ($this->audioSha256 !== null) {
+            return;
+        }
+        $stmt = Database::getInstance()->prepare(
+            'UPDATE levels SET audio_sha256 = :sha WHERE id = :id AND audio_sha256 IS NULL',
+        );
+        $stmt->execute(['sha' => $audioSha256, 'id' => $this->id]);
+        $this->audioSha256 = $audioSha256;
     }
 
     /**
@@ -175,17 +296,26 @@ final class Level
     private static function fromRow(array $row): self
     {
         return new self(
-            id:             (int) $row['id'],
-            userId:         (int) $row['user_id'],
-            title:          (string) $row['title'],
-            artist:         $row['artist'] === null ? null : (string) $row['artist'],
-            durationSec:    (int) $row['duration_sec'],
-            bpm:            $row['bpm'] === null ? null : (int) $row['bpm'],
-            difficulty:     (int) $row['difficulty'],
-            filePath:       $row['file_path'] === null ? null : (string) $row['file_path'],
-            generatorSeed:  (string) $row['generator_seed'],
-            isPublic:       (bool) $row['is_public'],
-            createdAt:      (string) $row['created_at'],
+            id:                (int) $row['id'],
+            userId:            (int) $row['user_id'],
+            title:             (string) $row['title'],
+            artist:            $row['artist'] === null ? null : (string) $row['artist'],
+            durationSec:       (int) $row['duration_sec'],
+            durationMs:        $row['duration_ms'] === null ? null : (int) $row['duration_ms'],
+            bpm:               $row['bpm'] === null ? null : (int) $row['bpm'],
+            bpmExact:          $row['bpm_exact'] === null ? null : (float) $row['bpm_exact'],
+            gameSpeed:         $row['game_speed'] === null ? null : (int) $row['game_speed'],
+            difficulty:        (int) $row['difficulty'],
+            filePath:          $row['file_path'] === null ? null : (string) $row['file_path'],
+            audioSha256:       $row['audio_sha256'] === null ? null : (string) $row['audio_sha256'],
+            generatorSeed:     (string) $row['generator_seed'],
+            isPublic:          (bool) $row['is_public'],
+            chartStatus:       (string) $row['chart_status'],
+            chartVersion:      $row['chart_version'] === null ? null : (int) $row['chart_version'],
+            difficultyCeiling: $row['difficulty_ceiling'] === null ? null : (int) $row['difficulty_ceiling'],
+            isOfficial:        (bool) $row['is_official'],
+            createdAt:         (string) $row['created_at'],
+            updatedAt:         (string) $row['updated_at'],
         );
     }
 }

@@ -1,5 +1,5 @@
 // GameSession — orquestador de un run del juego. Recibe el engine (Pixi),
-// el AudioEngine y el Level pre-computado, y conecta todas las piezas:
+// el AudioEngine, el audio decodificado y el chart, y conecta todas las piezas:
 // monta Dino + spawner + HUD + emisor de bursts, suscribe Input (salto,
 // salto variable, agacharse), registra el tick en el ticker global de Pixi,
 // escucha pause/resume del audio y alimenta el pulso de beat del shader.
@@ -7,20 +7,32 @@
 // Una sola sesión activa a la vez. `start()` arranca; `stop({reason})`
 // limpia. Reiniciar = stop() + new GameSession(...).
 //
+// Ola 3 — la sesión es la ÚNICA dueña del tiempo de la partida: arranca ella
+// misma la reproducción al final de `start()`, cuando todo está montado, y lee
+// el instante de canción OÍDO (`getSongTime`, con la latencia de salida
+// descontada) cada frame. Los obstáculos se colocan a partir de ese instante,
+// no se integran, así que no hay deriva posible entre lo que suena y lo que se ve.
+//
 // Secuencia de muerte (rediseño Jul 2026): impacto → hit-stop (mundo
 // congelado HITSTOP_S, audio cortado en seco, estallido de partículas,
 // flash blanco) → screen shake con decay → _end('collision'). Total ~0.45s
 // de "golpe" antes del game over — el juice que el placeholder no tenía.
 
 import { Dino } from './entities/Dino.js';
+import { Obstacle } from './entities/Obstacle.js';
 import { createSpawner } from './systems/spawner.js';
+import { createBeatClock } from './systems/beatClock.js';
+import { obstacleEvents } from './levels/chartFormat.js';
 import { createBurstEmitter } from './entities/ParticleLayer.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
-import { computeGroundY, integrateDino, findCollision } from './systems/physics.js';
+import { computeGroundY, integrateDino, dinoHitbox } from './systems/physics.js';
+import { createFixedStepper } from './systems/fixedStep.js';
+import { createInputTimeline, songTimeOfEvent } from './systems/inputTimeline.js';
 import {
     DT_CAP_S, DINO_SIZE, JUMP_BUFFER_S,
     SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
+    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -30,7 +42,9 @@ export class GameSession {
      * @param {object} cfg
      * @param {ReturnType<import('./engine.js').startEngine> extends Promise<infer T> ? T : never} cfg.engine
      * @param {import('./audio/AudioEngine.js').AudioEngine} cfg.audioEngine
-     * @param {import('./levels/LevelGenerator.js').Level} cfg.level
+     * @param {AudioBuffer} cfg.audioBuffer   Canción decodificada. La sesión la reproduce.
+     * @param {import('./levels/chartFormat.js').Chart} cfg.chart  Ya normalizado.
+     * @param {string} [cfg.title]            Nombre a mostrar en el HUD.
      * @param {number | null} [cfg.levelId]   Id del row `levels` en el servidor.
      *        Si != null y la run termina con 'win'|'collision', dispara
      *        POST /api/progress fire-and-forget. Anónimo: null → no llama.
@@ -39,7 +53,9 @@ export class GameSession {
     constructor(cfg) {
         this.engine = cfg.engine;
         this.audioEngine = cfg.audioEngine;
-        this.level = cfg.level;
+        this.audioBuffer = cfg.audioBuffer;
+        this.chart = cfg.chart;
+        this.title = cfg.title ?? '';
         this.levelId = cfg.levelId ?? null;
         this.skinId = cfg.skinId ?? 'classic';
         this.onGameOver = cfg.onGameOver ?? (() => {});
@@ -64,8 +80,21 @@ export class GameSession {
         this._dying = false;
         this._dieT = 0;
         this._dustT = 0;
-        this._finalAudioTime = 0;
-        this._beatLenS = 60 / Math.max(1, this.level.bpm ?? 120);
+        this._finalSongTime = 0;
+        this._speedPxS = this.chart.world.speedPxS;
+        // La partida dura lo que dura el audio REAL decodificado: es lo que
+        // suena. El chart trae su propia duración, pero un decodificador
+        // distinto puede diferir en unos ms de relleno del MP3.
+        this._durationSec = this.audioBuffer.duration;
+        this._beatClock = createBeatClock(
+            obstacleEvents(this.chart).map((e) => e.t),
+            this.chart.music.beatPeriodS,
+        );
+        // Física a paso fijo sincronizada con el reloj de la canción.
+        this._physics = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
+        this._hitbox = { x: 0, y: 0, w: 0, h: 0 };
+        /** Pulsaciones pendientes, fechadas en tiempo de canción. */
+        this._inputs = createInputTimeline();
     }
 
     start() {
@@ -87,12 +116,12 @@ export class GameSession {
         this.dino.y = groundY - DINO_SIZE.h;
         layers.gameLayer.addChild(this.dino);
 
-        // Spawner.
+        // Spawner: coloca los obstáculos del chart a partir del tiempo de canción.
         this.spawner = createSpawner({
-            timeline: this.level.timeline,
-            gameLayer: layers.gameLayer,
-            viewportWidth: window.innerWidth,
-            groundY,
+            events: this.chart.events,
+            speedPxS: this._speedPxS,
+            layer: layers.gameLayer,
+            createObstacle: (kind) => new Obstacle(kind),
         });
 
         // Bursts (polvo de aterrizaje, estallido de muerte) sobre el gameLayer.
@@ -100,33 +129,19 @@ export class GameSession {
 
         // HUD DOM (#hud-root). El hudLayer del canvas queda para el flash.
         this.hud = createHud();
-        this.hud.update(0, 0, this.level.durationSec);
-        if (this.level.sourceName) this.hud.setSong(this.level.sourceName);
+        this.hud.update(0, 0, this._durationSec);
+        if (this.title) this.hud.setSong(this.title);
 
         // El mundo scrollea a la velocidad de la canción.
-        this.engine.setWorldSpeed(this.level.gameSpeed);
+        this.engine.setWorldSpeed(this._speedPxS);
 
-        // Input.
+        // Input. Las pulsaciones NO se aplican al leerse: se fechan en tiempo de
+        // canción y cada paso de física aplica las suyas (ver inputTimeline.js).
         Input.setup();
-        this._jumpHandler = () => {
-            if (!this._isRunning || this._isPaused || this._dying) return;
-            const jumped = this.dino.jump();
-            // Pulsado un pelín antes de aterrizar: se guarda y dispara al tocar
-            // suelo (jump buffer) — perdona el timing humano a BPM alto.
-            if (!jumped && !this.dino.grounded) {
-                this.dino.jumpBufferT = JUMP_BUFFER_S;
-            }
-        };
-        this._jumpEndHandler = () => {
-            if (this.dino) this.dino.jumpEnd();
-        };
-        this._duckStartHandler = () => {
-            if (!this._isRunning || this._isPaused || this._dying) return;
-            this.dino.duckStart();
-        };
-        this._duckEndHandler = () => {
-            if (this.dino) this.dino.duckEnd();
-        };
+        this._jumpHandler = (p) => this._queueInput('jump', p);
+        this._jumpEndHandler = (p) => this._queueInput('jumpEnd', p);
+        this._duckStartHandler = (p) => this._queueInput('duckStart', p);
+        this._duckEndHandler = (p) => this._queueInput('duckEnd', p);
         Input.on('jump', this._jumpHandler);
         Input.on('jumpEnd', this._jumpEndHandler);
         Input.on('duckStart', this._duckStartHandler);
@@ -141,6 +156,11 @@ export class GameSession {
         // Ticker.
         this._tickFn = (t) => this._tick(t);
         ticker.add(this._tickFn);
+
+        // El reloj de la partida arranca AQUÍ, con todo montado. Cualquier
+        // trabajo previo (crear sprites, instalar listeners) queda fuera del
+        // tiempo de canción en vez de comerse los primeros milisegundos.
+        this.audioEngine.play(this.audioBuffer);
     }
 
     _tick(tickerArg) {
@@ -156,7 +176,7 @@ export class GameSession {
 
             // El estallido de partículas sigue animando durante el freeze.
             this._bursts.tick(dt);
-            this.dino.tickVisual(dt, this.level.gameSpeed);
+            this.dino.tickVisual(dt, this._speedPxS);
 
             // Flash blanco con fade.
             if (this._flash) {
@@ -184,38 +204,30 @@ export class GameSession {
         }
 
         // ---------- Frame normal ----------
-        const audioTime = this.audioEngine.getAudioTime();
-
-        // Físicas del Dino primero (gravedad variable + clamp al suelo).
+        const songTime = this.audioEngine.getSongTime();
+        const shownTime = Math.max(0, songTime);
         const groundY = computeGroundY(window.innerHeight);
-        integrateDino(this.dino, dt, groundY);
 
-        // Aterrizaje: squash + polvo + jump buffer.
-        if (!this._prevGrounded && this.dino.grounded) {
-            this.dino.onLand();
-            this._bursts.burst({
-                x: this.dino.x + DINO_SIZE.w * 0.5,
-                y: groundY,
-                count: 6,
-                color: 0x8b9aff,
-                speedMin: 30,
-                speedMax: 120,
-                gravity: 500,
-                lifeS: 0.35,
-                upBias: 0.4,
-            });
-            if (this.dino.jumpBufferT > 0) {
-                this.dino.jumpBufferT = 0;
-                this.dino.jump();
-            }
+        // Física a PASO FIJO hasta el instante de canción actual. Cada paso
+        // integra el Dino y comprueba la colisión con los obstáculos en ese
+        // mismo instante. Un frame de 160 ms ejecuta ~19 pasos; uno de 8 ms,
+        // ninguno o uno. Así el salto nunca se queda atrás de la música.
+        //
+        // Va ANTES de `spawner.tick`: el spawner recicla al final del frame los
+        // obstáculos que ya salieron por la izquierda, y un paso anterior de
+        // este mismo frame todavía podría necesitarlos para la colisión.
+        const collided = this._physics.advance(songTime, (t) => this._physicsStep(t, groundY));
+
+        // Spawner: coloca cada sprite donde el tiempo de canción dice.
+        this.spawner.tick(songTime, dt, { width: window.innerWidth, groundY });
+
+        if (collided) {
+            this._startDeath();
+            return;
         }
-        this._prevGrounded = this.dino.grounded;
-
-        // Spawner: instancia nuevos obstáculos y mueve los activos.
-        this.spawner.tick(audioTime, dt, this.level.gameSpeed);
 
         // Visual del Dino (frames de carrera, squash) y bursts vivos.
-        this.dino.tickVisual(dt, this.level.gameSpeed);
+        this.dino.tickVisual(dt, this._speedPxS);
         this._bursts.tick(dt);
 
         // Polvo al correr: motita en los pies a intervalo fijo mientras
@@ -238,36 +250,106 @@ export class GameSession {
             }
         }
 
-        // Pulso de beat para el shader: exp-decay re-disparado en cada beat.
-        // Es la ÚNICA fuente de uBpmPulse (antes el uniform estaba muerto).
-        if (audioTime >= 0) {
-            const phase = (audioTime % this._beatLenS) / this._beatLenS;
-            this.engine.setBeatPulse(Math.exp(-phase * 4.5));
+        // Pulso de beat para el shader: exp-decay re-disparado en cada beat,
+        // con la fase anclada a los golpes reales del chart (ver beatClock.js).
+        if (songTime >= 0) {
+            this.engine.setBeatPulse(Math.exp(-this._beatClock.phaseAt(songTime) * 4.5));
         }
 
-        // Colisión Dino vs obstáculos activos.
-        const hit = findCollision(this.dino, this.spawner.getActive());
-        if (hit !== null) {
-            this._startDeath();
-            return;
-        }
+        // Score: por ahora, score = floor(tiempo de canción * 100).
+        this._score = Math.floor(shownTime * 100);
+        this.hud.update(this._score, Math.min(shownTime, this._durationSec), this._durationSec);
 
-        // Score: por ahora, score = floor(audioTime * 100).
-        this._score = Math.floor(audioTime * 100);
-        this.hud.update(this._score, audioTime, this.level.durationSec);
-
-        // Win condition: la canción terminó.
-        if (audioTime >= this.level.durationSec) {
-            this._finalAudioTime = this.level.durationSec;
+        // Victoria: la canción terminó Y no queda ningún obstáculo por cruzar.
+        // Antes bastaba con que acabara el audio, y como los obstáculos
+        // llegaban tarde se ganaba con varios todavía en pantalla.
+        if (songTime >= this._durationSec && !this.spawner.hasPendingCrossing(songTime)) {
+            this._finalSongTime = this._durationSec;
             this._end('win');
         }
+    }
+
+    /**
+     * Encola una acción del jugador fechada en el instante en que se pulsó.
+     *
+     * @param {'jump'|'jumpEnd'|'duckStart'|'duckEnd'} action
+     * @param {{ timeStamp?: number }} [payload]  Marca del evento del navegador.
+     * @param {number} [songT]  Instante de canción explícito (herramientas y
+     *        pruebas); si se da, sustituye a la conversión desde `timeStamp`.
+     */
+    _queueInput(action, payload, songT) {
+        if (!this._isRunning || this.dino === null) return;
+        // Empezar un salto o agacharse requiere partida viva; SOLTAR siempre se
+        // registra, o un botón soltado durante la pausa quedaría "pulsado".
+        const starts = action === 'jump' || action === 'duckStart';
+        if (starts && (this._isPaused || this._dying)) return;
+
+        const nowMs = performance.now();
+        const at = songT ?? songTimeOfEvent(
+            this.audioEngine.getSongTime(),
+            payload?.timeStamp ?? nowMs,
+            nowMs,
+            this._physics.time ?? -Infinity,
+        );
+        this._inputs.push(action, at);
+    }
+
+    /** Aplica una acción del jugador sobre el Dino (dentro de un paso de física). */
+    _applyInput(action) {
+        const dino = this.dino;
+        switch (action) {
+            case 'jump':
+                // Pulsado un pelín antes de aterrizar: se guarda y dispara al
+                // tocar suelo (jump buffer) — perdona el timing humano.
+                if (!dino.jump() && !dino.grounded) dino.jumpBufferT = JUMP_BUFFER_S;
+                break;
+            case 'jumpEnd': dino.jumpEnd(); break;
+            case 'duckStart': dino.duckStart(); break;
+            case 'duckEnd': dino.duckEnd(); break;
+            default: break;
+        }
+    }
+
+    /**
+     * Un paso fijo de física en el instante de canción `t`.
+     * @returns {boolean} true si el Dino chocó en este paso.
+     */
+    _physicsStep(t, groundY) {
+        const dino = this.dino;
+        // Primero las pulsaciones que ocurrieron hasta este instante.
+        this._inputs.drainUntil(t, (action) => this._applyInput(action));
+        integrateDino(dino, PHYSICS_STEP_S, groundY);
+
+        // Aterrizaje: squash + polvo + jump buffer.
+        if (!this._prevGrounded && dino.grounded) {
+            dino.onLand();
+            this._bursts.burst({
+                x: dino.x + DINO_SIZE.w * 0.5,
+                y: groundY,
+                count: 6,
+                color: 0x8b9aff,
+                speedMin: 30,
+                speedMax: 120,
+                gravity: 500,
+                lifeS: 0.35,
+                upBias: 0.4,
+            });
+            if (dino.jumpBufferT > 0) {
+                dino.jumpBufferT = 0;
+                dino.jump();
+            }
+        }
+        this._prevGrounded = dino.grounded;
+
+        return this.spawner.collisionAt(dinoHitbox(dino, this._hitbox), t, groundY) !== null;
     }
 
     /** Impacto: congela el mundo, corta el audio en seco y arma el juice. */
     _startDeath() {
         this._dying = true;
         this._dieT = 0;
-        this._finalAudioTime = this.audioEngine.getAudioTime();
+        this._inputs.clear();
+        this._finalSongTime = Math.max(0, this.audioEngine.getSongTime());
 
         this.dino.setDead();
         this.engine.setBeatPulse(0);
@@ -337,9 +419,9 @@ export class GameSession {
         // debería contar como un intento real. La UI no espera la respuesta;
         // si falla, log a consola — el toast del menú ya muestra el score.
         if (this.levelId !== null && (reason === 'win' || reason === 'collision')) {
-            const audioTime = this._finalAudioTime || this.audioEngine.getAudioTime();
-            const percentage = this.level.durationSec > 0
-                ? Math.min(100, Math.max(0, Math.round((audioTime / this.level.durationSec) * 100)))
+            const reached = this._finalSongTime || Math.max(0, this.audioEngine.getSongTime());
+            const percentage = this._durationSec > 0
+                ? Math.min(100, Math.max(0, Math.round((reached / this._durationSec) * 100)))
                 : 0;
             apiRequest('POST', '/api/progress', {
                 body: {
@@ -360,7 +442,7 @@ export class GameSession {
         // la transición a MENU sin acoplarse al callback. `onGameOver` se
         // mantiene como fallback para callers que prefieran el camino directo.
         window.dispatchEvent(new CustomEvent('daino:gamestate', {
-            detail: { kind: reason, score: this._score, durationSec: this.level.durationSec },
+            detail: { kind: reason, score: this._score, durationSec: this._durationSec },
         }));
 
         this.onGameOver({ reason, score: this._score });

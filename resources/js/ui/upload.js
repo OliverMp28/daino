@@ -1,34 +1,28 @@
-// Drag & drop de MP3 sobre todo el viewport. Bloque 4.
+// Entrada de MP3 del usuario: drag & drop sobre la ventana y selector nativo.
 //
-// Flujo:
-//   1. dragover sobre body — anota `data-drag="active"` (CSS dibuja el borde
-//      pulsante). Hay que llamar preventDefault() en dragover y drop o el
-//      navegador abre el archivo en su lugar.
-//   2. drop — lee el primer File del DataTransfer, valida MIME y tamaño,
-//      lee como ArrayBuffer, decodifica con AudioEngine, atacha al engine
-//      y lanza play().
-//   3. Oculta #hint con .is-hidden tras el primer audio:ready exitoso.
+// Ola 3: este módulo ya NO decodifica ni reproduce nada. Solo valida que el
+// archivo parece un MP3 aceptable y pide la partida (`requestLocalPlay`).
+// Decodificar, analizar (o reutilizar el análisis cacheado), generar el chart
+// y arrancar la partida es trabajo de AppController + levelLoader.
 //
-// Validaciones (defensa frontend; el backend revalida en Bloque 7 al subir):
-//   - MIME: audio/mpeg. Algunos OS reportan vacío; aceptamos también si el
-//     nombre termina en .mp3.
-//   - Tamaño: contra <meta name="daino:upload-max-mb">. Default 10 MB.
+// Antes este módulo decodificaba y EMPEZABA A REPRODUCIR la canción, y
+// AppController la paraba dos líneas después para arrancarla sincronizada:
+// trabajo tirado en cada partida.
 //
-// Errores: toast in-DOM autodescartable a los 4s. role="alert" para a11y.
+// Validaciones (defensa de frontend; el backend revalida al publicar):
+//   - MIME audio/mpeg, o nombre .mp3 (algunos sistemas no informan el tipo).
+//   - Tamaño contra <meta name="daino:upload-max-mb">. Default 10 MB.
 
-import { AudioEngine } from '@/game/audio/AudioEngine.js';
+import { requestLocalPlay } from './playRequests.js';
+import { unlockAudio } from '../game/audio/sharedEngine.js';
+import { showToast } from './toast.js';
 
 const META_UPLOAD_MAX = 'daino:upload-max-mb';
 
-let audioEngine = null;
-let mountedEngine = null;
-
 function readUploadMaxBytes() {
     const meta = document.querySelector(`meta[name="${META_UPLOAD_MAX}"]`);
-    const raw = meta?.getAttribute('content');
-    const mb = Number.parseInt(raw ?? '10', 10);
-    const safe = Number.isFinite(mb) && mb > 0 ? mb : 10;
-    return safe * 1024 * 1024;
+    const mb = Number.parseInt(meta?.getAttribute('content') ?? '10', 10);
+    return (Number.isFinite(mb) && mb > 0 ? mb : 10) * 1024 * 1024;
 }
 
 function isMp3(file) {
@@ -36,72 +30,18 @@ function isMp3(file) {
     return /\.mp3$/i.test(file.name);
 }
 
-function showToast(message, severity = 'error') {
-    const el = document.createElement('div');
-    el.className = 'daino-toast';
-    el.dataset.severity = severity;
-    el.setAttribute('role', severity === 'error' ? 'alert' : 'status');
-    el.textContent = message;
-    document.body.appendChild(el);
-    setTimeout(() => { el.remove(); }, 4000);
-}
-
-function hideHint() {
-    const hint = document.getElementById('hint');
-    if (hint) hint.classList.add('is-hidden');
-}
-
-function showHint() {
-    const hint = document.getElementById('hint');
-    if (hint) hint.classList.remove('is-hidden');
-}
-
-async function handleFile(file) {
-    const maxBytes = readUploadMaxBytes();
+/** Valida y, si procede, pide la partida. */
+function handleFile(file) {
     if (!isMp3(file)) {
         showToast('Solo MP3 por ahora — el archivo no parece audio/mpeg.');
         return;
     }
+    const maxBytes = readUploadMaxBytes();
     if (file.size > maxBytes) {
-        const mb = (maxBytes / (1024 * 1024)) | 0;
-        showToast(`Archivo demasiado grande — máximo ${mb} MB.`);
+        showToast(`Archivo demasiado grande — máximo ${Math.floor(maxBytes / (1024 * 1024))} MB.`);
         return;
     }
-
-    if (audioEngine === null) {
-        audioEngine = new AudioEngine();
-    }
-
-    try {
-        await audioEngine.start();
-        const arrayBuffer = await file.arrayBuffer();
-        const audioBuffer = await audioEngine.decode(arrayBuffer);
-
-        // Conectar al engine si no estaba ya.
-        if (mountedEngine && mountedEngine.attachAudio) {
-            mountedEngine.attachAudio(audioEngine);
-        }
-
-        audioEngine.play(audioBuffer);
-        hideHint();
-
-        // Bloque 5: el AudioBuffer viaja en el evento. La GameSession lo
-        // pasa al LevelGenerator para precomputar la ObstacleTimeline antes
-        // del start. Cambio aditivo — claves antiguas (`duration`, `name`)
-        // se mantienen.
-        window.dispatchEvent(new CustomEvent('audio:ready', {
-            detail: {
-                audioBuffer,
-                audioEngine,
-                duration: audioBuffer.duration,
-                name: file.name,
-            },
-        }));
-    } catch (err) {
-        console.error('[upload] decode/play failed:', err);
-        showToast('No pude decodificar el MP3. ¿Está corrupto?');
-        showHint();
-    }
+    requestLocalPlay(file);
 }
 
 function onDragOver(ev) {
@@ -111,8 +51,8 @@ function onDragOver(ev) {
 }
 
 function onDragLeave(ev) {
-    // dragleave se dispara también al pasar entre hijos. Solo limpiamos si el
-    // puntero salió de la ventana (relatedTarget null suele indicarlo).
+    // dragleave también salta al pasar entre hijos; solo limpiamos al salir
+    // de la ventana (relatedTarget null).
     if (ev.relatedTarget === null || ev.relatedTarget === undefined) {
         delete document.body.dataset.drag;
     }
@@ -121,33 +61,19 @@ function onDragLeave(ev) {
 function onDrop(ev) {
     ev.preventDefault();
     delete document.body.dataset.drag;
-
     const file = ev.dataTransfer?.files?.[0];
-    if (!file) return;
-    void handleFile(file);
-}
-
-/**
- * Devuelve el AudioEngine singleton, creándolo si no existía. Bloque 7 lo
- * usa el modal de NIVELES para reproducir un MP3 público descargado del
- * servidor sin tener que pasar por el flujo drag&drop.
- *
- * @returns {AudioEngine}
- */
-export function getOrCreateAudioEngine() {
-    if (audioEngine === null) {
-        audioEngine = new AudioEngine();
-    }
-    return audioEngine;
+    if (file) handleFile(file);
 }
 
 /**
  * Abre el selector de archivos nativo y procesa el primer MP3 elegido.
- * Bloque 6 — el botón JUGAR del menú la usa. Internamente reutiliza el
- * mismo `handleFile` que el drag&drop, así el flujo (validar → decode →
- * play → audio:ready) es idéntico.
+ *
+ * El audio se desbloquea AQUÍ, en el clic, antes de abrir el diálogo: el
+ * evento `change` que llega al elegir el archivo no cuenta como gesto del
+ * usuario en todos los navegadores, y sin gesto el AudioContext no arranca.
  */
 export function pickFileViaInput() {
+    unlockAudio();
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = 'audio/mpeg,.mp3';
@@ -155,17 +81,14 @@ export function pickFileViaInput() {
     document.body.appendChild(inp);
     inp.addEventListener('change', () => {
         const file = inp.files?.[0];
-        if (file) void handleFile(file);
+        if (file) handleFile(file);
         inp.remove();
     }, { once: true });
+    inp.addEventListener('cancel', () => inp.remove(), { once: true });
     inp.click();
 }
 
-/**
- * @param {{ engine: { attachAudio: (e: AudioEngine) => void } }} opts
- */
-export function setupUpload(opts) {
-    mountedEngine = opts?.engine ?? null;
+export function setupUpload() {
     document.body.addEventListener('dragover', onDragOver);
     document.body.addEventListener('dragleave', onDragLeave);
     document.body.addEventListener('drop', onDrop);

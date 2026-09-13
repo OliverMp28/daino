@@ -1,75 +1,194 @@
-// Spawner — cursor sobre la ObstacleTimeline pre-computada. Cero análisis
-// de audio en runtime: solo recibe `audioTime` (segundos de canción) y mira
-// si el siguiente obstáculo de la timeline ya entra en escena.
+// Spawner — pone en escena los obstáculos del chart en el instante justo.
 //
-// Invariante (doc 08 §"Bloque 5" verificación 3): este módulo NO importa el
-// AudioEngine. Solo recibe parámetros. Eso permite probar la timeline en
-// aislamiento y mantiene la separación generación-offline / consumo-online.
+// Invariante (doc 08 § Bloque 5): este módulo NO importa el AudioEngine. Solo
+// recibe el tiempo de canción como parámetro, lo que permite probarlo en
+// aislamiento y mantiene separados generación offline y consumo online.
+//
+// Ola 3 — rediseño completo. Antes: cada obstáculo NACÍA en el borde derecho
+// en su instante musical y avanzaba integrando `x -= speed * dt`. Eso hacía
+// que llegara al Dino 3-7 s tarde (dependiendo del ancho de la ventana) y que
+// fuera acumulando error con cada tirón de frames.
+//
+// Ahora la posición de cada obstáculo es una FUNCIÓN del tiempo de canción
+// (`physics.obstacleLeftX`): su centro cruza al Dino exactamente
+// `actionLeadS` después de su evento, en cualquier monitor y con cualquier
+// framerate. El spawner solo decide cuándo un obstáculo entra en el campo de
+// visión, lo coloca cada frame y lo recicla al salir.
+//
+// Eficiencia:
+//   - Pool por kind: reutiliza objetos en lugar de crear y destruir Pixi
+//     Containers durante la partida (cero basura para el GC en el bucle).
+//   - Cola ordenada por instante de aparición + cursor monótono: decidir qué
+//     entra cuesta O(1) amortizado por frame.
+//   - `getActive()` devuelve siempre el mismo array, sin copias.
 
-import { Obstacle } from '../entities/Obstacle.js';
+import { DINO_CENTER_X, aabbHit, obstacleHitbox, obstacleLeftX, obstacleTopY } from './physics.js';
+import { toSimObstacles } from './playability.js';
+
+/** Un obstáculo entra en cola cuando su borde izquierdo está a este margen del borde derecho. */
+const SPAWN_MARGIN_PX = 80;
+
+/** Se recicla cuando su borde derecho sale este margen por la izquierda. */
+const CULL_MARGIN_PX = 100;
+
+/**
+ * @typedef {Object} SpawnerObstacle
+ * @property {(fadeIn: boolean) => void} activate
+ * @property {() => void} deactivate
+ * @property {(x: number, groundY: number) => void} placeAt
+ * @property {(dt: number) => void} animate
+ * @property {() => { x: number, y: number, w: number, h: number }} getHitbox
+ */
 
 /**
  * @param {object} cfg
- * @param {Array<{tAt:number, kind:string}>} cfg.timeline
- * @param {{ addChild: Function, removeChild: Function }} cfg.gameLayer
- * @param {number} cfg.viewportWidth
- * @param {number} cfg.groundY
- * @returns {{
- *   tick: (audioTime:number, dt:number, gameSpeed:number) => void,
- *   getActive: () => Obstacle[],
- *   dispose: () => void,
- * }}
+ * @param {Array<{ t: number, type: string, kind?: string }>} cfg.events  Eventos del chart.
+ * @param {number} cfg.speedPxS
+ * @param {{ addChild: Function, removeChild: Function }} cfg.layer
+ * @param {(kind: string) => SpawnerObstacle} cfg.createObstacle
+ *        Fábrica de obstáculos. GameSession pasa `kind => new Obstacle(kind)`;
+ *        los tests pasan objetos planos, sin Pixi.
  */
 export function createSpawner(cfg) {
-    const { timeline, gameLayer, viewportWidth, groundY } = cfg;
+    const { events, speedPxS, layer, createObstacle } = cfg;
 
-    /** Índice del próximo obstáculo a instanciar. Avanza monótono. */
-    let cursor = 0;
-    /** @type {Obstacle[]} */
+    // Cola por instante de APARICIÓN. Aparecer depende del cruce y de medio
+    // ancho del obstáculo; el término que depende del viewport es común a
+    // todos, así que el orden de la cola no cambia al redimensionar.
+    const queue = toSimObstacles(events)
+        .map((o) => ({ ...o, appearKey: o.cross - o.def.w / (2 * speedPxS) }))
+        .sort((a, b) => a.appearKey - b.appearKey);
+
+    const lastCross = queue.reduce((m, o) => Math.max(m, o.cross), -Infinity);
+
+    /** @type {Map<string, SpawnerObstacle[]>} */
+    const pools = new Map();
+    /** @type {SpawnerObstacle[]} en paralelo con `activeData` */
     const active = [];
+    /** @type {Array<typeof queue[number]>} */
+    const activeData = [];
+    /** Todo objeto creado alguna vez, para liberarlo en dispose. */
+    const created = [];
 
-    /** Spawna en el borde derecho del viewport + margen, para que entre suave. */
-    const SPAWN_OFFSET_PX = 50;
-    const spawnX = viewportWidth + SPAWN_OFFSET_PX;
+    let cursor = 0;
+    let lastSongTime = -Infinity;
+    const scratchBox = { x: 0, y: 0, w: 0, h: 0 };
 
-    function spawnDue(audioTime) {
-        while (cursor < timeline.length && timeline[cursor].tAt <= audioTime) {
-            const entry = timeline[cursor];
-            const o = new Obstacle(entry.kind, spawnX, groundY);
-            gameLayer.addChild(o);
-            active.push(o);
-            cursor++;
-        }
+    function acquire(kind) {
+        const pool = pools.get(kind);
+        if (pool !== undefined && pool.length > 0) return pool.pop();
+        const o = createObstacle(kind);
+        layer.addChild(o);
+        created.push(o);
+        return o;
     }
 
-    function moveAndCullActive(dt, gameSpeed) {
-        // Iteración hacia atrás para hacer splice sin perder índices — patrón
-        // del legacy (juego.js:436-445), también aplicable aquí.
-        for (let i = active.length - 1; i >= 0; i--) {
-            const o = active[i];
-            o.update(dt, gameSpeed);
-            if (o.isOffscreenLeft()) {
-                gameLayer.removeChild(o);
-                o.destroy({ children: true });
-                active.splice(i, 1);
-            }
+    function release(o, kind) {
+        o.deactivate();
+        let pool = pools.get(kind);
+        if (pool === undefined) {
+            pool = [];
+            pools.set(kind, pool);
         }
+        pool.push(o);
     }
 
     return {
-        tick(audioTime, dt, gameSpeed) {
-            spawnDue(audioTime);
-            moveAndCullActive(dt, gameSpeed);
+        /**
+         * @param {number} songTime  Segundos de canción (puede ser ligeramente
+         *                           negativo al arrancar por la latencia de salida).
+         * @param {number} dt        Delta de frame en segundos (solo animación).
+         * @param {{ width: number, groundY: number }} viewport
+         */
+        tick(songTime, dt, viewport) {
+            // Si el reloj retrocede (no debería: el audio es monótono), se
+            // ignora el frame en vez de reordenar la escena.
+            if (songTime < lastSongTime) songTime = lastSongTime;
+            lastSongTime = songTime;
+
+            const horizon = songTime + (viewport.width + SPAWN_MARGIN_PX - DINO_CENTER_X) / speedPxS;
+            while (cursor < queue.length && queue[cursor].appearKey <= horizon) {
+                const data = queue[cursor++];
+                const x = obstacleLeftX(data.def, data.cross, songTime, speedPxS);
+                // Ya había pasado (tirón muy largo, pestaña en segundo plano):
+                // no tiene sentido mostrarlo un frame para reciclarlo al siguiente.
+                if (x + data.def.w < -CULL_MARGIN_PX) continue;
+                const o = acquire(data.kind);
+                // Si nace dentro de la pantalla (ventana ancha + canción lenta,
+                // o un resize), entra con fundido en vez de aparecer de golpe.
+                o.activate(x < viewport.width);
+                active.push(o);
+                activeData.push(data);
+            }
+
+            for (let i = active.length - 1; i >= 0; i--) {
+                const data = activeData[i];
+                const x = obstacleLeftX(data.def, data.cross, songTime, speedPxS);
+                if (x + data.def.w < -CULL_MARGIN_PX) {
+                    release(active[i], data.kind);
+                    active.splice(i, 1);
+                    activeData.splice(i, 1);
+                    continue;
+                }
+                active[i].placeAt(x, viewport.groundY);
+                active[i].animate(dt);
+            }
         },
+
+        /** Obstáculos en escena (mismo array cada vez — no mutar). */
         getActive() {
             return active;
         },
-        dispose() {
-            for (const o of active) {
-                gameLayer.removeChild(o);
-                o.destroy({ children: true });
+
+        /**
+         * ¿Choca un hitbox con algún obstáculo activo en un instante dado?
+         *
+         * Calcula las posiciones analíticamente para ESE instante, sin mirar
+         * dónde están los sprites. La física a paso fijo lo llama en cada paso
+         * (varios por frame): así la colisión se evalúa en el mismo instante en
+         * que se integró el Dino, no en el del último frame dibujado.
+         *
+         * @param {{ x: number, y: number, w: number, h: number }} box
+         * @param {number} songTime
+         * @param {number} groundY
+         * @returns {string | null} kind del obstáculo con el que choca, o null.
+         */
+        collisionAt(box, songTime, groundY) {
+            for (let i = 0; i < activeData.length; i++) {
+                const data = activeData[i];
+                const x = obstacleLeftX(data.def, data.cross, songTime, speedPxS);
+                // Descarte horizontal barato antes de construir el hitbox.
+                if (x > box.x + box.w || x + data.def.w < box.x) continue;
+                obstacleHitbox(data.def, x, obstacleTopY(data.def, groundY), scratchBox);
+                if (aabbHit(box, scratchBox)) return data.kind;
             }
+            return null;
+        },
+
+        /**
+         * ¿Queda algún obstáculo por cruzar al Dino a partir de `songTime`?
+         * La partida no se gana mientras sí: la canción puede acabar con el
+         * último obstáculo todavía llegando.
+         * @param {number} songTime
+         */
+        hasPendingCrossing(songTime) {
+            return lastCross >= songTime;
+        },
+
+        /** Instante del último cruce, o -Infinity si el chart no tiene obstáculos. */
+        get lastCrossTime() {
+            return lastCross;
+        },
+
+        dispose() {
+            for (const o of created) {
+                layer.removeChild(o);
+                if (typeof o.destroy === 'function') o.destroy({ children: true });
+            }
+            created.length = 0;
             active.length = 0;
+            activeData.length = 0;
+            pools.clear();
             cursor = 0;
         },
     };

@@ -163,7 +163,7 @@ final class FileUploadService
      * headers correctos. NO devuelve Response porque emite el body crudo.
      * El controller debe llamar a esto y luego `exit` o devolver Response::noContent.
      */
-    public static function streamLevelMp3(string $relativePath): void
+    public static function streamLevelMp3(string $relativePath, ?string $etag = null): void
     {
         $abs = self::storageBase() . '/' . basename($relativePath);
         if (!is_file($abs)) {
@@ -178,9 +178,33 @@ final class FileUploadService
             header('Content-Length: ' . $size);
             header('Content-Disposition: inline; filename="' . basename($abs) . '"');
             header('Accept-Ranges: none');
-            header('Cache-Control: private, max-age=300');
+            if ($etag !== null) {
+                // Con ETag (el hash del audio) el navegador revalida con un 304
+                // de pocos bytes en lugar de volver a bajar el MP3 entero. El
+                // cliente guarda además su propia copia en IndexedDB (Ola 3),
+                // así que esto cubre el caso de caché local vaciada.
+                header('ETag: ' . $etag);
+                header('Cache-Control: private, no-cache');
+            } else {
+                header('Cache-Control: private, max-age=300');
+            }
         }
         readfile($abs);
+    }
+
+    /**
+     * SHA-256 del contenido de un upload ya validado. Identifica el audio por
+     * sus bytes: es lo que se compara con el hash con el que se generó el chart.
+     *
+     * @param array<string, mixed> $file  Entrada de `$_FILES`.
+     */
+    public static function sha256OfUpload(array $file): string
+    {
+        $hash = hash_file('sha256', (string) $file['tmp_name']);
+        if ($hash === false) {
+            throw new RuntimeException('No se pudo calcular el hash del archivo subido.');
+        }
+        return $hash;
     }
 
     private static function storageBase(): string

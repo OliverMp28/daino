@@ -51,8 +51,9 @@ $router->group(['prefix' => '/api'], static function (Router $r): void {
     // El stream del MP3 funciona igual: solo `is_public=true` se entrega.
     $r->group(['middleware' => [SoftAuthMiddleware::class]], static function (Router $r): void {
         $r->get('/levels',           'Api\\LevelApiController@index');
-        $r->get('/levels/{id}',      'Api\\LevelApiController@show');
-        $r->get('/levels/{id}/file', 'Api\\LevelApiController@streamFile');
+        $r->get('/levels/{id}',       'Api\\LevelApiController@show');
+        $r->get('/levels/{id}/chart', 'Api\\LevelApiController@chart');
+        $r->get('/levels/{id}/file',  'Api\\LevelApiController@streamFile');
     });
 
     // -------- Mutación + lectura privada (Bearer obligatorio) --------

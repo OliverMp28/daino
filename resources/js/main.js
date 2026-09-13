@@ -31,7 +31,7 @@ async function boot() {
     const mount = document.getElementById('app') ?? document.body;
     const engineApi = await startEngine(mount);
 
-    setupUpload({ engine: engineApi });
+    setupUpload();
 
     // Hidratar identidad antes de montar la UI dependiente. Es no-bloqueante:
     // el chip arranca anónimo y se repinta cuando llega `daino:auth:login`.
@@ -39,7 +39,7 @@ async function boot() {
     const authAnchor = document.getElementById('auth-anchor');
     if (authAnchor !== null) auth.mount(authAnchor);
 
-    // Estados MENU/LOADING/PLAYING/etc — orquesta audio:ready, GameSession,
+    // Estados MENU/LOADING/PLAYING/etc — orquesta las peticiones de partida, GameSession,
     // fadeToBlack, vuelta al menú. Sustituye la lógica que vivía aquí en B5.
     appController.start({ engine: engineApi });
 
