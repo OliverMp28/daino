@@ -40,11 +40,45 @@ test('ChartValidator conserva tipos de evento futuros con campos escalares', fun
     assertSame(['t' => 50.0, 'type' => 'section', 'label' => 'chorus'], $decoded['events'][3]);
 });
 
+test('ChartValidator acepta el formato 2 (Ola 5) y conserva velocidad, pulso, dificultad y estructura', function (): void {
+    $s = sha('a');
+    $raw = chartV2For($s);
+    $raw['world']['speedChanges'][0]['sospechoso'] = 'x';   // campo desconocido: no se persiste
+    $out = ChartValidator::validateChart($raw, $s);
+    $decoded = json_decode($out['json'], true);
+
+    assertSame(2, $decoded['formatVersion']);
+    assertSame([['t' => 20.0, 'speedPxS' => 480.0, 'rampS' => 0.0], ['t' => 40.0, 'speedPxS' => 437.5, 'rampS' => 0.9]], $decoded['world']['speedChanges']);
+    assertSame([1.0, 1.5, 2.0, 2.5], $decoded['music']['beats']);
+    assertSame([1.0, 2.0], $decoded['music']['downbeats']);
+    assertSame(['level' => 4, 'requested' => 'auto', 'ceiling' => 5], $decoded['difficulty']);
+    assertSame(['t' => 20.0, 'type' => 'section', 'level' => 3, 'intensity' => 0.71, 'role' => 'chorus', 'climax' => false], $decoded['events'][1]);
+    assertSame(['t' => 20.0, 'type' => 'fx', 'fx' => 'drop', 'level' => 3], $decoded['events'][2]);
+});
+
+test('ChartValidator rechaza campos de formato 2 mal formados', function (): void {
+    $s = sha('a');
+    $mutations = [
+        'beats desordenados'        => static fn (array $c) => array_replace_recursive($c, ['music' => ['beats' => [2.0, 1.0]]]),
+        'beat fuera de la canción'  => static fn (array $c) => array_replace_recursive($c, ['music' => ['downbeats' => [1.0, 99.0]]]),
+        'velocidad absurda'         => static function (array $c): array { $c['world']['speedChanges'][0]['speedPxS'] = 99999; return $c; },
+        'rampa negativa'            => static function (array $c): array { $c['world']['speedChanges'][0]['rampS'] = -1; return $c; },
+        'cambios desordenados'      => static function (array $c): array { $c['world']['speedChanges'] = array_reverse($c['world']['speedChanges']); return $c; },
+        'dificultad fuera de rango' => static fn (array $c) => array_replace_recursive($c, ['difficulty' => ['level' => 9]]),
+        'dificultad pedida rara'    => static fn (array $c) => array_replace_recursive($c, ['difficulty' => ['requested' => 'imposible']]),
+    ];
+    foreach ($mutations as $label => $mutate) {
+        assertThrows(ValidationException::class, fn () => ChartValidator::validateChart($mutate(chartV2For($s)), $s), function ($e) use ($label): void {
+            assertTrue(isset($e->fields['chart']), "{$label}: el error debe señalar el campo chart");
+        });
+    }
+});
+
 test('ChartValidator rechaza charts inválidos o peligrosos', function (): void {
     $s = sha('a');
     $cases = [
         'no objeto'              => [[1, 2, 3], $s],
-        'formato futuro'         => [array_merge(chartFor($s), ['formatVersion' => 2]), $s],
+        'formato futuro'         => [array_merge(chartFor($s), ['formatVersion' => 3]), $s],
         'otro audio'             => [chartFor(sha('b')), $s],
         'duración absurda'       => [array_replace_recursive(chartFor($s), ['audio' => ['durationSec' => 999999]]), $s],
         'velocidad como texto'   => [array_replace_recursive(chartFor($s), ['world' => ['speedPxS' => '437']]), $s],

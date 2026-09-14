@@ -43,9 +43,12 @@ final class LevelPresenter
             array_filter($levels, static fn (Level $l): bool => $l->userId === $viewer->id),
         ));
         $jobs = AnalysisJob::latestForLevels($ownIds);
+        // Ola 5: la dificultad de un nivel propio se puede cambiar mientras nadie
+        // más tenga marca en él.
+        $others = $viewer === null ? [] : Progress::otherPlayerCounts($ownIds, $viewer->id);
 
         return array_map(
-            static fn (Level $l): array => self::shape($l, $viewer, $authors, $players, $bests, $jobs),
+            static fn (Level $l): array => self::shape($l, $viewer, $authors, $players, $bests, $jobs, $others),
             $levels,
         );
     }
@@ -63,11 +66,19 @@ final class LevelPresenter
      * @param array<int, int> $players
      * @param array<int, array{points: int, percentage: int}> $bests
      * @param array<int, AnalysisJob> $jobs
+     * @param array<int, int> $others
      * @return array<string, mixed>
      */
-    private static function shape(Level $level, ?User $viewer, array $authors, array $players, array $bests, array $jobs): array
+    private static function shape(Level $level, ?User $viewer, array $authors, array $players, array $bests, array $jobs, array $others): array
     {
         $isMine = $viewer !== null && $level->userId === $viewer->id;
+        // Ola 5: elegir dificultad es cosa del autor, y solo entre las que la
+        // canción admite (1..techo, conocido tras el análisis del servidor).
+        $choice = !$isMine ? null : [
+            'requested' => $level->difficultyRequested ?? 'auto',
+            'options'   => $level->difficultyCeiling === null ? [] : range(1, $level->difficultyCeiling),
+            'locked'    => ($others[$level->id] ?? 0) > 0,
+        ];
         return [
             'id'             => $level->id,
             'user_id'        => $level->userId,
@@ -102,6 +113,7 @@ final class LevelPresenter
             'players'        => $players[$level->id] ?? 0,
             'my_best'        => $bests[$level->id] ?? null,
             'analysis'       => $isMine && isset($jobs[$level->id]) ? $jobs[$level->id]->summary() : null,
+            'difficulty_choice' => $choice,
         ];
     }
 }

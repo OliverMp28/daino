@@ -46,6 +46,7 @@ export const POLL_MS = Object.freeze({
  * @property {object | null} level   El nivel actualizado (null si ya no existe o no se pudo leer).
  * @property {object | null} status  Última respuesta de /analysis.
  * @property {string | null} title
+ * @property {'publish' | 'difficulty'} reason  Qué se estaba siguiendo (Ola 5).
  */
 
 /**
@@ -58,18 +59,21 @@ export function createAnalysisWatcher(deps) {
     const onSettled = deps.onSettled ?? (() => {});
 
     /**
-     * @type {Map<number, { title: string | null, timer: any, inFlight: boolean, failures: number,
+     * @type {Map<number, { title: string | null, reason: string, timer: any, inFlight: boolean, failures: number,
      *                      last: object | null, listeners: Set<Function>, stopped: boolean }>}
      */
     const entries = new Map();
 
-    function ensure(levelId, title) {
+    function ensure(levelId, title, reason) {
         let entry = entries.get(levelId);
         if (entry === undefined) {
-            entry = { title: title ?? null, timer: null, inFlight: false, failures: 0, last: null, listeners: new Set(), stopped: false };
+            entry = { title: title ?? null, reason: reason ?? 'publish', timer: null, inFlight: false, failures: 0, last: null, listeners: new Set(), stopped: false };
             entries.set(levelId, entry);
             void poll(levelId, entry);
         } else if (title && !entry.title) {
+            // El motivo NO se sobrescribe: cambiar la dificultad de un nivel que
+            // ya se sigue (pendiente de publicar) no convierte su desenlace en
+            // otro; se anuncia la publicación, que ya incluye la dificultad.
             entry.title = title;
         }
         return entry;
@@ -134,7 +138,7 @@ export function createAnalysisWatcher(deps) {
 
     function finish(levelId, entry, outcome, level) {
         stopEntry(levelId, entry);
-        safeCall(onSettled, { levelId, outcome, level, status: entry.last, title: entry.title ?? level?.title ?? null });
+        safeCall(onSettled, { levelId, outcome, level, status: entry.last, title: entry.title ?? level?.title ?? null, reason: entry.reason });
     }
 
     function stopEntry(levelId, entry) {
@@ -149,10 +153,10 @@ export function createAnalysisWatcher(deps) {
         /**
          * Empieza a seguir un nivel (idempotente). La primera consulta sale ya.
          * @param {number} levelId
-         * @param {{ title?: string }} [opts]
+         * @param {{ title?: string, reason?: 'publish' | 'difficulty' }} [opts]
          */
         track(levelId, opts = {}) {
-            ensure(levelId, opts.title);
+            ensure(levelId, opts.title, opts.reason);
         },
 
         /**

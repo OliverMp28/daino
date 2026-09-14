@@ -22,8 +22,9 @@
 //     entra cuesta O(1) amortizado por frame.
 //   - `getActive()` devuelve siempre el mismo array, sin copias.
 
-import { DINO_CENTER_X, aabbHit, obstacleHitbox, obstacleLeftX, obstacleTopY } from './physics.js';
+import { DINO_CENTER_X, aabbHit, obstacleHitbox, obstacleTopY } from './physics.js';
 import { toSimObstacles } from './playability.js';
+import { asSpeedProfile } from './speedProfile.js';
 
 /** Un obstáculo entra en cola cuando su borde izquierdo está a este margen del borde derecho. */
 const SPAWN_MARGIN_PX = 80;
@@ -43,20 +44,34 @@ const CULL_MARGIN_PX = 100;
 /**
  * @param {object} cfg
  * @param {Array<{ t: number, type: string, kind?: string }>} cfg.events  Eventos del chart.
- * @param {number} cfg.speedPxS
+ * @param {number} [cfg.speedPxS]  Velocidad constante (API de la Ola 3).
+ * @param {import('./speedProfile.js').SpeedProfile} [cfg.speed]
+ *        Perfil de velocidad del nivel (Ola 5). Tiene prioridad sobre `speedPxS`.
  * @param {{ addChild: Function, removeChild: Function }} cfg.layer
  * @param {(kind: string) => SpawnerObstacle} cfg.createObstacle
  *        Fábrica de obstáculos. GameSession pasa `kind => new Obstacle(kind)`;
  *        los tests pasan objetos planos, sin Pixi.
  */
 export function createSpawner(cfg) {
-    const { events, speedPxS, layer, createObstacle } = cfg;
+    const { events, layer, createObstacle } = cfg;
+    const profile = asSpeedProfile(cfg.speed ?? cfg.speedPxS);
 
-    // Cola por instante de APARICIÓN. Aparecer depende del cruce y de medio
-    // ancho del obstáculo; el término que depende del viewport es común a
-    // todos, así que el orden de la cola no cambia al redimensionar.
+    // Posición de un obstáculo: DINO + (D(cruce) − D(ahora)) − w/2 (ver
+    // speedProfile.js). Con velocidad constante, la fórmula exacta de la Ola 3.
+    const leftX = (data, songTime, nowD) => DINO_CENTER_X
+        + (profile.constant ? (data.cross - songTime) * profile.base : data.crossD - nowD)
+        - data.def.w / 2;
+
+    // Cola por DISTANCIA de aparición: un obstáculo entra cuando su borde
+    // izquierdo alcanza el borde derecho, es decir, cuando D(ahora) llega a
+    // D(cruce) − w/2 − (ancho − DINO). El término del viewport es común a
+    // todos, así que el orden de la cola no cambia al redimensionar ni con la
+    // velocidad (D es creciente).
     const queue = toSimObstacles(events)
-        .map((o) => ({ ...o, appearKey: o.cross - o.def.w / (2 * speedPxS) }))
+        .map((o) => {
+            const crossD = profile.distanceAt(o.cross);
+            return { ...o, crossD, appearKey: crossD - o.def.w / 2 };
+        })
         .sort((a, b) => a.appearKey - b.appearKey);
 
     const lastCross = queue.reduce((m, o) => Math.max(m, o.cross), -Infinity);
@@ -106,10 +121,11 @@ export function createSpawner(cfg) {
             if (songTime < lastSongTime) songTime = lastSongTime;
             lastSongTime = songTime;
 
-            const horizon = songTime + (viewport.width + SPAWN_MARGIN_PX - DINO_CENTER_X) / speedPxS;
+            const nowD = profile.distanceAt(songTime);
+            const horizon = nowD + (viewport.width + SPAWN_MARGIN_PX - DINO_CENTER_X);
             while (cursor < queue.length && queue[cursor].appearKey <= horizon) {
                 const data = queue[cursor++];
-                const x = obstacleLeftX(data.def, data.cross, songTime, speedPxS);
+                const x = leftX(data, songTime, nowD);
                 // Ya había pasado (tirón muy largo, pestaña en segundo plano):
                 // no tiene sentido mostrarlo un frame para reciclarlo al siguiente.
                 if (x + data.def.w < -CULL_MARGIN_PX) continue;
@@ -123,7 +139,7 @@ export function createSpawner(cfg) {
 
             for (let i = active.length - 1; i >= 0; i--) {
                 const data = activeData[i];
-                const x = obstacleLeftX(data.def, data.cross, songTime, speedPxS);
+                const x = leftX(data, songTime, nowD);
                 if (x + data.def.w < -CULL_MARGIN_PX) {
                     release(active[i], data.kind);
                     active.splice(i, 1);
@@ -154,9 +170,10 @@ export function createSpawner(cfg) {
          * @returns {string | null} kind del obstáculo con el que choca, o null.
          */
         collisionAt(box, songTime, groundY) {
+            const nowD = profile.constant ? 0 : profile.distanceAt(songTime);
             for (let i = 0; i < activeData.length; i++) {
                 const data = activeData[i];
-                const x = obstacleLeftX(data.def, data.cross, songTime, speedPxS);
+                const x = leftX(data, songTime, nowD);
                 // Descarte horizontal barato antes de construir el hitbox.
                 if (x > box.x + box.w || x + data.def.w < box.x) continue;
                 obstacleHitbox(data.def, x, obstacleTopY(data.def, groundY), scratchBox);

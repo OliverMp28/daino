@@ -14,6 +14,9 @@ import { getTexture, spriteSize, normalizeSkinId, PIXEL_SCALE } from '../assets/
 /** Periodo fijo del trote del dino ambiente del menú (no depende del BPM). */
 const AMBIENT_RUN_PERIOD_S = 0.3;
 
+/** Color del filo de luz del suelo: el cian de la paleta (COLOR_HIGH del shader). */
+const GROUND_GLOW_COLOR = 0x8fe0ff;
+
 /**
  * @param {{ width: number, height: number }} viewport
  * @returns {{
@@ -102,7 +105,16 @@ export function createScenery(viewport) {
         // La fila 1 del tile (la línea E) debe caer exactamente en groundY.
         // La fila 0 son los bumps que asoman por encima.
         groundStrip.y = groundY - PIXEL_SCALE;
+        groundGlow.clear().rect(0, groundY - 2, W, 3).fill(GROUND_GLOW_COLOR);
     }
+
+    // ---------- Línea del suelo que late (Ola 5) ----------
+    // Un filo de luz sobre la línea del suelo que se enciende en cada beat,
+    // más en los tramos intensos. Mezcla aditiva: solo aclara. Invisible en el
+    // menú (pulso 0).
+    const groundGlow = new Graphics();
+    groundGlow.blendMode = 'add';
+    groundGlow.alpha = 0;
 
     // ---------- Dino ambiente (solo menú) ----------
     // Corre en el MISMO sitio donde la GameSession montará el Dino real —
@@ -129,6 +141,7 @@ export function createScenery(viewport) {
     spawnClouds();
     layoutGround();
     container.setChildIndex(groundStrip, container.children.length - 1);
+    container.addChild(groundGlow);
     container.addChild(ambientDino);
     layoutAmbientDino();
 
@@ -202,5 +215,14 @@ export function createScenery(viewport) {
         ambientDino.texture = getTexture(ambientFrame === 0 ? 'dinoRunA' : 'dinoRunB', ambientSkin);
     }
 
-    return { container, tick, resize, setAmbientDinoVisible, setAmbientDinoSkin };
+    /**
+     * Pulso del beat sobre la línea del suelo (Ola 5).
+     * @param {number} pulse      [0,1], 1 en el golpe.
+     * @param {number} intensity  [0,1] intensidad del tramo.
+     */
+    function setPulse(pulse, intensity) {
+        groundGlow.alpha = pulse * (0.12 + 0.38 * intensity);
+    }
+
+    return { container, tick, resize, setAmbientDinoVisible, setAmbientDinoSkin, setPulse };
 }

@@ -47,11 +47,28 @@ export class Obstacle extends Container {
         this._flapT = 0;
         this._fadeT = FADE_IN_S;
 
+        // Anclado a la base-centro para que el rebote al beat escale desde el
+        // suelo (un cactus no despega). La caja lógica (x, y, w, h) no cambia:
+        // el hitbox lo calcula physics.js con `def`, no con el sprite.
         this._sprite = new Sprite(getTexture(this._frames[0]));
+        this._sprite.anchor.set(0.5, 1);
+        this._sprite.position.set(def.w / 2, def.h);
         this._sprite.scale.set(PIXEL_SCALE);
         this.addChild(this._sprite);
+        this._beat = 0;
 
         this.visible = false;
+    }
+
+    /**
+     * Rebote al beat (Ola 5): todo el mundo late con la canción, no solo el
+     * fondo. Solo visual; estira en vertical y encoge un poco en horizontal.
+     * @param {number} pulse  [0,1], 1 justo en el golpe.
+     */
+    setBeat(pulse) {
+        if (Math.abs(pulse - this._beat) < 0.01) return;
+        this._beat = pulse;
+        this._sprite.scale.set(PIXEL_SCALE * (1 - 0.04 * pulse), PIXEL_SCALE * (1 + 0.09 * pulse));
     }
 
     /**

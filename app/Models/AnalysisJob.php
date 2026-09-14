@@ -25,6 +25,8 @@ final class AnalysisJob
     public const PURPOSE_PUBLISH   = 'publish';
     public const PURPOSE_BACKFILL  = 'backfill';
     public const PURPOSE_REANALYZE = 'reanalyze';
+    /** Ola 5: volver a chartear (otra dificultad) con el análisis ya guardado. */
+    public const PURPOSE_RECHART   = 'rechart';
 
     /** Publicar lo espera una persona mirando la pantalla: va por delante del resto. */
     public const PRIORITY_INTERACTIVE = 10;
@@ -163,6 +165,8 @@ final class AnalysisJob
     {
         return [
             'status'         => $this->status,
+            // Ola 5: la UI distingue publicar de aplicar otra dificultad.
+            'purpose'        => $this->purpose,
             'stage'          => $this->stage,
             'progress'       => round($this->progress, 3),
             'attempts'       => $this->attempts,

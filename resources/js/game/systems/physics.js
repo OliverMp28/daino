@@ -171,13 +171,19 @@ export function actionLeadS(def) {
  *     obstáculo nacía en el borde derecho EN su instante musical, así que
  *     llegaba 3-7 s tarde y ese retraso cambiaba con el monitor.
  *
+ * Ola 5: con velocidad variable, "(cruce − ahora) · velocidad" pasa a ser la
+ * distancia que el mundo recorre entre ambos instantes (ver speedProfile.js).
+ * El cruce sigue ocurriendo exactamente en `crossT`.
+ *
  * @param {{ w: number }} def
  * @param {number} crossT     Instante en que el centro del obstáculo cruza al Dino.
  * @param {number} songTime   Instante actual de canción.
- * @param {number} speedPxS   Velocidad del mundo.
+ * @param {number | import('./speedProfile.js').SpeedProfile} speed
+ *        Velocidad constante en px/s, o el perfil de velocidad del nivel.
  */
-export function obstacleLeftX(def, crossT, songTime, speedPxS) {
-    return DINO_CENTER_X + (crossT - songTime) * speedPxS - def.w / 2;
+export function obstacleLeftX(def, crossT, songTime, speed) {
+    const ahead = typeof speed === 'number' ? (crossT - songTime) * speed : speed.distanceBetween(songTime, crossT);
+    return DINO_CENTER_X + ahead - def.w / 2;
 }
 
 /** true si el kind se esquiva agachándose (vuela) en vez de saltando. */

@@ -17,22 +17,36 @@
 // congelado HITSTOP_S, audio cortado en seco, estallido de partículas,
 // flash blanco) → screen shake con decay → _end('collision'). Total ~0.45s
 // de "golpe" antes del game over — el juice que el placeholder no tenía.
+//
+// Ola 5 — la partida vive la ESTRUCTURA de la canción, no solo su volumen:
+//   - La velocidad del mundo cambia por tramos (world.speedChanges).
+//   - Todo late con los beats reales: fondo, línea del suelo y obstáculos; el
+//     primer tiempo de cada compás, más.
+//   - Cada tramo tiene su intensidad (fondo, ecualizador, partículas) y el
+//     clímax se enciende también en el HUD.
+//   - En un drop: destello, golpe de cámara y ola de partículas justo en el
+//     primer tiempo, que es donde el charter pone la acción.
+//   - El sol se pone con la canción: el final se ve llegar.
+//   - Pulsar exactamente en el golpe suelta un destello a los pies del Dino.
+//   - Pasado el último obstáculo, "¡Superado!" mientras la canción termina.
 
 import { Dino } from './entities/Dino.js';
 import { Obstacle } from './entities/Obstacle.js';
 import { createSpawner } from './systems/spawner.js';
 import { createBeatClock } from './systems/beatClock.js';
+import { createSongDirector } from './systems/songDirector.js';
+import { speedProfileOf } from './systems/speedProfile.js';
 import { obstacleEvents } from './levels/chartFormat.js';
 import { createBurstEmitter } from './entities/ParticleLayer.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
-import { computeGroundY, integrateDino, dinoHitbox } from './systems/physics.js';
+import { computeGroundY, integrateDino, dinoHitbox, isDuckKind } from './systems/physics.js';
 import { createFixedStepper } from './systems/fixedStep.js';
 import { createInputTimeline, songTimeOfEvent } from './systems/inputTimeline.js';
 import {
-    DT_CAP_S, DINO_SIZE, JUMP_BUFFER_S,
+    DT_CAP_S, DINO_SIZE, JUMP_BUFFER_S, OBSTACLE_KIND,
     SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
-    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S,
+    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -81,15 +95,28 @@ export class GameSession {
         this._dieT = 0;
         this._dustT = 0;
         this._finalSongTime = 0;
-        this._speedPxS = this.chart.world.speedPxS;
+        // Perfil de velocidad del nivel (Ola 5): constante en charts de formato 1.
+        this._speed = speedProfileOf(this.chart);
+        this._speedPxS = this._speed.base;
         // La partida dura lo que dura el audio REAL decodificado: es lo que
         // suena. El chart trae su propia duración, pero un decodificador
         // distinto puede diferir en unos ms de relleno del MP3.
         this._durationSec = this.audioBuffer.duration;
-        this._beatClock = createBeatClock(
-            obstacleEvents(this.chart).map((e) => e.t),
-            this.chart.music.beatPeriodS,
-        );
+        // Pulso: los beats reales si el chart los trae (formato 2); si no, los
+        // obstáculos, que ya caen sobre golpes (Ola 3).
+        const beats = this.chart.music.beats ?? [];
+        this._beatClock = beats.length >= 8
+            ? createBeatClock(beats, this.chart.music.beatPeriodS, this.chart.music.downbeats ?? [])
+            : createBeatClock(obstacleEvents(this.chart).map((e) => e.t), this.chart.music.beatPeriodS);
+        this._director = createSongDirector(this.chart, this._durationSec);
+        this._climaxGlow = 0;
+        this._dropT = Infinity;       // segundos desde el último drop/lift (∞ = ninguno)
+        this._momentStrength = 1;     // 1 drop, < 1 lift
+        this._dropOverlay = undefined; // destello del drop, se crea en el primero
+        this._cleared = false;        // ya no quedan obstáculos por cruzar
+        /** Obstáculos por instante de acción, para reconocer pulsaciones en el golpe. */
+        this._onBeatTargets = obstacleEvents(this.chart).map((e) => ({ t: e.t, duck: isDuckKind(OBSTACLE_KIND[e.kind]), claimed: false }));
+        this._onBeatCursor = 0;
         // Física a paso fijo sincronizada con el reloj de la canción.
         this._physics = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
         this._hitbox = { x: 0, y: 0, w: 0, h: 0 };
@@ -119,7 +146,7 @@ export class GameSession {
         // Spawner: coloca los obstáculos del chart a partir del tiempo de canción.
         this.spawner = createSpawner({
             events: this.chart.events,
-            speedPxS: this._speedPxS,
+            speed: this._speed,
             layer: layers.gameLayer,
             createObstacle: (kind) => new Obstacle(kind),
         });
@@ -132,8 +159,10 @@ export class GameSession {
         this.hud.update(0, 0, this._durationSec);
         if (this.title) this.hud.setSong(this.title);
 
-        // El mundo scrollea a la velocidad de la canción.
+        // El mundo scrollea a la velocidad de la canción; el fondo arranca con
+        // la intensidad del primer tramo y el sol en lo alto.
         this.engine.setWorldSpeed(this._speedPxS);
+        this.engine.setMusicState?.({ intensity: this._director.intensity, progress: 0, climax: 0, flash: 0 });
 
         // Input. Las pulsaciones NO se aplican al leerse: se fechan en tiempo de
         // canción y cada paso de física aplica las suyas (ver inputTimeline.js).
@@ -226,9 +255,15 @@ export class GameSession {
             return;
         }
 
+        // Velocidad del mundo en este instante (portales de velocidad, Ola 5).
+        this._speedPxS = this._speed.speedAt(shownTime);
+        this.engine.setWorldSpeed(this._speedPxS);
+
         // Visual del Dino (frames de carrera, squash) y bursts vivos.
         this.dino.tickVisual(dt, this._speedPxS);
         this._bursts.tick(dt);
+
+        this._tickStructure(songTime, shownTime, dt, groundY);
 
         // Polvo al correr: motita en los pies a intervalo fijo mientras
         // pisa suelo — vende la velocidad sin coste (1 sprite por emisión).
@@ -250,12 +285,6 @@ export class GameSession {
             }
         }
 
-        // Pulso de beat para el shader: exp-decay re-disparado en cada beat,
-        // con la fase anclada a los golpes reales del chart (ver beatClock.js).
-        if (songTime >= 0) {
-            this.engine.setBeatPulse(Math.exp(-this._beatClock.phaseAt(songTime) * 4.5));
-        }
-
         // Score: por ahora, score = floor(tiempo de canción * 100).
         this._score = Math.floor(shownTime * 100);
         this.hud.update(this._score, Math.min(shownTime, this._durationSec), this._durationSec);
@@ -267,6 +296,161 @@ export class GameSession {
             this._finalSongTime = this._durationSec;
             this._end('win');
         }
+    }
+
+    /**
+     * Estructura de la canción en este frame (Ola 5): pulso con acento, rebote
+     * de obstáculos, drops, intensidad y progreso del fondo, fase del HUD y el
+     * momento en que ya no quedan obstáculos.
+     */
+    _tickStructure(songTime, shownTime, dt, groundY) {
+        let pulse = 0;
+        if (songTime >= 0) {
+            const phase = this._beatClock.phaseAt(songTime);
+            pulse = Math.exp(-phase * 4.5) * (this._beatClock.isAccentAt(songTime) ? 1 : 0.7);
+        }
+        this.engine.setBeatPulse(pulse);
+        const active = this.spawner.getActive();
+        for (let i = 0; i < active.length; i++) active[i].setBeat?.(pulse);
+
+        const fired = this._director.update(shownTime, dt);
+        for (let i = 0; i < fired.length; i++) {
+            if (fired[i].fx === 'drop') this._triggerMoment(groundY, 1);
+            else if (fired[i].fx === 'lift') this._triggerMoment(groundY, DROP_FX.liftStrength);
+        }
+
+        const climaxTarget = this._director.climax ? 1 : 0;
+        const rate = climaxTarget > this._climaxGlow ? 5 : 1.5;
+        this._climaxGlow += (climaxTarget - this._climaxGlow) * (1 - Math.exp(-dt * rate));
+
+        // Destello (y, en un drop, golpe de cámara), con caída rápida.
+        let flash = 0;
+        if (this._dropT < DROP_FX.flashS) {
+            this._dropT += dt;
+            const k = Math.max(0, 1 - this._dropT / DROP_FX.flashS);
+            flash = k * k * this._momentStrength;
+            const full = this._momentStrength >= 1;
+            if (this._dropOverlay && full) this._dropOverlay.alpha = DROP_FX.overlayAlpha * flash;
+            if (full && !this.engine.reducedMotion) {
+                const kick = DROP_FX.kickPx * Math.max(0, 1 - this._dropT / DROP_FX.kickS);
+                this._layers.gameLayer.position.y = kick;
+                this._layers.sceneryLayer.position.y = kick * 0.6;
+            }
+            if (this._dropT >= DROP_FX.flashS) {
+                this._layers.gameLayer.position.y = 0;
+                this._layers.sceneryLayer.position.y = 0;
+                if (this._dropOverlay) this._dropOverlay.alpha = 0;
+            }
+        }
+
+        this.engine.setMusicState?.({
+            intensity: this._director.intensity,
+            progress: this._director.progress(shownTime),
+            climax: this._climaxGlow,
+            flash,
+        });
+        this.hud.setPhase?.(this._cleared ? 'cleared' : (this._director.climax ? 'climax' : ''));
+
+        // ¡Superado! Ningún obstáculo por cruzar: la canción termina de sonar.
+        if (!this._cleared && this._onBeatTargets.length > 0 && !this.spawner.hasPendingCrossing(songTime - 0.15)) {
+            this._onCleared();
+        }
+    }
+
+    /**
+     * Momento de la estructura en el primer tiempo de un tramo.
+     *   drop (strength 1): destello de pantalla, golpe de cámara y ola de partículas.
+     *   lift (strength < 1): el fondo se aviva y una ola más pequeña, sin destello
+     *   ni golpe (entrar en un estribillo no debe sentirse como un clímax).
+     */
+    _triggerMoment(groundY, strength) {
+        this._dropT = 0;
+        this._momentStrength = strength;
+        if (this.engine.reducedMotion) return;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const full = strength >= 1;
+        if (full) {
+            if (this._dropOverlay === undefined) {
+                this._dropOverlay = new Graphics();
+                this._dropOverlay.blendMode = 'add';
+                this._layers.hudLayer.addChild(this._dropOverlay);
+            }
+            // Se redibuja en cada drop: la ventana puede haber cambiado de tamaño.
+            this._dropOverlay.clear().rect(0, 0, w, h).fill(DROP_FX.overlayColor);
+            this._dropOverlay.alpha = DROP_FX.overlayAlpha;
+        }
+        const bursts = full ? DROP_FX.waveBursts : Math.ceil(DROP_FX.waveBursts / 2);
+        for (let k = 1; k <= bursts; k++) {
+            this._bursts.burst({
+                x: (w * k) / (bursts + 1),
+                y: groundY - 2,
+                count: 4,
+                color: k % 2 === 0 ? 0xff5d7e : 0x8fe0ff,
+                speedMin: 90,
+                speedMax: 280,
+                gravity: 420,
+                lifeS: 0.6,
+                upBias: 0.9,
+            });
+        }
+    }
+
+    /** Pasado el último obstáculo: rótulo y estallido de celebración. */
+    _onCleared() {
+        this._cleared = true;
+        this.hud.setBanner?.('¡Superado!');
+        if (this.engine.reducedMotion || this.dino === null) return;
+        const x = this.dino.x + DINO_SIZE.w * 0.5;
+        const y = this.dino.y + DINO_SIZE.h * 0.3;
+        for (const color of [0x8fe0ff, 0xff5d7e, 0xffd166]) {
+            this._bursts.burst({ x, y, count: 12, color, speedMin: 120, speedMax: 380, gravity: 520, lifeS: 0.9, upBias: 0.8 });
+        }
+    }
+
+    /**
+     * ¿La pulsación cae en el golpe de un obstáculo de su tipo? Solo visual: un
+     * destello a los pies del Dino. Enseña sin palabras que el nivel está hecho
+     * sobre la música y que pulsar SOBRE el golpe es la jugada.
+     */
+    _checkOnBeat(duck, at) {
+        const targets = this._onBeatTargets;
+        while (this._onBeatCursor < targets.length && targets[this._onBeatCursor].t < at - ON_BEAT.windowS) this._onBeatCursor++;
+        for (let i = this._onBeatCursor; i < targets.length && targets[i].t <= at + ON_BEAT.windowS; i++) {
+            const target = targets[i];
+            if (target.claimed || target.duck !== duck) continue;
+            target.claimed = true;
+            if (this.engine.reducedMotion || this.dino === null) return;
+            this._bursts.burst({
+                x: this.dino.x + DINO_SIZE.w * 0.5,
+                y: this.dino.y + DINO_SIZE.h - 4,
+                count: 8,
+                color: ON_BEAT.color,
+                speedMin: 110,
+                speedMax: 190,
+                gravity: 0,
+                lifeS: 0.28,
+                upBias: 0.05,
+            });
+            return;
+        }
+    }
+
+    /** true cuando ya no queda ningún obstáculo por cruzar (la canción puede seguir sonando). */
+    get cleared() {
+        return this._cleared;
+    }
+
+    /**
+     * Termina como victoria una partida ya superada (salir desde la pausa
+     * durante la outro no debe perder el nivel completado).
+     * @returns {boolean} true si se dio por ganada.
+     */
+    finishCleared() {
+        if (!this._isRunning || !this._cleared || this._dying) return false;
+        this._finalSongTime = this._durationSec;
+        this._end('win');
+        return true;
     }
 
     /**
@@ -292,6 +476,7 @@ export class GameSession {
             this._physics.time ?? -Infinity,
         );
         this._inputs.push(action, at);
+        if (starts) this._checkOnBeat(action === 'duckStart', at);
     }
 
     /** Aplica una acción del jugador sobre el Dino (dentro de un paso de física). */
@@ -353,6 +538,10 @@ export class GameSession {
 
         this.dino.setDead();
         this.engine.setBeatPulse(0);
+        // Un drop a medias no se mezcla con la sacudida de la muerte.
+        this._dropT = Infinity;
+        if (this._dropOverlay) this._dropOverlay.alpha = 0;
+        this.engine.setMusicState?.({ flash: 0 });
 
         // Silencio inmediato = el impacto se OYE (la canción muere contigo).
         try {
@@ -474,6 +663,11 @@ export class GameSession {
             this._layers.hudLayer.removeChild(this._flash);
             this._flash.destroy();
             this._flash = null;
+        }
+        if (this._dropOverlay) {
+            this._layers.hudLayer.removeChild(this._dropOverlay);
+            this._dropOverlay.destroy();
+            this._dropOverlay = undefined;
         }
 
         if (this.spawner) this.spawner.dispose();

@@ -33,6 +33,7 @@ use PDOException;
  *   - POST /api/levels/{id}/visibility   (auth)    {is_public: bool}
  *   - GET  /api/levels/{id}/analysis     (auth)    estado del análisis del servidor (solo el autor)
  *   - POST /api/levels/{id}/analysis     (auth)    reintentar el análisis tras un fallo (solo el autor)
+ *   - POST /api/levels/{id}/difficulty   (auth)    dificultad elegida por el autor (Ola 5)
  *
  * Autoría: cualquier mutación valida `$level->userId === AuthContext::user()->id`,
  * 403 si no.
@@ -359,6 +360,43 @@ final class LevelApiController
                 : Response::json(['error' => 'already_active', 'message' => 'Ya se está analizando.'], 409);
         }
         return Response::json(['level_id' => $level->id, 'analysis' => $job->summary()], 202);
+    }
+
+    /**
+     * Cambia la dificultad de un nivel propio (Ola 5, doc 10 §2.3).
+     *
+     * Body `{difficulty: "auto" | 1..5}`. Solo hasta el techo que la canción
+     * admite (si ya se conoce); bloqueado si otros jugadores tienen marca.
+     *   200  guardada (nivel sin audio en el servidor: se aplicará al publicar)
+     *   202  guardada y en marcha: el chart se regenera con el análisis guardado
+     *   409  difficulty_locked | analyzer_disabled
+     *   422  valor inválido o por encima del techo
+     *
+     * @param array<string, string> $params
+     */
+    public function changeDifficulty(Request $req, array $params): Response
+    {
+        $level = self::ownLevel(self::parseId($params));
+        if ($level === null) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        $raw = $req->input('difficulty');
+        $requested = $raw === 'auto' ? null : Validator::int($raw, ['min' => 1, 'max' => 5, 'field' => 'difficulty']);
+        if ($requested !== null && $level->difficultyCeiling !== null && $requested > $level->difficultyCeiling) {
+            throw new ValidationException(['difficulty' => "Esta canción admite hasta {$level->difficultyCeiling} de 5."]);
+        }
+        try {
+            $job = PublishService::changeDifficulty($level, $requested);
+        } catch (\DomainException $e) {
+            return $e->getMessage() === 'difficulty_locked'
+                ? Response::json(['error' => 'difficulty_locked', 'message' => 'Otros jugadores ya tienen marca en este nivel: su dificultad no se puede cambiar.'], 409)
+                : Response::json(['error' => 'analyzer_disabled', 'message' => 'El análisis en servidor no está activo.'], 409);
+        }
+        $fresh = Level::findById($level->id) ?? $level;
+        return Response::json([
+            'level'    => self::serialize($fresh),
+            'analysis' => $job?->summary(),
+        ], $job === null ? 200 : 202);
     }
 
     /**

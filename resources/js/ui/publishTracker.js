@@ -46,13 +46,42 @@ export function trackPublish(level) {
 }
 
 /**
- * Retoma el seguimiento de los niveles de una lista que siguen pendientes.
+ * Retoma el seguimiento de los niveles de una lista que siguen pendientes de
+ * publicar o aplicando otra dificultad (Ola 5).
  * @param {object[]} levels
  */
 export function trackPending(levels) {
     for (const level of levels) {
-        if (level?.pending_public === true && level.is_mine === true) trackPublish(level);
+        if (level?.is_mine !== true) continue;
+        if (level.pending_public === true) {
+            trackPublish(level);
+        } else if (level.analysis?.purpose === 'rechart' && (level.analysis.status === 'queued' || level.analysis.status === 'running')) {
+            watcher.track(level.id, { title: level.title, reason: 'difficulty' });
+        }
     }
+}
+
+/**
+ * Cambia la dificultad de un nivel propio (Ola 5).
+ *
+ * @param {{ id: number, title?: string }} level
+ * @param {'auto' | number} difficulty
+ * @returns {Promise<{ ok: true, level: object, applying: boolean } | { ok: false, message: string }>}
+ */
+export async function changeDifficulty(level, difficulty) {
+    const res = await apiRequest('POST', `/api/levels/${level.id}/difficulty`, { body: { difficulty } });
+    if (res.ok && res.data?.level) {
+        const fresh = { ...res.data.level, analysis: res.data.analysis ?? res.data.level.analysis ?? null };
+        patchCachedLevel(fresh);
+        const applying = res.status === 202;
+        // Publicándose: ese mismo seguimiento lo recoge. Ya público: se sigue el re-chart.
+        if (applying && fresh.pending_public !== true) watcher.track(level.id, { title: level.title, reason: 'difficulty' });
+        return { ok: true, level: fresh, applying };
+    }
+    const message = res.data?.message
+        ?? res.data?.fields?.difficulty
+        ?? `No se pudo cambiar la dificultad (error ${res.status}).`;
+    return { ok: false, message };
 }
 
 /**
@@ -85,7 +114,7 @@ export async function retryAnalysis(level) {
     return { ok: false, message: res.data?.message ?? `No se pudo reintentar (error ${res.status}).` };
 }
 
-function handleSettled({ levelId, outcome, level, status, title }) {
+function handleSettled({ levelId, outcome, level, status, title, reason }) {
     if (level !== null) {
         patchCachedLevel(level);
     } else if (status !== null) {
@@ -95,12 +124,18 @@ function handleSettled({ levelId, outcome, level, status, title }) {
     }
     if (outcome === 'published') invalidateLevels('community');
     markLevelsStale();
-    window.dispatchEvent(new CustomEvent(LEVEL_UPDATED_EVENT, { detail: { levelId, outcome, level, status } }));
+    window.dispatchEvent(new CustomEvent(LEVEL_UPDATED_EVENT, { detail: { levelId, outcome, level, status, reason } }));
 
     const jobKey = `${levelId}:${status?.analysis?.created_at ?? ''}:${outcome}`;
     if (announced.has(jobKey)) return;
     announced.add(jobKey);
     const name = title ? `«${title}»` : 'Tu nivel';
+    if (reason === 'difficulty') {
+        // Ola 5: aplicar otra dificultad a un nivel ya publicado.
+        if (outcome === 'published') notify(`${name}: dificultad aplicada. El nivel ya se juega con ella.`, 'info');
+        else if (outcome === 'failed') notify(`No se pudo aplicar la dificultad de ${name}. Sigue con la anterior; inténtalo de nuevo.`, 'error');
+        return;
+    }
     if (outcome === 'published') notify(`${name} ya está publicado. Aparece en «De la comunidad».`, 'info');
     else if (outcome === 'failed') {
         const { retryable } = failureView(status?.analysis?.error?.code);

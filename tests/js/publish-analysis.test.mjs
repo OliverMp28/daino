@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    analysisView, failureView, publishOutcome, publishStateFor, publishView, stageLabel, PUBLISH_STATE, STAGE_LABELS,
+    analysisView, difficultyChoiceView, failureView, publishOutcome, publishStateFor, publishView, stageLabel, PUBLISH_STATE, STAGE_LABELS,
 } from '../../resources/js/ui/publishModel.js';
 import { createAnalysisWatcher, POLL_MS } from '../../resources/js/api/analysisWatcher.js';
 import { cardView } from '../../resources/js/ui/catalogModel.js';
@@ -100,6 +100,67 @@ test('desenlace de una publicación según /analysis', () => {
     assert.equal(publishOutcome({ is_public: true, pending_public: false, analysis: { status: 'done' } }), 'published');
     assert.equal(publishOutcome({ is_public: false, pending_public: false, analysis: { status: 'failed' } }), 'failed');
     assert.equal(publishOutcome({ is_public: false, pending_public: false, analysis: { status: 'cancelled' } }), 'cancelled');
+});
+
+test('Ola 5: aplicar otra dificultad a un nivel publicado termina cuando termina su re-chart', () => {
+    const pub = (analysis) => ({ is_public: true, pending_public: false, analysis });
+    assert.equal(publishOutcome(pub({ status: 'queued', purpose: 'rechart' })), null, 'en cola: sigue');
+    assert.equal(publishOutcome(pub({ status: 'running', purpose: 'rechart' })), null, 'charteando: sigue');
+    assert.equal(publishOutcome(pub({ status: 'done', purpose: 'rechart' })), 'published');
+    assert.equal(publishOutcome(pub({ status: 'failed', purpose: 'rechart' })), 'failed', 'sigue publicado, pero la dificultad no se aplicó');
+    assert.equal(publishOutcome(pub({ status: 'failed', purpose: 'reanalyze' })), 'published', 'un reanálisis de fondo fallido no es asunto del autor');
+});
+
+test('Ola 5: selector de dificultad — solo lo que la canción admite, bloqueado o aplicándose', () => {
+    // Sin análisis del servidor no hay techo: no se ofrece nada.
+    assert.equal(difficultyChoiceView(mine({ difficulty_choice: { requested: 'auto', options: [], locked: false } })), null);
+    assert.equal(difficultyChoiceView(mine({ difficulty_choice: null })), null, 'a otros jugadores no les llega');
+
+    const v = difficultyChoiceView(mine({ is_public: true, has_audio: true, difficulty: 3, difficulty_choice: { requested: 'auto', options: [1, 2, 3, 4], locked: false } }));
+    assert.deepEqual(v.options.map((o) => o.value), ['auto', 1, 2, 3, 4], 'nunca por encima del techo');
+    assert.deepEqual(v.options.map((o) => o.label), ['Automática', 'Relajado', 'Fácil', 'Normal', 'Difícil']);
+    assert.equal(v.options[0].hint, 'Normal', 'Automática dice cuál es');
+    assert.equal(v.current, 'auto');
+    assert.deepEqual([v.locked, v.busy], [false, false]);
+    assert.match(v.note, /hasta Difícil/);
+
+    const soft = difficultyChoiceView(mine({ is_public: true, difficulty_choice: { requested: 2, options: [1, 2], locked: false } }));
+    assert.equal(soft.options[0].hint, 'Fácil', 'con techo 2, Automática es Fácil');
+    assert.equal(soft.current, 2);
+
+    const locked = difficultyChoiceView(mine({ is_public: true, difficulty_choice: { requested: 4, options: [1, 2, 3, 4, 5], locked: true } }));
+    assert.equal(locked.locked, true);
+    assert.match(locked.note, /Otros jugadores/);
+
+    const applying = difficultyChoiceView(mine({ is_public: true, analysis: { status: 'running', purpose: 'rechart' }, difficulty_choice: { requested: 5, options: [1, 2, 3, 4, 5], locked: false } }));
+    assert.equal(applying.busy, true);
+    assert.match(applying.note, /Aplicando/);
+
+    const stale = difficultyChoiceView(mine({ is_public: true, difficulty_choice: { requested: 5, options: [1, 2, 3], locked: false } }));
+    assert.equal(stale.current, 'auto', 'una pedida por encima del techo actual se enseña como Automática');
+});
+
+test('Ola 5: el seguimiento de un cambio de dificultad avisa con su motivo', async () => {
+    const clock = fakeClock();
+    const script = statusScript([
+        ok({ level_id: 5, is_public: true, pending_public: false, analysis: { status: 'queued', purpose: 'rechart' } }),
+        ok({ level_id: 5, is_public: true, pending_public: false, analysis: { status: 'done', purpose: 'rechart', created_at: 't2' } }),
+    ]);
+    const settled = [];
+    const watcher = createAnalysisWatcher({
+        fetchStatus: script.fetchStatus,
+        fetchLevel: async () => ok({ id: 5, title: 'Mi tema', is_public: true, difficulty: 5 }),
+        schedule: clock.schedule, cancel: clock.cancel,
+        onSettled: (e) => settled.push(e),
+    });
+    watcher.track(5, { title: 'Mi tema', reason: 'difficulty' });
+    // Volver a pedir seguimiento como publicación no cambia el motivo del que ya está en marcha.
+    watcher.track(5, { title: 'Mi tema', reason: 'publish' });
+    await flush();
+    assert.equal(settled.length, 0, 'un nivel público con re-chart en cola no ha terminado');
+    await clock.next();
+    assert.equal(settled.length, 1);
+    assert.deepEqual([settled[0].outcome, settled[0].reason, settled[0].level.difficulty], ['published', 'difficulty', 5]);
 });
 
 // --------------------------- Seguimiento ---------------------------

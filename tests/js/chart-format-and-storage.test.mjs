@@ -82,6 +82,49 @@ test('conserva tipos de evento futuros (tolerancia hacia delante)', () => {
     assert.equal(obstacleEvents(chart).length, 2, 'el runtime solo juega obstáculos');
 });
 
+test('formato 2 (Ola 5): conserva velocidad por tramos, pulso, dificultad y estructura', () => {
+    const raw = {
+        ...validChart(),
+        formatVersion: 2,
+        music: { bpm: 128, bpmConfidence: 0.9, beatPeriodS: 0.46875, beats: [0.5, 0.97, 1.44], downbeats: [0.5] },
+        difficulty: { level: 4, requested: 5, ceiling: 4 },
+        world: { speedPxS: 436, speedChanges: [{ t: 20, speedPxS: 480 }, { t: 40, speedPxS: 436, rampS: 0.9 }] },
+    };
+    raw.events.push({ t: 20, type: 'section', level: 3, intensity: 0.8, role: 'chorus', climax: false });
+    raw.events.push({ t: 20, type: 'fx', fx: 'lift', level: 3 });
+    const { chart, warnings } = normalizeChart(raw);
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(chart.music.beats, [0.5, 0.97, 1.44]);
+    assert.deepEqual(chart.music.downbeats, [0.5]);
+    assert.deepEqual(chart.difficulty, { level: 4, requested: 5, ceiling: 4 });
+    assert.deepEqual(chart.world.speedChanges, [{ t: 20, speedPxS: 480, rampS: 0 }, { t: 40, speedPxS: 436, rampS: 0.9 }]);
+    assert.equal(chart.events.filter((e) => e.type === 'section').length, 1);
+    // compactChart los mantiene (el horneado y el servidor guardan la forma compacta).
+    const compact = compactChart(chart);
+    assert.deepEqual(compact.world.speedChanges, chart.world.speedChanges);
+    assert.deepEqual(compact.music.beats, chart.music.beats);
+    assert.deepEqual(compact.difficulty, chart.difficulty);
+});
+
+test('formato 2: lo mal formado se descarta con aviso y el chart se juega como uno de formato 1', () => {
+    const raw = {
+        ...validChart(),
+        formatVersion: 2,
+        music: { bpm: 128, bpmConfidence: 0.9, beatPeriodS: 0.46875, beats: [2, 1] },
+        difficulty: { level: 9 },
+        world: { speedPxS: 436, speedChanges: [{ t: 20, speedPxS: 99999 }] },
+    };
+    const { chart, warnings } = normalizeChart(raw);
+    assert.deepEqual(chart.music.beats, []);
+    assert.deepEqual(chart.world.speedChanges, []);
+    assert.equal(chart.difficulty, null);
+    assert.equal(warnings.length, 2, JSON.stringify(warnings));
+    // Un chart de formato 1 sigue leyéndose sin campos nuevos ni avisos.
+    const v1 = normalizeChart(validChart());
+    assert.deepEqual(v1.warnings, []);
+    assert.deepEqual(v1.chart.world.speedChanges, []);
+});
+
 test('no muta la entrada', () => {
     const raw = validChart();
     const before = JSON.stringify(raw);

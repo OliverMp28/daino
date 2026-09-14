@@ -1,14 +1,14 @@
 {
     "formatVersion": 1,
-    "description": "Catálogo de niveles oficiales. Los MP3 NO están en el repo (pistas comerciales, remote público): van en storage/official/ con exactamente estos nombres. Ver scripts/bake-official.mjs y scripts/seed-official.php.",
+    "description": "Catálogo de niveles oficiales. Los MP3 NO están en el repo (pistas comerciales, remote público): van en storage/official/ con exactamente estos nombres. Ver scripts/bake-official.mjs y scripts/seed-official.php. `difficulty` (Ola 5) es la dificultad con la que se chartea cada oficial, 1-5 o \"auto\"; nunca supera el techo que la canción admite. El catálogo oficial se lista de menos a más difícil: es la curva de aprendizaje de quien empieza (una corta y relajada, dos suaves, dos normales, dos difíciles y la más larga como reto final).",
     "levels": [
-        { "slug": "sugar-red", "file": "Sugar Red.mp3", "title": "Sugar Red", "artist": null },
-        { "slug": "last-christmas", "file": "Last Christmas - Cardi B.mp3", "title": "Last Christmas", "artist": "Cardi B" },
-        { "slug": "hope", "file": "HOPE.mp3", "title": "HOPE", "artist": null },
-        { "slug": "running-with-the-wolves", "file": "Running With the wolves - Aurora.mp3", "title": "Running With the Wolves", "artist": "Aurora" },
-        { "slug": "time", "file": "Time.mp3", "title": "Time", "artist": null },
-        { "slug": "mi-fiesta", "file": "Mi Fiesta.mp3", "title": "Mi Fiesta", "artist": null },
-        { "slug": "dawn-of-faith", "file": "Dawn of Faith - Eternal Eclipse.mp3", "title": "Dawn of Faith", "artist": "Eternal Eclipse" },
-        { "slug": "whats-up-danger", "file": "What`s Up Danger.mp3", "title": "What's Up Danger", "artist": null }
+        { "slug": "sugar-red", "file": "Sugar Red.mp3", "title": "Sugar Red", "artist": null, "difficulty": 3 },
+        { "slug": "last-christmas", "file": "Last Christmas - Cardi B.mp3", "title": "Last Christmas", "artist": "Cardi B", "difficulty": 1 },
+        { "slug": "hope", "file": "HOPE.mp3", "title": "HOPE", "artist": null, "difficulty": 2 },
+        { "slug": "running-with-the-wolves", "file": "Running With the wolves - Aurora.mp3", "title": "Running With the Wolves", "artist": "Aurora", "difficulty": 3 },
+        { "slug": "time", "file": "Time.mp3", "title": "Time", "artist": null, "difficulty": 2 },
+        { "slug": "mi-fiesta", "file": "Mi Fiesta.mp3", "title": "Mi Fiesta", "artist": null, "difficulty": 4 },
+        { "slug": "dawn-of-faith", "file": "Dawn of Faith - Eternal Eclipse.mp3", "title": "Dawn of Faith", "artist": "Eternal Eclipse", "difficulty": 4 },
+        { "slug": "whats-up-danger", "file": "What`s Up Danger.mp3", "title": "What's Up Danger", "artist": null, "difficulty": 5 }
     ]
 }

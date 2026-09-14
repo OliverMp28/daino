@@ -153,6 +153,134 @@ export function makeSyntheticAnalysis(opts = {}) {
     };
 }
 
+/**
+ * Canción sintética con ESTRUCTURA conocida, en formato 2 (el del analizador
+ * del servidor) — Ola 5.
+ *
+ * Cada sección declara cuántos compases dura, cuánta energía tiene y cuánto
+ * golpea (`hits` en [0,1]). En cada compás: bombo grave en los tiempos impares
+ * (1 y 3), caja brillante en los pares (2 y 4) y, si la sección golpea con
+ * ganas, charles agudo a contratiempo. Así el charter se prueba contra una
+ * verdad conocida: dónde está el pulso, qué suena brillante, qué tramo empuja.
+ *
+ * `riff: true` en una sección hace que cada compás repita exactamente el mismo
+ * patrón de fuerzas (para la memoria de frases); si no, las fuerzas varían un
+ * poco de compás a compás.
+ *
+ * @param {{ bpm?: number, meter?: number, firstBeatS?: number, seed?: number,
+ *           tailBeats?: number,
+ *           sections?: Array<{ bars: number, energy: number, hits?: number, role?: string,
+ *                              cluster?: string, silent?: boolean, riff?: boolean }> }} [opts]
+ */
+export function makeSyntheticSong(opts = {}) {
+    const bpm = opts.bpm ?? 120;
+    const meter = opts.meter ?? 4;
+    const period = 60 / bpm;
+    const rand = makeNoise(opts.seed ?? 7);
+    const sections = opts.sections ?? DEFAULT_SONG_SECTIONS;
+
+    const beats = [];
+    const downbeats = [];
+    const onsets = [];
+    const onsetColor = [];
+    const outSections = [];
+    const energySpans = [];
+    let t = opts.firstBeatS ?? 0.5;
+
+    const hit = (time, strength, color) => {
+        onsets.push([round3(time), round3(Math.min(1, strength))]);
+        onsetColor.push(color);
+    };
+
+    for (let si = 0; si < sections.length; si++) {
+        const s = sections[si];
+        const start = si === 0 ? 0 : t;
+        const hits = s.hits ?? 0.6;
+        let hitCount = 0;
+        for (let b = 0; b < s.bars; b++) {
+            for (let k = 0; k < meter; k++) {
+                const bt = round3(t);
+                beats.push(bt);
+                if (k === 0) downbeats.push(bt);
+                if (!s.silent) {
+                    const jitter = s.riff ? 0 : 0.06 * (rand() + 1) / 2;
+                    if (k % 2 === 0) hit(bt, 0.35 + 0.6 * hits * (k === 0 ? 1 : 0.85) + jitter, [0.72, 0.2, 0.08]);
+                    else hit(bt, 0.3 + 0.55 * hits + jitter, [0.12, 0.43, 0.45]);
+                    hitCount++;
+                    if (hits > 0.45) {
+                        hit(t + period / 2, 0.12 + 0.3 * hits, [0.05, 0.25, 0.7]);
+                        hitCount++;
+                    }
+                }
+                t += period;
+            }
+        }
+        outSections.push({
+            startSec: round3(start),
+            endSec: round3(t),
+            cluster: s.cluster ?? String.fromCharCode(65 + si),
+            role: s.role ?? 'verse',
+            energy: s.silent ? 0.02 : s.energy,
+            density: round3(hitCount / Math.max(1e-3, t - start)),
+        });
+        energySpans.push({ start, end: t, energy: s.silent ? 0.02 : s.energy });
+    }
+
+    const durationSec = round3(t + period * (opts.tailBeats ?? 4));
+    outSections[outSections.length - 1].endSec = durationSec;
+
+    const hop = 0.1;
+    const values = [];
+    for (let k = 0; k * hop < durationSec; k++) {
+        const c = k * hop;
+        const span = energySpans.find((e) => c >= e.start && c < e.end) ?? energySpans[energySpans.length - 1];
+        values.push(round3(Math.min(1, Math.max(0, span.energy + 0.03 * rand()))));
+    }
+
+    const minutes = durationSec / 60;
+    const strong = onsets.filter((o) => o[1] >= 0.5).length;
+    const events = onsets.filter((o) => o[1] >= 0.2).length;
+    return {
+        formatVersion: 2,
+        analyzer: { name: 'synthetic-song', version: 1 },
+        durationSec,
+        sampleRate: 44100,
+        bpm,
+        bpmConfidence: 1,
+        beatPeriodS: period,
+        onsets,
+        onsetColor,
+        beats,
+        downbeats,
+        meter,
+        sections: outSections,
+        energy: { hopSec: hop, values },
+        features: {
+            tempoStability: 1,
+            beatSupport: 0.95,
+            pulseDoubled: false,
+            percussiveRatio: 0.4,
+            eventsPerMin: round3(events / minutes),
+            strongEventsPerMin: round3(strong / minutes),
+            loudnessDbfs: -12,
+            dynamicRangeDb: 14,
+            silenceRatio: 0,
+        },
+    };
+}
+
+/** Forma pop típica: intro, estrofa, estribillo, estrofa, estribillo, puente, estribillo final, outro. */
+export const DEFAULT_SONG_SECTIONS = Object.freeze([
+    { bars: 8, energy: 0.25, hits: 0.3, role: 'intro', cluster: 'A' },
+    { bars: 12, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+    { bars: 8, energy: 0.85, hits: 0.95, role: 'chorus', cluster: 'C' },
+    { bars: 12, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+    { bars: 8, energy: 0.85, hits: 0.95, role: 'chorus', cluster: 'C' },
+    { bars: 8, energy: 0.3, hits: 0.25, role: 'bridge', cluster: 'D' },
+    { bars: 8, energy: 0.9, hits: 1, role: 'chorus', cluster: 'C' },
+    { bars: 6, energy: 0.2, hits: 0.2, role: 'outro', cluster: 'A' },
+]);
+
 function round3(v) {
     return Math.round(v * 1000) / 1000;
 }

@@ -85,9 +85,12 @@ for (const entry of manifest.levels) {
             continue;
         }
         await writeFile(bakedPath, text);
-        console.log(`  HECHO ${entry.slug}: ${baked.chart.events.length} eventos, ${analysis.bpm.toFixed(1)} BPM `
-            + `(velocidad ${baked.chart.world.speedPxS} px/s), ${baked.stats.actionsPerMin} acc/min, `
-            + `${baked.difficulty}★, techo ${baked.difficultyCeiling ?? '—'} [${baked.bakedWith.analyzer}]`);
+        const obstacles = baked.chart.events.filter((e) => e.type === 'obstacle').length;
+        const top = Math.max(baked.chart.world.speedPxS, ...(baked.chart.world.speedChanges ?? []).map((c) => c.speedPxS));
+        console.log(`  HECHO ${entry.slug}: ${obstacles} obstáculos, ${analysis.bpm.toFixed(1)} BPM `
+            + `(velocidad ${baked.chart.world.speedPxS}→${top} px/s), ${baked.stats.actionsPerMin} acc/min `
+            + `(pico ${baked.stats.peakActionsPerMin}), ${baked.difficulty}★ (medida ${baked.measuredDifficulty}★), `
+            + `techo ${baked.difficultyCeiling ?? '—'} [${baked.bakedWith.analyzer}]`);
     } catch (err) {
         failures++;
         console.error(`  FALLO ${entry.slug}: ${err.message}`);
@@ -111,7 +114,9 @@ function usableAnalysis(baked, entry) {
 }
 
 function bake(entry, sha, bytes, analysis) {
-    const out = chartFromAnalysis(analysis, sha);
+    // Ola 5: cada oficial se chartea con la dificultad elegida en el manifiesto
+    // (nunca por encima de su techo).
+    const out = chartFromAnalysis(analysis, sha, { difficulty: entry.difficulty ?? 'auto' });
     return {
         formatVersion: BAKED_FORMAT_VERSION,
         slug: entry.slug,
@@ -119,6 +124,8 @@ function bake(entry, sha, bytes, analysis) {
         bakedWith: { analyzer: `${analysis.analyzer.name}@${analysis.analyzer.version}`, charter: CHARTER_KEY },
         audio: { sha256: sha, bytes, durationSec: analysis.durationSec },
         difficulty: out.difficulty,
+        requestedDifficulty: out.requestedDifficulty,
+        measuredDifficulty: out.measuredDifficulty,
         difficultyCeiling: out.difficultyCeiling,
         stats: { ...out.stats, musicalDensity: out.musicalDensity },
         chart: out.chart,

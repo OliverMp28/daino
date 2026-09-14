@@ -18,47 +18,63 @@
 //
 // Función pura, sin DOM: la usan el horneado de oficiales (Node) y el guardado
 // de canciones locales (navegador), así que los dos puntúan igual.
+//
+// Ola 5: desde el charter musical la dificultad es un PARÁMETRO del charter
+// (difficulty.js) y es la que se guarda y se enseña. Esta medida sigue siendo
+// la comprobación independiente de que "Difícil" es de verdad más difícil que
+// "Normal": se usa en tests y en el horneado, y para charts antiguos sin
+// dificultad declarada. Con densidad variable, la media sola engaña (un nivel
+// con clímax tiene la misma media que uno plano y es más exigente), así que la
+// puntuación mezcla la densidad media con la del tramo más denso.
 
 import { OBSTACLE_KIND } from '../config.js';
+import { actionLeadS } from '../systems/physics.js';
 import { timingWindowS } from '../systems/playability.js';
+import { speedProfileOf } from '../systems/speedProfile.js';
+
+/** Ventana con la que se mide la densidad del tramo más exigente. */
+const PEAK_WINDOW_S = 20;
 
 export const DIFFICULTY_MIN = 1;
 export const DIFFICULTY_MAX = 5;
 
 /**
  * Límite inferior de la puntuación para 2★, 3★, 4★ y 5★. Escala ABSOLUTA, no
- * relativa al catálogo: ~30 es una acción cada dos segundos con margen amplio;
- * ≥ 75 es denso, con pasajes al hueco mínimo y márgenes estrechos. Con el
- * charter v1 casi todo cae en 3-5★ porque aún no sabe generar niveles suaves
- * (llega con la Ola 5). Cambiarlos no altera ningún chart, solo la etiqueta.
+ * relativa al catálogo. Recalibrada con el charter musical (Ola 5): los 8
+ * oficiales generados en cada dificultad puntúan Relajado 22-31, Fácil 34-46,
+ * Normal 48-71, Difícil 59-79 y Extremo 83-93; los umbrales caen entre las
+ * medianas de cada grupo. Una canción densa en Normal puede medir 4★: la
+ * etiqueta que se enseña es la dificultad elegida, esto es la comprobación.
  */
-export const DIFFICULTY_THRESHOLDS = Object.freeze([30, 45, 60, 75]);
+export const DIFFICULTY_THRESHOLDS = Object.freeze([33, 47, 66, 82]);
 
 /** Margen de error a partir del cual una acción ya no suma exigencia. */
 const COMFORTABLE_WINDOW_S = 0.35;
 
 /**
  * @typedef {Object} ChartStats
- * @property {number} actions         Obstáculos del chart.
- * @property {number} activeSpanS     Del primer al último instante de acción.
- * @property {number} actionsPerMin   Densidad en el tramo jugado.
- * @property {number} tightGapS       Percentil 10 del hueco entre acciones.
- * @property {number} airShare        Fracción de obstáculos voladores [0,1].
- * @property {number} meanWindowS     Margen de error medio por acción.
+ * @property {number} actions            Obstáculos del chart.
+ * @property {number} activeSpanS        Del primer al último instante de acción.
+ * @property {number} actionsPerMin      Densidad media en el tramo jugado.
+ * @property {number} peakActionsPerMin  Densidad de los 20 s más densos.
+ * @property {number} tightGapS          Percentil 10 del hueco entre acciones.
+ * @property {number} airShare           Fracción de obstáculos voladores [0,1].
+ * @property {number} meanWindowS        Margen de error medio por acción.
  */
 
 /**
- * @param {{ events: Array<{ t: number, type: string, kind?: string }>, world: { speedPxS: number } }} chart
+ * @param {{ events: Array<{ t: number, type: string, kind?: string }>, world: { speedPxS: number, speedChanges?: object[] } }} chart
  * @returns {ChartStats}
  */
 export function chartStats(chart) {
     const obstacles = chart.events.filter((e) => e.type === 'obstacle' && OBSTACLE_KIND[e.kind] !== undefined);
     const actions = obstacles.length;
     if (actions < 2) {
-        return { actions, activeSpanS: 0, actionsPerMin: 0, tightGapS: 0, airShare: 0, meanWindowS: 0 };
+        return { actions, activeSpanS: 0, actionsPerMin: 0, peakActionsPerMin: 0, tightGapS: 0, airShare: 0, meanWindowS: 0 };
     }
 
-    const speed = chart.world.speedPxS;
+    // Cada acción se mide a la velocidad a la que su obstáculo cruza al Dino.
+    const speed = speedProfileOf(chart);
     const activeSpanS = obstacles[actions - 1].t - obstacles[0].t;
     const gaps = [];
     let air = 0;
@@ -67,9 +83,20 @@ export function chartStats(chart) {
         const o = obstacles[i];
         if (i > 0) gaps.push(o.t - obstacles[i - 1].t);
         if (OBSTACLE_KIND[o.kind].altitude > 0) air++;
-        windowSum += timingWindowS(o.kind, speed);
+        windowSum += timingWindowS(o.kind, speed.speedAt(o.t + actionLeadS(OBSTACLE_KIND[o.kind])));
     }
     gaps.sort((a, b) => a - b);
+
+    // Densidad del tramo más denso: ventana deslizante anclada en cada acción.
+    let peak = 0;
+    const window = Math.min(PEAK_WINDOW_S, activeSpanS);
+    if (window > 0) {
+        let j = 0;
+        for (let i = 0; i < actions; i++) {
+            while (j < actions && obstacles[j].t < obstacles[i].t + window) j++;
+            peak = Math.max(peak, ((j - i - 1) / window) * 60);
+        }
+    }
 
     return {
         actions,
@@ -77,6 +104,7 @@ export function chartStats(chart) {
         // (actions - 1) huecos en el tramo: acciones regulares cada g segundos
         // dan exactamente 60/g.
         actionsPerMin: activeSpanS > 0 ? round(((actions - 1) / activeSpanS) * 60, 2) : 0,
+        peakActionsPerMin: round(peak, 2),
         tightGapS: round(gaps[Math.floor(gaps.length * 0.1)], 3),
         airShare: round(air / actions, 3),
         meanWindowS: round(windowSum / actions, 3),
@@ -84,21 +112,23 @@ export function chartStats(chart) {
 }
 
 /**
- * Puntuación continua de exigencia. Unidades ≈ acciones por minuto, más
- * suplementos por márgenes estrechos, pasajes apretados y obstáculos aéreos.
+ * Puntuación continua de exigencia. Unidades ≈ acciones por minuto (mitad
+ * media, mitad del tramo más denso), más suplementos por márgenes estrechos,
+ * pasajes apretados y obstáculos aéreos.
  *
  * @param {ChartStats} stats
  * @returns {number}
  */
 export function difficultyScore(stats) {
     if (stats.actions < 2) return 0;
+    const density = 0.5 * stats.actionsPerMin + 0.5 * (stats.peakActionsPerMin ?? stats.actionsPerMin);
     // Margen de 116 ms (cactus ancho a 250 px/s) suma ~23; ≥ 350 ms no suma.
     const narrow = Math.max(0, COMFORTABLE_WINDOW_S - stats.meanWindowS) * 100;
-    // Un hueco de 1 s o más no aprieta; a 0.7 s (el mínimo del charter) suma 9.
+    // Un hueco de 1 s o más no aprieta; a 0.7 s suma 9.
     const tight = Math.max(0, 1 - stats.tightGapS) * 30;
     // Todos voladores sumaría 10; el reparto normal (~30 %) suma ~3.
     const air = stats.airShare * 10;
-    return round(stats.actionsPerMin + narrow + tight + air, 2);
+    return round(density + narrow + tight + air, 2);
 }
 
 /**

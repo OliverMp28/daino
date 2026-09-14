@@ -1,55 +1,38 @@
-// Charter — convierte un análisis musical en un chart jugable (Ola 3).
+// Charter — convierte un análisis musical en un nivel (Ola 5: charter musical).
 //
 // Segunda mitad de la separación ANÁLISIS / CHARTING (doc 10 §2.1). Función
-// pura: mismo análisis + misma seed ⇒ mismo chart, byte a byte. Sin audio, sin
-// DOM, sin Pixi. Cuesta milisegundos, así que se puede regenerar siempre que
-// cambie la seed o el algoritmo sin volver a analizar.
+// pura: mismo análisis + misma seed + misma dificultad ⇒ mismo chart, byte a
+// byte. Sin audio, sin DOM, sin Pixi; cuesta milisegundos.
 //
-// Qué hace hoy (y qué no)
-// -----------------------
-// Es el algoritmo del Bloque 5 llevado a la semántica correcta y con sus
-// defectos arreglados. NO es todavía el charter musical de la Ola 5 (patrones,
-// secciones, curva de dificultad). Cambios respecto al LevelGenerator anterior:
+// Por qué se reescribió (medido en los 8 oficiales con el charter v2):
+//   - Densidad PLANA: 55-65 acciones/min en intro, estrofa, estribillo y outro
+//     por igual. La música subía y bajaba; el nivel no.
+//   - Ritmo IRREGULAR: hasta un 34 % de los obstáculos fuera de la rejilla de
+//     beats y contratiempos, con huecos de 1.25 y 1.75 beats sin intención.
+//   - Sin estructura: el último estribillo igual que el primer verso, ningún
+//     momento preparado, ningún final.
 //
-//   1. Tiempos de ACCIÓN, no de aparición (ver chartFormat.js). Arregla el
-//      desfase de 3-7 s del §1.A del doc 10.
-//   2. Ante dos onsets demasiado juntos se queda el MÁS FUERTE, no el primero
-//      que llega (que suele ser un pre-transitorio débil).
-//   3. La ventana temporal se aplica ANTES del espaciado (defecto D13: los
-//      onsets descartados por tempranos consumían hueco y suprimían onsets
-//      legítimos justo después).
-//   4. Los rellenos de huecos largos caen en BEATS, anclados al último onset
-//      real, y nunca a menos del hueco mínimo del siguiente (defecto D17: el
-//      relleno se insertaba a `prev + 1.8 s` con 0.1 s de margen y podía dejar
-//      dos obstáculos a 0.15 s).
-//   5. Los picos de ruido no llegan a ser obstáculos: un onset solo cuenta si
-//      alcanza una fracción de la fuerza máxima de su entorno. Mitiga en el
-//      charter el defecto D16 del detector (sin suelo de energía absoluto),
-//      cuya causa sigue abierta hasta la Ola 5.
-//   6. El chart resultante se valida jugándolo con la física real y un jugador
-//      de ±40 ms; lo que no se puede superar se elimina.
+// El nivel se construye como lo haría quien diseña a mano:
 //
-// Por qué los rellenos se anclan localmente y no a una rejilla global: el BPM
-// detectado tiene 0.7-1.3 % de error (medido). Sobre una rejilla global eso son
-// 1.3-2.4 s de deriva en tres minutos — los obstáculos acabarían entre beats.
-// Anclando cada relleno al último golpe real, el error se queda en unos
-// milisegundos.
+//   musicModel   compases, pulsos y contratiempos, color de cada golpe
+//   songArc      tramos, niveles de intensidad, clímax, subidas y drops
+//   difficulty   cuánto se llena cada nivel, con qué margen, qué se desbloquea
+//   patterns     compás a compás: dónde va cada acción y cuál, con memoria de
+//                frases (un riff que vuelve es un patrón que vuelve)
+//   aquí         velocidad por tramos, silencios demasiado largos, tipo de
+//                obstáculo, validación jugando y eventos para el runtime
 //
-// Charter v2 (Ola 4), para análisis de formato 2 (analizador del servidor):
-//
-//   7. Los rellenos caen en los BEATS REALES del analizador (seguimiento con
-//      beat_this, afinado a pocos ms), no en una extrapolación.
-//   8. La velocidad de scroll sale del pulso JUGABLE (`gameplayTempo`): una
-//      canción a 63 BPM se juega a la velocidad de 126. El análisis del servidor
-//      reporta el tempo que marcaría una persona, que en canciones lentas es la
-//      mitad del que usaba el analizador JS; sin esto, esas canciones pasarían a
-//      scroll lento y márgenes de acierto más estrechos.
-//
-// Con un análisis de formato 1 (JS local, sin `beats`) solo aplica el punto 8.
+// La progresión hacia el final no es "más rápido cada N segundos": sale de la
+// canción. Las mecánicas se estrenan en momentos del arco (agacharse en el
+// primer groove, cactus anchos y síncopas al empezar a empujar, combinaciones
+// rápidas en el clímax), el mismo material suena más intenso cada vez que
+// vuelve, el mundo acelera en los tramos que empujan y el clímax es lo más
+// denso y lo más rápido antes de soltar en la outro.
 
-import { OBSTACLE_KIND, SPAWN_WINDOW_S, speedFromBpm } from '../config.js';
+import { OBSTACLE_KIND, speedFromBpm } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
-import { toSimObstacles, validatePlayability, DEFAULT_TOLERANCE_S } from '../systems/playability.js';
+import { toSimObstacles, validatePlayability, timingWindowS } from '../systems/playability.js';
+import { createSpeedProfile } from '../systems/speedProfile.js';
 import { Seeded } from './Seed.js';
 import {
     CHART_FORMAT_VERSION,
@@ -58,6 +41,16 @@ import {
     compactChart,
     seedFromSha256,
 } from './chartFormat.js';
+import { buildMusicModel } from './musicModel.js';
+import { buildSongArc } from './songArc.js';
+import { difficultyCeiling } from './difficultyCeiling.js';
+import {
+    DIFFICULTY_PROFILES,
+    STAGE,
+    normalizeRequestedDifficulty,
+    resolveDifficulty,
+} from './difficulty.js';
+import { PAIR_GAP, chooseBarActions, createPhraseMemory, duckThreshold, pairGap } from './patterns.js';
 
 /**
  * Reglas del charter. Cambiar cualquiera altera los charts generados: sube
@@ -66,48 +59,40 @@ import {
 export const CHARTER_RULES = Object.freeze({
     /**
      * Primera acción no antes de este segundo. Da tiempo a que la música
-     * arranque y a que el primer obstáculo entre desde el borde de la pantalla
-     * en vez de aparecer ya dentro.
+     * arranque y a que el primer obstáculo entre desde el borde de la pantalla.
      */
     firstActionMinS: 3.0,
     /** Tras el último cruce, la canción termina sin obstáculos (descanso final). */
     tailRestS: 2.0,
-    /** Hueco mínimo entre acciones. Medido: 0.70 s es seguro con ±40 ms. */
-    minGapS: SPAWN_WINDOW_S.min,
-    /** Hueco máximo antes de rellenar. */
-    maxGapS: SPAWN_WINDOW_S.max,
-    /** Desviación humana que el chart debe tolerar. */
-    toleranceS: DEFAULT_TOLERANCE_S,
-    /** Techo de eliminaciones por jugabilidad (defensa ante bucles). */
-    maxRepairs: 64,
+    /** Primeras acciones "de tutorial": saltos en tiempos fuertes, bien espaciados. */
+    introActions: 3,
     /**
-     * Un onset cuenta si su fuerza es al menos esta fracción del máximo en
-     * ±`strengthWindowS`. Medido en click tracks: golpes reales 0.32-0.39,
-     * picos de ruido ≤ 0.097 (≤ 25 % del golpe). Local y no global a
-     * propósito: un umbral global eliminaría estrofas suaves enteras frente a
-     * un estribillo fuerte, y los rellenos de esos tramos derivarían.
-     */
-    localStrengthRatio: 0.3,
-    strengthWindowS: 4,
-    /**
-     * Rango del tempo que decide la VELOCIDAD de scroll (v2). Una canción a 63
-     * BPM se juega con la velocidad de 126: mismo pulso musical (múltiplo
-     * métrico), y evita el scroll lento, que estrecha el margen de error de cada
-     * salto (hallazgo de la Ola 2: 116 ms a 250 px/s frente a 398 ms a 600).
-     * Afecta solo a `world.speedPxS`; `music.bpm` sigue siendo el real.
+     * Rango del tempo que decide la velocidad BASE (Ola 4). Una canción a 63 BPM
+     * se juega con la velocidad de 126: mismo pulso musical y sin el scroll
+     * lento que estrecha el margen de cada salto.
      */
     speedTempoMin: 90,
     speedTempoMax: 200,
     /**
-     * Un relleno se lleva al beat real más cercano si está a menos de esta
-     * fracción de periodo (v2, análisis con `beats`).
+     * Aceleración del mundo por nivel del arco (reposo, calma, groove, empuje,
+     * clímax), multiplicada por `speedAmp` de la dificultad. Solo acelera: a
+     * menos velocidad el margen de cada salto se ESTRECHA (hallazgo de la Ola 2),
+     * así que frenar por debajo de la base volvería la calma más difícil.
      */
-    fillerSnapFraction: 0.3,
+    levelSpeedBoost: Object.freeze([0, 0, 0, 0.08, 0.16]),
+    /** Techo de velocidad: a más, un móvil apaisado ve el obstáculo < 1 s. */
+    maxSpeedPxS: 690,
+    /** Un tramo más corto que esto no cambia la velocidad (salvo el clímax). */
+    minSpeedSegmentS: 8,
+    /** Un cactus de acento solo si su margen de error supera N veces la tolerancia. */
+    accentWindowFactor: 2.4,
+    /** Techo de reparaciones del validador (defensa ante bucles). */
+    maxRepairs: 400,
 });
 
 /**
- * Tempo con el que se calcula la velocidad: el real, doblado o dividido por dos
- * hasta caer en [speedTempoMin, speedTempoMax].
+ * Tempo con el que se calcula la velocidad base: el real, doblado o dividido
+ * por dos hasta caer en [speedTempoMin, speedTempoMax].
  *
  * @param {number} bpm
  * @returns {number}
@@ -121,17 +106,23 @@ export function gameplayTempo(bpm) {
 
 /**
  * @typedef {Object} ChartReport
- * @property {number} onsetsIn     Onsets recibidos del análisis.
- * @property {number} fromOnsets   Eventos que salen de onsets reales.
- * @property {number} fillers      Eventos de relleno en beats.
- * @property {number} repaired     Eventos eliminados por no ser superables.
+ * @property {number} onsetsIn        Onsets recibidos del análisis.
+ * @property {number} obstacles       Obstáculos del chart final.
+ * @property {number} fillers         Acciones añadidas para cortar silencios de juego demasiado largos.
+ * @property {number} repaired        Acciones eliminadas o suavizadas por el validador.
+ * @property {number} difficulty      Dificultad efectiva (1-5).
+ * @property {'auto'|number} requested
+ * @property {number|null} ceiling
+ * @property {number} segments
+ * @property {{ t0: number, t1: number } | null} climax
+ * @property {number} speedChanges
  */
 
 /**
- * @param {import('./analyze.js').Analysis} analysis
- * @param {{ seed?: number, sha256?: string | null }} [opts]
- *        Si no se da `seed`, se deriva del hash del audio (mismo archivo ⇒
- *        mismo nivel). Sin hash ni seed, una aleatoria.
+ * @param {import('./analyze.js').Analysis} analysis  Formato 1 o 2.
+ * @param {{ seed?: number, sha256?: string | null, difficulty?: 'auto' | number }} [opts]
+ *        Sin `seed`, se deriva del hash del audio (mismo archivo ⇒ mismo nivel).
+ *        `difficulty`: la que pide quien sube la canción; 'auto' por defecto.
  * @returns {{ chart: import('./chartFormat.js').Chart, report: ChartReport }}
  */
 export function buildChart(analysis, opts = {}) {
@@ -139,260 +130,400 @@ export function buildChart(analysis, opts = {}) {
     const seedInput = opts.seed ?? (sha256 !== null ? seedFromSha256(sha256) : undefined);
     const prng = new Seeded(seedInput);
 
-    const durationSec = analysis.durationSec;
-    const speedPxS = speedFromBpm(gameplayTempo(analysis.bpm));
-    const realBeats = Array.isArray(analysis.beats) && analysis.beats.length >= 8 ? analysis.beats : null;
-    const beatPeriodS = analysis.beatPeriodS > 0 ? analysis.beatPeriodS : 60 / analysis.bpm;
-    const rules = CHARTER_RULES;
+    const requested = normalizeRequestedDifficulty(opts.difficulty);
+    const ceiling = difficultyCeiling(analysis)?.ceiling ?? null;
+    const difficulty = resolveDifficulty(requested, ceiling);
+    const profile = DIFFICULTY_PROFILES[difficulty];
 
-    // Ventana de acción: el último cruce debe dejar el descanso final entero.
+    const model = buildMusicModel(analysis);
+    const arc = buildSongArc(model);
+
+    const tempoSpeed = speedFromBpm(gameplayTempo(model.bpm));
+    const { base: baseSpeed, changes: speedChanges } = planSpeed(arc, model, profile, tempoSpeed);
+    const speed = createSpeedProfile(baseSpeed, speedChanges);
+
+    const unlockTimes = unlockSchedule(arc, profile);
+    const unlocked = (mechanic, t) => t >= unlockTimes[mechanic];
+
     const maxLead = Math.max(...Object.values(OBSTACLE_KIND).map(actionLeadS));
-    const tMin = rules.firstActionMinS;
-    const tMax = durationSec - rules.tailRestS - maxLead;
+    const tMin = CHARTER_RULES.firstActionMinS;
+    const tMax = model.durationSec - CHARTER_RULES.tailRestS - maxLead;
 
-    let times = [];
-    let fromOnsets = 0;
+    const ctx = { model, arc, profile, speed, unlocked, tMin, tMax, prng };
+    let actions = [];
     let fillers = 0;
-
-    if (tMax > tMin) {
-        // (3) Ventana primero, (5) suelo local de fuerza, (2) espaciado.
-        const windowed = [];
-        for (const [t, strength] of analysis.onsets) {
-            if (t >= tMin && t <= tMax) windowed.push({ t, strength });
-        }
-        const candidates = dropWeakOnsets(windowed, rules.strengthWindowS, rules.localStrengthRatio);
-        const accepted = selectStrongestSpaced(candidates, rules.minGapS);
-        fromOnsets = accepted.length;
-
-        // (4) Rellenos en beats, anclados localmente.
-        let filled = fillGapsOnBeats(accepted, {
-            beatPeriodS, minGapS: rules.minGapS, maxGapS: rules.maxGapS, tMin, tMax,
-        });
-        // (7) Con beats reales del analizador (formato 2), los rellenos caen en
-        // ESOS beats y no en una extrapolación desde el último golpe.
-        if (realBeats !== null) {
-            filled = snapFillersToBeats(filled, accepted, realBeats, {
-                maxShiftS: rules.fillerSnapFraction * beatPeriodS, minGapS: rules.minGapS, tMin, tMax,
-            });
-        }
-        fillers = filled.length - accepted.length;
-        times = filled;
-    }
-
-    // Kinds con la seed: una llamada al PRNG por evento en todas las ramas,
-    // en orden temporal. Misma seed ⇒ mismos kinds.
-    let events = times.map((t) => ({ t: round3(t), type: 'obstacle', kind: pickKind(prng, t) }));
-
-    // (6) Validación jugando el nivel. Elimina lo imposible y reintenta.
     let repaired = 0;
-    for (;;) {
-        const verdict = validatePlayability(toSimObstacles(events), speedPxS, { toleranceS: rules.toleranceS });
-        if (verdict.ok || repaired >= rules.maxRepairs) break;
-        const idx = events.findIndex((e) => e.t === verdict.t);
-        if (idx < 0) break;
-        events.splice(idx, 1);
-        repaired++;
+    if (tMax > tMin && model.bars.length > 0) {
+        actions = chartActions(ctx);
+        const before = actions.length;
+        actions = fillLongRests(actions, ctx);
+        fillers = actions.length - before;
+        assignKinds(actions, ctx);
+        repaired = repairUnplayable(actions, ctx);
     }
 
+    const events = [
+        ...structureEvents(arc),
+        ...actions.map((a) => ({ t: round3(a.t), type: 'obstacle', kind: a.kind })),
+    ].sort((a, b) => (a.t - b.t) || (EVENT_ORDER[a.type] - EVENT_ORDER[b.type]));
+
+    const climax = arc.climax >= 0 ? arc.segments[arc.climax] : null;
     const chart = compactChart({
         formatVersion: CHART_FORMAT_VERSION,
         charter: { name: CHARTER_NAME, version: CHARTER_VERSION },
         seed: prng.seed,
-        audio: { sha256, durationSec, sampleRate: analysis.sampleRate },
-        music: { bpm: analysis.bpm, bpmConfidence: analysis.bpmConfidence, beatPeriodS },
-        world: { speedPxS },
+        audio: { sha256, durationSec: model.durationSec, sampleRate: analysis.sampleRate },
+        music: {
+            bpm: analysis.bpm,
+            bpmConfidence: analysis.bpmConfidence,
+            beatPeriodS: analysis.beatPeriodS > 0 ? analysis.beatPeriodS : 60 / analysis.bpm,
+            beats: Array.from(model.beats, round3),
+            downbeats: Array.from(model.beats).filter((_, i) => model.isDownbeat[i] === 1).map(round3),
+        },
+        difficulty: { level: difficulty, requested, ceiling },
+        world: { speedPxS: baseSpeed, speedChanges },
         events,
     });
 
     return {
         chart,
-        report: { onsetsIn: analysis.onsets.length, fromOnsets, fillers, repaired },
+        report: {
+            onsetsIn: analysis.onsets.length,
+            obstacles: actions.length,
+            fillers,
+            repaired,
+            difficulty,
+            requested,
+            ceiling,
+            segments: arc.segments.length,
+            climax: climax === null ? null : { t0: round3(climax.t0), t1: round3(climax.t1) },
+            speedChanges: speedChanges.length,
+        },
     };
 }
 
-// --------------------------- Pasos ---------------------------
+/** A igual instante, la sección antes que su efecto y ambos antes que el obstáculo. */
+const EVENT_ORDER = Object.freeze({ section: 0, fx: 1, obstacle: 2 });
+
+// --------------------------- Velocidad ---------------------------
 
 /**
- * Descarta onsets débiles respecto a su entorno: se queda con los que tienen
- * al menos `ratio` × (fuerza máxima en [t - windowS, t + windowS]).
- *
- * O(n) con una cola monótona de máximos deslizante: cada onset entra y sale
- * de la cola una sola vez. Las entradas deben venir ordenadas por `t`.
- *
- * @param {Array<{ t: number, strength: number }>} onsets  ordenados por t
- * @param {number} windowS
- * @param {number} ratio
- * @returns {Array<{ t: number, strength: number }>}
+ * @returns {{ base: number, changes: Array<{ t: number, speedPxS: number, rampS: number }> }}
+ *          `base`: velocidad con la que arranca el nivel. Si la canción empieza
+ *          ya en un tramo que empuja, es la de ese tramo (no un "cambio" en el 0).
  */
-export function dropWeakOnsets(onsets, windowS, ratio) {
-    const n = onsets.length;
-    if (n === 0) return [];
-    const out = [];
-    const deque = [];   // índices con fuerza decreciente
-    let right = 0;      // siguiente índice por entrar en la ventana
-    let head = 0;       // inicio lógico de la cola (evita shift() O(n))
+function planSpeed(arc, model, profile, tempoSpeed) {
+    const changes = [];
+    const speedOf = (seg) => {
+        const boost = CHARTER_RULES.levelSpeedBoost[seg.level] * profile.speedAmp;
+        return Math.round(Math.min(CHARTER_RULES.maxSpeedPxS, Math.max(tempoSpeed, tempoSpeed * (1 + boost))));
+    };
+    const first = arc.segments[0];
+    const base = first !== undefined && first.t1 - first.t0 >= CHARTER_RULES.minSpeedSegmentS ? speedOf(first) : tempoSpeed;
+    let current = base;
+    for (const seg of arc.segments) {
+        if (seg.index === 0) continue;
+        const target = speedOf(seg);
+        if (Math.abs(target - current) < 2) continue;
+        // Un tramo corto no cambia la velocidad salvo que sea el clímax: un
+        // portal cada pocos segundos marea en vez de marcar un momento. En
+        // segundos y no en compases: medido con compases (mínimo 6), el puente de
+        // Running With the Wolves (5 compases, 14.6 s a 82 BPM) se jugaba entero a
+        // la velocidad del estribillo.
+        if (seg.t1 - seg.t0 < CHARTER_RULES.minSpeedSegmentS && !seg.climax) continue;
+        // Subir, de golpe en el primer tiempo (el portal ES el drop); bajar,
+        // en dos beats (soltar sin frenazo).
+        const rampS = target > current ? 0 : round3(2 * model.beatPeriodS);
+        changes.push({ t: round3(seg.t0), speedPxS: target, rampS });
+        current = target;
+    }
+    return { base, changes };
+}
 
-    for (let i = 0; i < n; i++) {
-        const t = onsets[i].t;
-        while (right < n && onsets[right].t <= t + windowS) {
-            while (deque.length > head && onsets[deque[deque.length - 1]].strength <= onsets[right].strength) {
-                deque.pop();
+// --------------------------- Desbloqueo de mecánicas ---------------------------
+
+/**
+ * Instante desde el que cada mecánica puede aparecer, según las etapas del arco:
+ *   START         desde el principio
+ *   FIRST_GROOVE  primer tramo de groove o más (nunca antes del segundo 8)
+ *   FIRST_DRIVE   primer tramo que empuja tras ese groove (o el siguiente groove)
+ *   CLIMAX        el clímax
+ */
+export function unlockSchedule(arc, profile) {
+    const segs = arc.segments;
+    const climax = arc.climax >= 0 ? segs[arc.climax] : null;
+    const groove = segs.find((s) => s.level >= 2);
+    const s1 = groove !== undefined ? Math.max(groove.t0, 8) : (climax?.t0 ?? Infinity);
+    const s3 = climax !== null ? Math.max(climax.t0, s1) : Infinity;
+    const drive = segs.find((s) => s.level >= 3 && s.t0 >= s1 - 1e-6)
+        ?? segs.find((s) => s.level >= 2 && groove !== undefined && s.index > groove.index);
+    // Lo que se estrena "al empujar" nunca llega después del clímax.
+    const s2 = Math.min(s3, Math.max(s1, drive !== undefined ? drive.t0 : s3));
+
+    const at = (stage) => {
+        switch (stage) {
+            case STAGE.START: return 0;
+            case STAGE.FIRST_GROOVE: return s1;
+            case STAGE.FIRST_DRIVE: return s2;
+            case STAGE.CLIMAX: return s3;
+            default: return Infinity;
+        }
+    };
+    return {
+        duck: at(profile.unlock.duck),
+        wide: at(profile.unlock.wide),
+        offbeat: at(profile.unlock.offbeat),
+        combo: at(profile.unlock.combo),
+    };
+}
+
+// --------------------------- Acciones ---------------------------
+
+function chartActions(ctx) {
+    const { model, arc, profile, speed, unlocked, tMin, tMax } = ctx;
+    const memory = createPhraseMemory();
+    const threshold = duckThreshold(model);
+    const placed = [];
+
+    let segment = -1;
+    let previousPositions = null;
+    let segmentCounts = { airDucks: 0, airTotal: 0 };
+
+    for (const bar of model.bars) {
+        const arcBar = arc.bars[bar.index];
+        const seg = arc.segments[arcBar.segment];
+        if (arcBar.segment !== segment) {
+            segment = arcBar.segment;
+            previousPositions = null;
+            segmentCounts = { airDucks: 0, airTotal: 0 };
+        }
+        if (bar.t1 <= tMin || bar.t0 > tMax) continue;
+
+        // Densidad: la del nivel, algo más o menos según lo lleno que suene
+        // este compás dentro de su tramo. En la subida a un drop se acerca a la
+        // del nivel que viene (un 35 % y un 60 % del camino): la tensión crece
+        // hacia el drop y el último beat se deja en silencio (patterns.js).
+        let levelApm = profile.apm[seg.level];
+        if (arcBar.build > 0) {
+            const upcoming = arc.segments[arcBar.segment + 1];
+            if (upcoming !== undefined) {
+                const k = arcBar.build === 1 ? 0.35 : 0.6;
+                levelApm += (profile.apm[upcoming.level] - levelApm) * k;
             }
-            deque.push(right);
-            right++;
         }
-        while (head < deque.length && onsets[deque[head]].t < t - windowS) head++;
-        const localMax = onsets[deque[head]].strength;
-        if (onsets[i].strength > 0 && onsets[i].strength >= ratio * localMax) out.push(onsets[i]);
+        const apm = levelApm * (1 + clamp((arcBar.intensity - seg.intensity) * 1.2, -0.25, 0.25));
+        const exact = (apm * (bar.t1 - bar.t0)) / 60;
+        // Reparto periódico de la parte decimal (Bresenham) por posición en el
+        // tramo, con la fracción llevada a cuartos: 2.5 acciones por compás dan
+        // 2-3-2-3 y 2.25 dan 2-2-2-3, así que la acción extra cae siempre en el
+        // mismo compás de cada frase de 2 o 4 (el último, donde suelen ir los
+        // fills). Medido antes: con un arrastre de decimales un riff repetido
+        // salía "J J" / "J D J" / "J D J D" sin periodo, y con la fracción exacta
+        // (0.6) el periodo era de 5 compases; en ambos casos la memoria de frases
+        // no podía repetir la frase.
+        let whole = Math.floor(exact + 1e-9);
+        let frac = Math.round((exact - whole) * 4) / 4;
+        if (frac >= 1) {
+            whole++;
+            frac = 0;
+        }
+        const k = arcBar.inSegment;
+        const target = whole + Math.floor((k + 1) * frac + 1e-6) - Math.floor(k * frac + 1e-6);
+
+        const chosen = chooseBarActions({
+            bar,
+            nextBar: model.bars[bar.index + 1] ?? null,
+            nextArcBar: arc.bars[bar.index + 1] ?? null,
+            arcBar,
+            segment: seg,
+            target,
+            placed,
+            speedAt: speed.speedAt,
+            profile,
+            unlocked,
+            tMin,
+            tMax,
+            threshold,
+            hasColor: model.onsets.hasColor,
+            meter: model.meter,
+            energyMean: model.energyMean,
+            memory,
+            previousPositions,
+            segmentCounts,
+            introActions: Math.max(0, CHARTER_RULES.introActions - placed.length),
+        });
+
+        for (const a of chosen) {
+            placed.push(a);
+            segmentCounts.airTotal++;
+            if (a.type === 'duck') segmentCounts.airDucks++;
+        }
+        previousPositions = new Set(chosen.map((a) => a.slot.pos));
     }
-    return out;
+    return placed;
 }
 
 /**
- * Selecciona onsets respetando un hueco mínimo, priorizando los más fuertes.
- *
- * Voraz por fuerza descendente: cada onset entra si no tiene un aceptado a
- * menos de `minGapS`. Así un golpe fuerte nunca pierde contra un
- * pre-transitorio débil que casualmente llegó 50 ms antes. Empates por
- * instante más temprano, para que el resultado sea determinista.
- *
- * @param {Array<{ t: number, strength: number }>} candidates
- * @param {number} minGapS
- * @returns {number[]} tiempos aceptados, ordenados
+ * Corta los silencios de juego demasiado largos mientras la música suena: un
+ * salto en el tiempo fuerte con más golpe cerca del centro del hueco. Donde la
+ * música calla de verdad (un break en silencio), el nivel también calla.
  */
-export function selectStrongestSpaced(candidates, minGapS) {
-    const byStrength = [...candidates].sort((a, b) => (b.strength - a.strength) || (a.t - b.t));
-    const accepted = [];   // ordenado por t
-    for (const { t } of byStrength) {
-        const i = lowerBound(accepted, t);
-        const prevOk = i === 0 || t - accepted[i - 1] >= minGapS - EPS;
-        const nextOk = i === accepted.length || accepted[i] - t >= minGapS - EPS;
-        if (prevOk && nextOk) accepted.splice(i, 0, t);
-    }
-    return accepted;
-}
+function fillLongRests(actions, ctx) {
+    const { model, profile, speed, tMin, tMax, unlocked } = ctx;
+    const out = actions.slice();
+    for (let guard = 0; guard < 1000; guard++) {
+        let inserted = false;
+        for (let i = -1; i < out.length; i++) {
+            const a = i >= 0 ? out[i] : null;
+            const b = i + 1 < out.length ? out[i + 1] : null;
+            const from = a !== null ? a.t : tMin;
+            const to = b !== null ? b.t : tMax;
+            if (to - from <= profile.maxRestS) continue;
+            if (model.energyMean(from, to) < 0.12) continue;
 
-/**
- * Rellena huecos mayores que `maxGapS` con eventos en múltiplos de beat,
- * anclados al evento real anterior (o al siguiente, en la intro).
- *
- * @param {number[]} accepted  ordenados
- * @param {{ beatPeriodS: number, minGapS: number, maxGapS: number, tMin: number, tMax: number }} p
- * @returns {number[]} ordenados, con los rellenos intercalados
- */
-export function fillGapsOnBeats(accepted, p) {
-    // Paso de relleno: el mayor número entero de beats que no supera el hueco
-    // máximo, pero nunca por debajo del mínimo (canciones muy rápidas).
-    let beats = Math.max(1, Math.floor((p.maxGapS + EPS) / p.beatPeriodS));
-    while (beats * p.beatPeriodS < p.minGapS - EPS) beats++;
-    const step = beats * p.beatPeriodS;
-
-    if (accepted.length === 0) {
-        // Sin un solo golpe utilizable (drone, silencio): rejilla desde el inicio.
-        const out = [];
-        for (let t = p.tMin; t <= p.tMax + EPS; t += step) out.push(t);
-        return out;
-    }
-
-    const out = [];
-
-    // Intro: hacia atrás desde el primer golpe real, sin pasar de tMin.
-    const first = accepted[0];
-    if (first - p.tMin > p.maxGapS) {
-        const intro = [];
-        for (let t = first - step; t >= p.tMin - EPS; t -= step) intro.push(t);
-        out.push(...intro.reverse());
-    }
-
-    for (let i = 0; i < accepted.length; i++) {
-        const a = accepted[i];
-        out.push(a);
-        const b = i + 1 < accepted.length ? accepted[i + 1] : null;
-        if (b !== null) {
-            if (b - a > p.maxGapS) {
-                // Nunca a menos del hueco mínimo del siguiente golpe real (D17).
-                for (let t = a + step; t <= b - p.minGapS + EPS; t += step) out.push(t);
+            const mid = (from + to) / 2;
+            let best = null;
+            let bestScore = -Infinity;
+            for (const bar of model.bars) {
+                if (bar.t1 < from || bar.t0 > to) continue;
+                for (const slot of bar.slots) {
+                    if (!slot.onBeat || slot.t < tMin || slot.t > tMax) continue;
+                    if (a !== null && slot.t - a.t < pairGap(a.type, 'jump', speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1) continue;
+                    if (b !== null && b.t - slot.t < pairGap('jump', b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1) continue;
+                    if (a === null && slot.t < from) continue;
+                    const score = slot.strength + 0.3 * slot.metric - (0.4 * Math.abs(slot.t - mid)) / (to - from);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = slot;
+                    }
+                }
             }
-        } else if (p.tMax - a > p.maxGapS) {
-            for (let t = a + step; t <= p.tMax + EPS; t += step) out.push(t);
+            if (best === null) continue;
+            out.splice(i + 1, 0, {
+                t: best.t, type: 'jump', slot: best, score: 0.15, forced: false,
+                bar: best.bar, segment: ctx.arc.bars[best.bar].segment, echo: null,
+            });
+            inserted = true;
+            break;
         }
+        if (!inserted) break;
     }
     return out;
 }
 
-/**
- * Lleva cada relleno al beat real más cercano, sin romper el hueco mínimo ni la
- * ventana. Los eventos que salen de onsets no se tocan: ya están en su golpe.
- *
- * @param {number[]} times     ordenados: onsets aceptados + rellenos
- * @param {number[]} accepted  los que vienen de onsets reales
- * @param {number[]} beats     beats del análisis, ordenados
- * @param {{ maxShiftS: number, minGapS: number, tMin: number, tMax: number }} p
- * @returns {number[]}
- */
-export function snapFillersToBeats(times, accepted, beats, p) {
-    const real = new Set(accepted);
-    const out = times.slice();
-    for (let i = 0; i < out.length; i++) {
-        if (real.has(out[i])) continue;
-        const j = lowerBound(beats, out[i]);
-        let best = null;
-        for (const k of [j - 1, j]) {
-            if (k < 0 || k >= beats.length) continue;
-            if (best === null || Math.abs(beats[k] - out[i]) < Math.abs(best - out[i])) best = beats[k];
+// --------------------------- Tipo de obstáculo ---------------------------
+
+function assignKinds(actions, ctx) {
+    const { model, profile, speed, unlocked, prng } = ctx;
+    const tol = profile.toleranceS;
+    const jj = PAIR_GAP.jumpJump(0, tol);
+
+    for (let i = 0; i < actions.length; i++) {
+        const a = actions[i];
+        if (a.type === 'duck') {
+            a.kind = pickKindForRole('duck', prng);
+            continue;
         }
-        if (best === null || Math.abs(best - out[i]) > p.maxShiftS) continue;
-        if (best < p.tMin - EPS || best > p.tMax + EPS) continue;
-        const prevOk = i === 0 || best - out[i - 1] >= p.minGapS - EPS;
-        const nextOk = i === out.length - 1 || out[i + 1] - best >= p.minGapS - EPS;
-        if (prevOk && nextOk) out[i] = best;
+        const prev = actions[i - 1];
+        const next = actions[i + 1];
+        const cross = a.t + actionLeadS(OBSTACLE_KIND.CACTUS_SMALL);
+        const roomy = (prev === undefined || a.t - prev.t >= jj + 0.15) && (next === undefined || next.t - a.t >= jj + 0.15);
+        let recentAccents = 0;
+        for (let k = Math.max(0, i - 6); k < i; k++) if (OBSTACLE_KIND[actions[k].kind]?.role === 'accent') recentAccents++;
+        const accentKind = pickKindForRole('accent', null);
+        const windowOk = accentKind !== null && timingWindowS(accentKind, speed.speedAt(cross)) >= CHARTER_RULES.accentWindowFactor * tol;
+        const allowed = unlocked('wide', a.t) && roomy && windowOk && recentAccents < 2;
+
+        let role = 'jump';
+        if (allowed) {
+            if (a.echo !== null && a.echo.kind !== undefined) {
+                // Frase repetida: el mismo obstáculo que la primera vez.
+                role = OBSTACLE_KIND[a.echo.kind]?.role === 'accent' ? 'accent' : 'jump';
+            } else {
+                const accent = a.forced || (a.slot.metric >= 0.8 && a.slot.strength >= 0.55 && (!model.onsets.hasColor || a.slot.low >= 0.34));
+                if (accent || prng.next() < 0.1) role = 'accent';
+            }
+        }
+        a.kind = pickKindForRole(role, prng) ?? pickKindForRole('jump', prng);
     }
-    return out;
 }
 
 /**
- * Elige el kind de un evento con ruleta sobre el REGISTRO OBSTACLE_KIND,
- * filtrando por `availableFromS`. Añadir un kind al registro basta para que
- * entre en rotación.
- *
- * Determinismo: exactamente UNA llamada al PRNG por evento en todas las ramas,
- * y el orden de iteración del registro es el de inserción.
- *
- * @param {Seeded} prng
- * @param {number} t
- * @returns {string}
+ * Kind del registro para un papel musical. Si hay varios con ese papel, ruleta
+ * por `weight` con la seed del nivel; con uno solo no se consume azar.
  */
-export function pickKind(prng, t) {
-    const r = prng.next();
-    const available = Object.entries(OBSTACLE_KIND).filter(([, def]) => t >= (def.availableFromS ?? 0));
-    if (available.length === 0) return Object.keys(OBSTACLE_KIND)[0];
-
-    let total = 0;
-    for (const [, def] of available) total += def.weight ?? 1;
-
+function pickKindForRole(role, prng) {
+    const kinds = Object.entries(OBSTACLE_KIND).filter(([, def]) => def.role === role);
+    if (kinds.length === 0) return null;
+    if (kinds.length === 1 || prng === null) return kinds[0][0];
+    const total = kinds.reduce((s, [, def]) => s + (def.weight ?? 1), 0);
+    const r = prng.next() * total;
     let acc = 0;
-    for (const [key, def] of available) {
+    for (const [key, def] of kinds) {
         acc += def.weight ?? 1;
-        if (r < acc / total) return key;
+        if (r < acc) return key;
     }
-    return available[available.length - 1][0];
+    return kinds[kinds.length - 1][0];
+}
+
+// --------------------------- Validación jugando ---------------------------
+
+/**
+ * Juega el chart con la física real, la velocidad del nivel y la tolerancia de
+ * la dificultad. Ante un choque: si el obstáculo es un acento, pasa a salto
+ * normal; si no, se quita el menos importante del par (el que choca y el
+ * anterior), así un golpe de relleno nunca se lleva por delante un drop.
+ */
+function repairUnplayable(actions, ctx) {
+    const { speed, profile } = ctx;
+    let repaired = 0;
+    while (repaired < CHARTER_RULES.maxRepairs && actions.length > 0) {
+        const sim = toSimObstacles(actions.map((a) => ({ t: a.t, type: 'obstacle', kind: a.kind })));
+        const verdict = validatePlayability(sim, speed, { toleranceS: profile.toleranceS });
+        if (verdict.ok) break;
+        repaired++;
+        const i = verdict.index;
+        const hit = actions[i];
+        if (OBSTACLE_KIND[hit.kind]?.role === 'accent') {
+            hit.kind = pickKindForRole('jump', null);
+            continue;
+        }
+        const weight = (a) => a.score + (a.forced ? 10 : 0);
+        const victim = i > 0 && weight(actions[i - 1]) < weight(hit) ? i - 1 : i;
+        actions.splice(victim, 1);
+    }
+    return repaired;
+}
+
+// --------------------------- Eventos de estructura ---------------------------
+
+/**
+ * `section` al empezar cada tramo (nivel e intensidad para el runtime: fondo,
+ * partículas, HUD), `fx: 'drop'` donde la intensidad salta y `fx: 'lift'` donde
+ * sube un nivel hacia el empuje. Los clientes que no los conocen los ignoran
+ * (chartFormat.js, tolerancia hacia delante).
+ */
+function structureEvents(arc) {
+    const out = [];
+    for (const seg of arc.segments) {
+        const t = seg.index === 0 ? 0 : round3(seg.t0);
+        out.push({ t, type: 'section', level: seg.level, intensity: round2(seg.intensity), role: seg.role, climax: seg.climax });
+        if (seg.drop) out.push({ t, type: 'fx', fx: 'drop', level: seg.level });
+        else if (seg.lift) out.push({ t, type: 'fx', fx: 'lift', level: seg.level });
+    }
+    return out;
 }
 
 // --------------------------- Utilidades ---------------------------
 
-const EPS = 1e-6;
-
-function lowerBound(sorted, value) {
-    let lo = 0;
-    let hi = sorted.length;
-    while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (sorted[mid] < value) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo;
+function clamp(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
 }
 
 function round3(v) {
     return Math.round(v * 1000) / 1000;
+}
+
+function round2(v) {
+    return Math.round(v * 100) / 100;
 }

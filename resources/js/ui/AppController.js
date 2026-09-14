@@ -321,9 +321,9 @@ async function persistLocalLevel(loaded) {
             body: {
                 title: loaded.title.slice(0, 120),
                 audio_sha256: loaded.sha256,
-                // Dificultad MEDIDA del chart (Ola 2) hasta que la elija quien
-                // sube la canción (Olas 4-5, defecto D6).
-                difficulty: difficultyFromStats(chartStats(loaded.chart)),
+                // Ola 5: la dificultad con la que el charter generó el nivel;
+                // medida del chart solo para charts sin ella (anteriores).
+                difficulty: loaded.chart.difficulty?.level ?? difficultyFromStats(chartStats(loaded.chart)),
                 generator_seed: String(loaded.chart.seed),
                 chart: loaded.chart,
                 analysis: loaded.analysis ?? undefined,
@@ -371,6 +371,12 @@ function handlePauseRequested() {
             setState(STATE.PLAYING);
         },
         onExit: () => {
+            // Ola 5: si ya no quedaba ningún obstáculo ("¡Superado!") y solo
+            // faltaba que la canción terminase, salir no pierde el nivel: se da
+            // por ganado. `finishCleared` emite daino:gamestate (win) y
+            // handleGameState hace la transición como en cualquier victoria.
+            if (state === STATE.PAUSED && activeSession?.finishCleared?.()) return;
+
             // GAME_OVER ANTES de transitionToMenu: el stop() del midpoint
             // dispara `_end('stopped')` → daino:gamestate, y el guard de
             // handleGameState lo ignora en vez de lanzar otra transición.

@@ -19,10 +19,17 @@ class CharterError(Exception):
     """El charter rechazó el análisis. Permanente: reintentar no cambia nada."""
 
 
-def chart_from_analysis(analysis: dict, audio_sha256: str, *, timeout_sec: float = 60.0, root: Path | None = None) -> dict:
+def chart_from_analysis(analysis: dict, audio_sha256: str, difficulty: int | None = None, *,
+                        timeout_sec: float = 60.0, root: Path | None = None) -> dict:
+    """`difficulty`: la que pidió el autor (1-5) o None para "Automática" (Ola 5).
+    El charter nunca supera el techo que la canción admite."""
     script = (root or project_root()) / "scripts" / "chart-from-analysis.mjs"
     node = os.environ.get("NODE_BIN", "node")
-    payload = json.dumps({"analysis": analysis, "sha256": audio_sha256}).encode("utf-8")
+    payload = json.dumps({
+        "analysis": analysis,
+        "sha256": audio_sha256,
+        "difficulty": difficulty if difficulty is not None else "auto",
+    }).encode("utf-8")
     try:
         proc = subprocess.run([node, str(script)], input=payload, capture_output=True, timeout=timeout_sec, check=False)
     except subprocess.TimeoutExpired as exc:

@@ -22,6 +22,7 @@ import {
     COYOTE_TIME_S, DINO_SIZE, DINO_X, JUMP_BUFFER_S, MAX_PHYSICS_CATCHUP_S, OBSTACLE_KIND, PHYSICS_STEP_S,
 } from '../../resources/js/game/config.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
+import { speedProfileOf } from '../../resources/js/game/systems/speedProfile.js';
 import { makeSyntheticAnalysis } from './helpers/synthetic-audio.mjs';
 
 const GROUND = 700;
@@ -87,7 +88,7 @@ function playLikeTheGame(chart, frameMs) {
     const obstacles = chart.events.filter((e) => e.type === 'obstacle');
     const spawner = createSpawner({
         events: chart.events,
-        speedPxS: chart.world.speedPxS,
+        speed: speedProfileOf(chart),
         layer: { addChild() {}, removeChild() {} },
         createObstacle: () => ({ activate() {}, deactivate() {}, placeAt() {}, animate() {} }),
     });
@@ -113,7 +114,7 @@ function playLikeTheGame(chart, frameMs) {
             const def = OBSTACLE_KIND[e.kind];
             if (isDuckKind(def)) {
                 applyDuckStart(body);
-                duckRelease = e.t + actionLeadS(def) + (def.w / 2 + 60) / chart.world.speedPxS;
+                duckRelease = e.t + actionLeadS(def) + (def.w / 2 + 60) / speedProfileOf(chart).speedAt(e.t + actionLeadS(def));
             } else if (!applyJump(body) && !body.grounded) {
                 body.jumpBufferT = JUMP_BUFFER_S;
             }
@@ -166,7 +167,7 @@ test('regresión: con dt capado (el bucle anterior) un tirón hacía chocar a qu
     const oldLoop = () => {
         const obstacles = chart.events.filter((e) => e.type === 'obstacle');
         const spawner = createSpawner({
-            events: chart.events, speedPxS: chart.world.speedPxS,
+            events: chart.events, speed: speedProfileOf(chart),
             layer: { addChild() {}, removeChild() {} },
             createObstacle: () => ({ activate() {}, deactivate() {}, placeAt() {}, animate() {} }),
         });
@@ -235,7 +236,7 @@ test('con pulsaciones fechadas, un tirón de 250 ms ya no cambia el resultado', 
 function runWithTimestampedInputs(chart, frameMs) {
     const obstacles = chart.events.filter((e) => e.type === 'obstacle');
     const spawner = createSpawner({
-        events: chart.events, speedPxS: chart.world.speedPxS,
+        events: chart.events, speed: speedProfileOf(chart),
         layer: { addChild() {}, removeChild() {} },
         createObstacle: () => ({ activate() {}, deactivate() {}, placeAt() {}, animate() {} }),
     });
@@ -258,7 +259,14 @@ function runWithTimestampedInputs(chart, frameMs) {
             const def = OBSTACLE_KIND[e.kind];
             if (isDuckKind(def)) {
                 inputs.push('duckStart', e.t);
-                inputs.push('duckEnd', e.t + actionLeadS(def) + (def.w / 2 + 60) / chart.world.speedPxS);
+                const release = e.t + actionLeadS(def) + (def.w / 2 + 60) / speedProfileOf(chart).speedAt(e.t + actionLeadS(def));
+                // Como una persona (y como el simulador del charter): si el
+                // siguiente también se pasa agachado y llega antes de soltar, se
+                // mantiene ↓ en vez de soltar entre los dos (Ola 5: el charter
+                // pone voladores seguidos a menos de un salto).
+                const following = obstacles[next];
+                const holdsOn = following !== undefined && isDuckKind(OBSTACLE_KIND[following.kind]) && following.t < release;
+                if (!holdsOn) inputs.push('duckEnd', release);
             } else {
                 inputs.push('jump', e.t);
             }

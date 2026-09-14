@@ -218,6 +218,111 @@ test('el chart_hash de un nivel cambia con su chart (la caché del cliente no si
     assertSame(hash('sha256', Level::findChart($level->id)['json']), $after);
 });
 
+// --------------------------- Dificultad elegida (Ola 5) ---------------------------
+
+/** Nivel propio ya publicado y analizado, con techo de dificultad conocido. */
+function publishedLevelWithCeiling(\App\Models\User $author, string $seed, int $ceiling): Level
+{
+    $level = privateLevelWithChart($author, $seed);
+    \App\Core\Database::getInstance()->exec(
+        "UPDATE levels SET file_path = 'levels/{$level->id}.mp3', is_public = TRUE, difficulty_ceiling = {$ceiling} WHERE id = {$level->id}",
+    );
+    return Level::findById($level->id);
+}
+
+function changeDifficulty(Level $level, mixed $value): \App\Core\Response
+{
+    return (new LevelApiController())->changeDifficulty(Request::make('POST', '/', ['difficulty' => $value]), ['id' => (string) $level->id]);
+}
+
+test('dificultad: el autor la cambia y se encola un re-chart que sí sustituye el chart público', function (): void {
+    withAnalyzer(true, function (): void {
+        $author = makeUser();
+        $level = publishedLevelWithCeiling($author, 'dificultad', 4);
+        AuthContext::set($author);
+
+        $res = changeDifficulty($level, 2);
+        assertSame(202, $res->status());
+        $data = decode($res);
+        assertSame('queued', $data['analysis']['status']);
+        assertSame('rechart', $data['analysis']['purpose']);
+        assertSame(['requested' => 2, 'options' => [1, 2, 3, 4], 'locked' => false], $data['level']['difficulty_choice']);
+        assertSame(2, Level::findById($level->id)->difficultyRequested);
+
+        // Con el re-chart todavía en cola, otro cambio reutiliza ese trabajo.
+        $again = changeDifficulty($level, 'auto');
+        assertSame(202, $again->status());
+        assertSame(null, Level::findById($level->id)->difficultyRequested, 'auto se guarda como NULL');
+        $active = \App\Core\Database::getInstance()->query("SELECT COUNT(*) FROM analysis_jobs WHERE level_id = {$level->id} AND status IN ('queued', 'running')")->fetchColumn();
+        assertSame(1, (int) $active, 'nunca dos trabajos activos por nivel');
+    });
+});
+
+test('dificultad: no se puede pedir más de lo que la canción admite ni valores inventados', function (): void {
+    withAnalyzer(true, function (): void {
+        $author = makeUser();
+        $level = publishedLevelWithCeiling($author, 'techo', 2);
+        AuthContext::set($author);
+        foreach ([3, 5, 0, 6, 'extremo', null, 2.5] as $bad) {
+            assertThrows(ValidationException::class, fn () => changeDifficulty($level, $bad), function ($e) use ($bad): void {
+                assertTrue(isset($e->fields['difficulty']), 'valor ' . json_encode($bad) . ': error en difficulty');
+            });
+        }
+        assertSame(null, Level::findById($level->id)->difficultyRequested, 'nada se guarda si se rechaza');
+        assertSame(202, changeDifficulty($level, 1)->status());
+    });
+});
+
+test('dificultad: bloqueada en cuanto otro jugador tiene marca; el autor sí puede tener la suya', function (): void {
+    withAnalyzer(true, function (): void {
+        $author = makeUser('autor');
+        $level = publishedLevelWithCeiling($author, 'bloqueo', 5);
+        \App\Models\Progress::upsert($author->id, $level->id, 50, 1000);
+        AuthContext::set($author);
+        assertSame(false, LevelPresenter::one(Level::findById($level->id), $author)['difficulty_choice']['locked'], 'la marca del autor no bloquea');
+        assertSame(202, changeDifficulty($level, 4)->status());
+
+        $player = makeUser('jugador');
+        \App\Models\Progress::upsert($player->id, $level->id, 80, 2000);
+        AuthContext::set($author);
+        $res = changeDifficulty($level, 1);
+        assertSame(409, $res->status());
+        assertSame('difficulty_locked', decode($res)['error']);
+        assertSame(4, Level::findById($level->id)->difficultyRequested, 'se conserva la anterior');
+        assertSame(true, LevelPresenter::one(Level::findById($level->id), $author)['difficulty_choice']['locked']);
+    });
+});
+
+test('dificultad: solo el autor; sin audio en el servidor se guarda para cuando se publique', function (): void {
+    withAnalyzer(true, function (): void {
+        $author = makeUser('autor');
+        $level = privateLevelWithChart($author, 'solo-local');
+
+        AuthContext::set(makeUser('ajeno'));
+        assertSame(404, changeDifficulty($level, 3)->status());
+        assertSame(null, LevelPresenter::one(Level::findById($level->id), makeUser('otro'))['difficulty_choice'], 'la elección no se enseña a otros');
+
+        AuthContext::set($author);
+        $res = changeDifficulty($level, 3);
+        assertSame(200, $res->status());
+        assertSame(null, decode($res)['analysis']);
+        assertSame(3, Level::findById($level->id)->difficultyRequested);
+        assertSame(null, AnalysisJob::latestForLevel($level->id), 'sin audio no hay nada que re-chartear todavía');
+    });
+});
+
+test('dificultad: sin analizador no se puede re-chartear un nivel publicado', function (): void {
+    withAnalyzer(false, function (): void {
+        $author = makeUser();
+        $level = publishedLevelWithCeiling($author, 'sin-analizador-dif', 5);
+        AuthContext::set($author);
+        $res = changeDifficulty($level, 5);
+        assertSame(409, $res->status());
+        assertSame('analyzer_disabled', decode($res)['error']);
+        assertSame(null, Level::findById($level->id)->difficultyRequested, 'la transacción no deja nada a medias');
+    });
+});
+
 // --------------------------- Análisis de formato 2 ---------------------------
 
 test('ChartValidator acepta un análisis de formato 2 y conserva sus hechos ricos', function (): void {

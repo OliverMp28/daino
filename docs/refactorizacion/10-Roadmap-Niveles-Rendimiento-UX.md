@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2 y 3 ✅ completas (Sep 2026). Olas 4-7 pendientes.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026). Olas 6 y 7 pendientes.
 
 ---
 
@@ -516,7 +516,7 @@ Tests: **77 JS** (`bun run test`) y **18 PHP** (`docker compose exec -T php comp
 
 - **Guardar niveles locales exige sesión con Vout**, que en desarrollo está apagado: el camino `POST /api/levels` está probado en PHP en proceso, no de extremo a extremo con un JWT real.
 - Niveles publicados antes de la Ola 3 (sin chart) se juegan generando el chart en el cliente con su `generator_seed`, así que el primer jugador de cada uno sí analiza. Se regenerarán en servidor con la Ola 4.
-- `difficulty` sigue fija en 3 (D6, Ola 5). Las filas duplicadas que D1 creó antes de esta ola siguen en la BD; no se han borrado datos.
+- `difficulty` sigue fija en 3 (D6, resuelto en la Ola 5). Las filas duplicadas que D1 creó antes de esta ola siguen en la BD; no se han borrado datos.
 - Un tirón de frames muy largo con una tecla pulsada durante él se aplica bien gracias al sellado temporal, pero el jugador no ha podido VER nada en ese intervalo: a partir de cierto nivel de carga el juego no es jugable para una persona, aunque el motor siga en sincronía.
 
 ---
@@ -607,11 +607,11 @@ Tests: **136 JS** (+28), **53 PHP** (+17) y **70 Python** (50 de análisis contr
 
 #### Limitaciones que quedan
 
-- **El charter todavía no usa secciones, downbeats ni el techo.** Todos los oficiales salen a 3-4★ con 50-64 acciones/min, incluidas canciones suaves de techo 2. Es el trabajo de la Ola 5, que ahora sí tiene los hechos musicales que necesita.
-- **Quien sube no elige dificultad todavía** (ver arriba, Ola 5).
+- **El charter todavía no usa secciones, downbeats ni el techo.** Todos los oficiales salen a 3-4★ con 50-64 acciones/min, incluidas canciones suaves de techo 2. Es el trabajo de la Ola 5, que ahora sí tiene los hechos musicales que necesita. *(Resuelto en la Ola 5.)*
+- **Quien sube no elige dificultad todavía** (ver arriba, Ola 5). *(Resuelto en la Ola 5.)*
 - La etapa del pulso (la más larga, ~60 % del tiempo) no informa de progreso intermedio: la barra se queda en ~11 % con un brillo que indica que sigue vivo.
 - Los roles de sección son heurísticos: comprobados con verdad conocida en sintético y plausibles en los 10 temas reales, sin anotación humana de esos temas.
-- El charter importa `pixi.js` en Node (vía `physics.js → Dino.js`): el contenedor necesita `node_modules` y cada chart paga ese arranque. Candidato a separar en la Ola 5.
+- ~~El charter importa `pixi.js` en Node (vía `physics.js → Dino.js`): el contenedor necesita `node_modules` y cada chart paga ese arranque.~~ **Era falso** (corregido en la Ola 5): `physics.js` solo importa `config.js`, y recorridos los imports de `chart-from-analysis.mjs` y `bake-official.mjs` ningún módulo del charting toca un paquete npm. El contenedor deja de montar `node_modules`.
 - El primer trabajo tras arrancar el servicio carga el modelo (~10 s más).
 - Seguimiento por sondeo adaptativo, no por eventos del servidor: suficiente a esta escala.
 - Los niveles privados guardados con el análisis JS no se reanalizan hasta que se publican.
@@ -619,7 +619,7 @@ Tests: **136 JS** (+28), **53 PHP** (+17) y **70 Python** (50 de análisis contr
 
 ---
 
-### Ola 5 — Motor de niveles III: charter musical
+### Ola 5 — Motor de niveles III: charter musical ✅
 
 **Objetivo.** Que los niveles dejen de sentirse simplones. Todo lo de esta ola es **lógica pura sobre `analysis.json`, sin DSP** — por eso se puede iterar rápido y testear sin audio.
 
@@ -633,6 +633,107 @@ Tests: **136 JS** (+28), **53 PHP** (+17) y **70 Python** (50 de análisis contr
 - **Dificultad como parámetro de primera clase** (**D6**): cambia patrones, densidad y vocabulario, no solo el espaciado. Cualquier dificultad generable desde el mismo análisis.
 
 **Verificación.** Smoke de determinismo (misma entrada + misma seed ⇒ mismo `chart.json` byte a byte). Validador automático que garantice **0 patrones imposibles** sobre las 8 canciones oficiales en todas sus dificultades. Playtest manual — este es el criterio que manda.
+
+> **Lo que pidió el propietario al arrancarla.** Tras la Ola 4 el juego "ya va acorde a la música, pero no tanto": falta la conexión. En el Daino viejo las canciones largas aceleraban con el tiempo y eso construía emoción hacia el final. Lo que se pide **no** es "más velocidad cada N segundos", sino que conforme avanza la canción pase algo que haga sentir un **final inminente**, y que cada nivel siga a su canción "como un nivel de Geometry Dash".
+
+#### Qué se construyó (y en qué se desvió del plan, con motivo)
+
+**Primero se midió el charter v2.** En los 8 oficiales, la densidad era **plana** a lo largo de la canción (Time: 61, 56, 59 y 63 acciones/min en calma, groove, empuje y clímax; en What's Up Danger el clímax era *menos* denso que la intro), hasta un **34 % de los obstáculos caía fuera de la rejilla** de beats y contratiempos, la velocidad era la misma de principio a fin y ningún momento estaba preparado. Cada obstáculo caía sobre un golpe, pero el nivel no tenía la forma de la canción.
+
+**Cinco piezas en vez de un generador.** `charter.js` v3 orquesta; cada decisión vive en un módulo puro, testeado por separado:
+
+| Módulo | Decide |
+|---|---|
+| `levels/musicModel.js` | La canción en términos de diseño: compases y, en cada beat, dos huecos (**en el pulso** y **a contratiempo**, donde caiga el swing) con la fuerza, el color (graves/medios/agudos) y el peso métrico del golpe que suena. Es la única pieza que conoce los formatos de análisis. |
+| `levels/songArc.js` | La **forma** del nivel, sin colocar nada: intensidad por compás, tramos, nivel de cada tramo (0 reposo · 1 calma · 2 groove · 3 empuje · 4 clímax) **relativo a la propia canción**, escalada del material que vuelve, un único clímax, subidas, drops y lifts. No depende de la dificultad. |
+| `levels/difficulty.js` | Qué es cada dificultad: acciones/min por nivel del arco, error humano con el que debe superarse (±80 ms en Relajado … ±40 ms en Extremo), silencio máximo, en qué momento del arco se estrena cada mecánica, cuánto acelera el mundo y cuota de agachados. |
+| `levels/patterns.js` | Compás a compás, qué huecos llevan acción y cuál, con memoria de frases y huecos mínimos medidos con la física. |
+| `levels/charter.js` | Velocidad por tramos, silencios demasiado largos, tipo de obstáculo, validación jugando y eventos de estructura para el runtime. |
+
+**La sensación de final sale de la canción, no de un temporizador.** Cinco cosas se suman conforme la canción avanza, todas ancladas a su estructura:
+
+1. **La densidad sigue al arco, y lo que vuelve, vuelve más fuerte.** Cada repetición del mismo material suma intensidad (+0.05), así que el tercer estribillo se juega más lleno que el primero y el clímax es el tramo más denso.
+2. **El mundo acelera donde la música empuja y al máximo en el clímax**: +8 % en los tramos de empuje y +16 % en el clímax (× la amplitud de la dificultad: de +8 % en Relajado a +21 % en Extremo). Sube **de golpe en el primer tiempo del drop** y baja en dos beats al soltar; nunca por debajo de la base, porque a menos velocidad hay *menos* margen (hallazgo de la Ola 2). Un tramo de menos de 8 s no cambia la velocidad, salvo el clímax.
+3. **Las mecánicas se estrenan en momentos del arco.** En Normal: agacharse en el primer groove, cactus anchos y contratiempos al empezar a empujar, combinaciones rápidas salto↔agachado en el clímax. Más difícil = antes; más fácil = más tarde o nunca.
+4. **La subida al drop se nota**: los dos compases previos se acercan a la densidad que viene (al 35 % y al 60 % del camino) y dejan el último beat en silencio, la respiración antes del golpe.
+5. **El runtime lo hace visible** (`systems/songDirector.js` sigue los eventos `section` y `fx` con el reloj de la canción): **el sol se pone con el progreso de la canción** y el cielo se oscurece hacia el final; la intensidad del tramo (sube rápido, baja despacio) alimenta horizonte, espectro, partículas y un brillo del suelo que late con el beat, con acento en el primer tiempo; los obstáculos rebotan al pulso; el **drop** es destello + sacudida de cámara + oleada de partículas y el **lift** un destello suave; pulsar **sobre el golpe** (±60 ms) suelta chispas; el HUD entra en fase de clímax; y cuando no queda nada por cruzar aparece **"¡Superado!"** y la outro suena como vuelta de honor (salir desde la pausa en ese momento cuenta como victoria).
+
+**Rejilla y puntuación, no un catálogo de figuras.** El plan hablaba de un vocabulario de figuras (síncopa, tresillo, ráfaga, respiración, llamada-respuesta). Un catálogo fijo pelea con la música: pone una síncopa donde no suena ninguna. Se hizo al revés y **las figuras salen de los golpes reales**: cada hueco puntúa por la fuerza del golpe y su peso métrico, con el siguiente primer tiempo reservado; una síncopa es un golpe fuerte a contratiempo que lo merece (solo si la dificultad la desbloquea), la respiración es la subida al drop, la ráfaga son las combinaciones del clímax y la llamada-respuesta es la **memoria de frases**: un compás que suena como uno anterior del mismo nivel repite su patrón, así que el jugador reconoce el riff y lo toca "de oído". Los decimales de densidad se reparten de forma periódica por posición en el tramo (2.5 acciones por compás = 2-3-2-3), para que la acción extra caiga siempre en el mismo compás de la frase. Qué acción: en el primer tiempo, salto; en los golpes brillantes (caja, palmas, charles), agacharse; en los graves, saltar (sin color de golpe, por backbeat: salto en 1 y 3, agachado en 2 y 4). El cactus ancho es un acento: primer tiempo fuerte y grave, con margen de sobra.
+
+**Sin tresillos ni semicorcheas.** El salto completo dura 0.72 s y dos saltos seguidos necesitan ≥ 0.67 s (medido): una subdivisión más fina solo serviría para agacharse, y eso ya lo cubre el contratiempo, que además se coloca donde caen los golpes si la canción tiene swing (2/3 del beat en un shuffle).
+
+**D14: huecos medidos con la física, por par de acciones y a la velocidad de ese instante.** Barriendo huecos de 0.10 a 2.0 s a 300-720 px/s con ±35-90 ms de error: salto→salto necesita 0.67-0.78 s sin depender de la velocidad; salto→agachado, de 0.49 s a 300 px/s a 0.24 s a 720 px/s; agachado→salto, de ~0.62 s a ~0.50 s; agachado→agachado, 0.10-0.18 s. `PAIR_GAP` (patterns.js) queda por encima de lo medido en todo el rango y con la tolerancia de la dificultad. `SPAWN_WINDOW_S`, en segundos, desaparece.
+
+**D15: cada chart se juega antes de emitirse**, con la física real, su velocidad variable y **la tolerancia de su dificultad**. Si algo no se supera, un acento pasa a salto normal y, si no basta, se quita el menos importante del par (un relleno nunca se lleva un drop). El plan decía "rechazar y re-generar"; reparar localmente da lo mismo sin reintentos, y con los huecos medidos el reparador **no actúa en ninguna** de las 40 combinaciones oficiales.
+
+**Velocidad variable: chart formato 2.** `world.speedChanges` (`{ t, speedPxS, rampS }`), `music.beats` y `downbeats` (el pulso visual se ancla a los beats reales) y `difficulty { level, requested, ceiling }`. `systems/speedProfile.js` integra la distancia recorrida **de forma exacta** por tramos, y la posición de cada obstáculo es la distancia entre dos instantes de canción: la sincronía de la Ola 3 se conserva con cualquier perfil (con velocidad constante, la fórmula es literalmente la de la Ola 3). Spawner, física y simulador aceptan número o perfil. `normalizeChart` y `ChartValidator.php` aceptan formatos 1 y 2 y descartan con aviso lo mal formado; un cliente viejo ignora lo que no conoce.
+
+**Dificultad de primera clase (D6) y selector para quien sube.** Migración `010`: `levels.difficulty_requested` (`NULL` = Automática) y propósito `rechart` en la cola. `POST /api/levels/{id}/difficulty` (solo el autor; `auto` o de 1 al techo, y por encima 422 "Esta canción admite hasta N de 5"): con el análisis en caché, re-chart en menos de un segundo con prioridad interactiva. **Se bloquea (409) en cuanto otra persona tiene progreso en el nivel**, porque el ranking es por nivel y compararía partidas de niveles distintos. El worker lee la dificultad pedida **al chartear**, no al encolar, y si cambió entretanto encola otro re-chart. En la ficha del catálogo el autor ve el selector: "Automática (Normal)" y solo las dificultades que la canción admite, bloqueado con explicación, con aviso al aplicarse. Automática = Normal, o el techo si la canción no llega. Los 8 oficiales tienen su dificultad en el manifiesto, de Relajado a Extremo, en vez de salir todos a 3-4★.
+
+Desviación: el plan ponía la elección "al subir". El techo solo se conoce **después** del análisis del servidor, así que la elección vive en la ficha del nivel publicado y cambiarla es un re-chart desde el análisis guardado.
+
+**Las estrellas son la dificultad del nivel, no la medida.** `chartStats.js` sigue midiendo (densidad, pico en 20 s, margen simulado, cuota aérea; umbrales recalibrados) para las canciones locales sin servidor y como comprobación del horneado.
+
+**Analizador local (formato 1).** Sin servidor no hay beats: el pulso se reconstruye por **programación dinámica** sobre los onsets (Ellis 2007, el método de `librosa.beat.beat_track`). Un bucle de fase probado antes perdía el pulso en las canciones suaves (Dawn of Faith: 34 % de beats sobre los del servidor). El compás se deduce de dónde caen los acentos y la energía, de la densidad de golpes. Charter y runtime funcionan igual con los dos formatos.
+
+**`composer analysis:enqueue -- --charter-below=N`** re-chartea con su análisis guardado los niveles de la comunidad hechos con un charter anterior, con la dificultad que su autor tuviera pedida. Aplicado a los 2 niveles de la comunidad de la BD de desarrollo; los oficiales se re-hornearon.
+
+**Defectos encontrados en la verificación de esta ola, corregidos antes de cerrarla:**
+- beat_this da a veces compases irregulares ("2 2 2" o "3 1" beats en Dawn of Faith y Running With the Wolves): los de 1-2 beats se funden con su vecino.
+- Los niveles del arco por **rango** inflaban las canciones planas (el último estribillo de Last Christmas salía en calma): ahora por desviación respecto a la mediana de la canción.
+- Un clímax de 16 compases duraba 61 s a 63 BPM (Time): tope también en segundos.
+- Una acción al final de un compás robaba el primer tiempo del siguiente (Mi Fiesta se jugaba "1, 4 | 2, 4"): el siguiente primer tiempo queda reservado.
+- La subida al drop apenas se notaba: ahora se acerca a la densidad del nivel que viene.
+- Canciones rápidas sin un solo agachado: la cuota aérea se calculaba de forma que el primero nunca cabía, y la memoria de frases propagaba el hueco.
+- Un riff repetido se jugaba con patrones distintos: los decimales de densidad no tenían periodo (con arrastre, ninguno; con la fracción exacta, 5 compases).
+- El puente de Running With the Wolves (5 compases, 14.6 s) se jugaba a la velocidad del estribillo: la duración mínima para cambiar de velocidad pasó de compases a segundos.
+- Recortar un clímax largo podía dejar delante un tramo de 1-3 compases con **dos drops seguidos** (visto al re-chartear "Instrumental", de la comunidad): el clímax absorbe esa cabeza.
+- Una canción que arranca empujando tenía un "cambio" de velocidad en el segundo 0: la velocidad base es la de ese tramo.
+- `changeDifficulty` guardaba la dificultad antes de comprobar el bloqueo y dependía de deshacer la transacción al lanzar: ahora comprueba todo antes de escribir.
+- El arnés de 1 FPS de los tests jugaba con velocidad constante y soltaba el agachado entre dos pteros seguidos.
+- La limitación de la Ola 4 "el charter importa `pixi.js` en Node" era falsa (ver arriba): el contenedor del analizador deja de montar `node_modules`, verificado con la suite de Python y un re-chart real.
+
+#### Verificación — hecha, con medidas reales
+
+Tests: **166 JS** (+30), **60 PHP** (+7) y **72 Python** (+2). Nuevos `music-model`, `song-arc`, `speed-profile` y `song-director`, y `charter` reescrito: determinismo byte a byte, rejilla a cualquier tempo, densidad que sigue al arco, un único clímax en la segunda mitad que es el tramo más denso y el más rápido, estreno de mecánicas, memoria de frases, silencios, techo, regresiones de los defectos de arriba y los 8 oficiales × 5 dificultades. En PHP, el formato 2 y el cambio de dificultad (techo, bloqueo, re-chart, sin analizador); en Python, que un re-chart aplica la dificultad pedida aunque el nivel sea público y que un cambio a mitad encola otro.
+
+Los 8 oficiales, charter v2 → v3, con la dificultad del manifiesto. La densidad del v2 se mide sobre los mismos tramos del arco:
+
+| Oficial (dificultad) | Acciones/min por nivel del arco | En rejilla | Velocidad (px/s) | Medida |
+|---|---|---|---|---|
+| Time (Fácil, techo 2) | calma 61 · groove 56 · empuje 59 · clímax 63 → **17 · 30 · 37 · 51** | 76 % → **100 %** | 432 fija → 432-484 | 4★ → 2★ |
+| HOPE (Fácil, techo 2) | reposo 42 · groove 61 · clímax 62 → **14 · 28 · 37** | 78 % → **100 %** | 500 → 500-560 | 4★ → 2★ |
+| Running With the Wolves (Normal) | calma 49 · 63 · 55 · clímax 60 → **29 · 39 · 51 · 72** | 66 % → **100 %** | 508 → 508-589 | 4★ → 4★ |
+| Dawn of Faith (Difícil) | calma 61 · 65 · 63 · clímax 65 → **28 · 51 · 63 · 65** | 89 % → **100 %** | 440 → 440-521 | 4★ → 3★ |
+| Mi Fiesta (Difícil) | calma 50 · 56 · 51 · clímax 52 → **29 · 52 · 67 · 84** | 93 % → **100 %** | 389 → 389-460 | 3★ → 4★ |
+| What's Up Danger (Extremo) | reposo 45 · 43 · 54 · 55 · clímax 47 → **18 · 33 · 58 · 61 · 81** | 78 % → **100 %** | 370 → 370-447 | 4★ → 5★ |
+| Last Christmas (Relajado) | groove 45 · clímax 39 → **17 · 23** | 100 % → 100 % | 394 → 394-426 | 3★ → 1★ |
+| Sugar Red (Normal) | groove 43 · clímax 46 → **37 · 51** | 100 % → 100 % | 472 → 472-547 | 3★ → 3★ |
+
+| Qué | Resultado |
+|---|---|
+| 8 oficiales × 5 dificultades (40 charts) | jugables con la tolerancia de su dificultad, **0 reparaciones**, 100 % en rejilla, 1-48 ms por chart; acciones y velocidad crecen con la dificultad (What's Up Danger: 22 → 32 → 42 → 51 → 58 acciones/min y 400 → 447 px/s de máxima) |
+| Determinismo | mismo análisis + seed + dificultad ⇒ mismo chart byte a byte |
+| Analizador local: beats frente a los del servidor (±60 ms, contando la mitad) | Last Christmas y Mi Fiesta 100 %, Sugar Red 97 %, What's Up Danger 94 %, Dawn of Faith 89 % (34 % con el bucle de fase), Running With the Wolves 88 %, HOPE 86 %, Time 80 %; los 8 charts locales, jugables |
+| E2E Sugar Red (oficial) | victoria, 27/27 a 60 FPS |
+| E2E Running With the Wolves (2:44) | victoria, 120/120 pulsaciones "sobre el golpe"; 9 826 frames, mediana 16.7 ms, p95 18, p99 20.9 |
+| E2E "Instrumental" (comunidad, 2:55, charter final: arranca empujando, 5 cambios de velocidad) | victoria al 100 %, 111/111 entradas; 10 530 frames, mediana 16.7 ms, p99 17.2; clímax a 539 px/s desde 1:47; "¡Superado!" en 2:48; 0 errores de consola |
+| Momentos | drop, clímax y "¡Superado!" comprobados en capturas (destello, oleada, fase de clímax del HUD, sol poniéndose) |
+| Publicar una canción ya analizada / cambiarle la dificultad desde la ficha | 632 ms / re-chart en **598 ms**, ficha y tarjeta al día en 4.9 s (ritmo del sondeo) con aviso |
+| Ventana tapada (rAF a ~1 FPS) | HOPE superado con pulsaciones fechadas; salir desde la pausa tras "¡Superado!" cuenta como victoria (100 %) |
+
+**PHPStan nivel 6:** 13 errores, todos anteriores. **Bundle: 165.89 KB gzip** (+12.31 KB), CSS 9.18 KB, Worker 5.13 KB.
+
+#### Limitaciones que quedan
+
+- **El playtest humano manda y está pendiente.** Todo lo anterior son medidas y bots. Lo que se ajusta tras jugarlo está en tablas: `difficulty.js` (acciones/min por nivel, tolerancias, estrenos, amplitud de velocidad), `CHARTER_RULES` en `charter.js` (aceleraciones, tope de velocidad) y `DROP_FX`/`ON_BEAT` en `config.js`. Cualquier cambio del charter exige subir `CHARTER_VERSION`, re-hornear y `--charter-below`.
+- El vocabulario sigue siendo saltar, agacharse y el cactus ancho: los momentos nuevos (modos, portales) son la Ola 6.
+- Tramos, niveles y roles del arco son heurísticos: comprobados con canciones sintéticas de estructura conocida e inspeccionados en los 8 oficiales y 2 de la comunidad, sin anotación humana.
+- Con el análisis local (sin servidor) no hay secciones ni color de golpe: el arco sale de la densidad de golpes y la dinámica es más plana.
+- Cambiar la dificultad queda bloqueado en cuanto otra persona juega el nivel; desbloquearlo exigiría rankings por dificultad.
+- La dificultad medida se desvía una estrella de la elegida en 2 oficiales (Running With the Wolves y Dawn of Faith). Los umbrales de la medida están calibrados con estas 8 canciones.
+- Más dificultad da más acciones en el conjunto de la canción, pero no siempre en cada tramo: a partir de ~85-90 BPM dos saltos no caben en beats consecutivos, las acciones seguidas alternan con agachados y la cuota aérea las limita. En What's Up Danger el clímax sale a 87 acciones/min en Difícil y a 81 en Extremo (que en conjunto es más denso, 58 frente a 51, y mide 5★).
+- Aceleración conservadora a propósito hasta el playtest: como mucho +21 % y nunca por encima de 690 px/s.
 
 ---
 
@@ -695,8 +796,8 @@ Si hay que elegir una sola cosa: **Ola 3**. Es la que cambia cómo se siente el 
 | D3 validación 200 vs col 120 | 0 ✅ | D11 nivel privado no jugable | 2 ✅ |
 | D4 botón "Jugar" bloqueado | 0 ✅ | D12 identidad en iframe | 2 ✅ |
 | D5 `file_path` expuesto | 0 ✅ | D13 orden `filterSpacing` | 3 ✅ |
-| D6 `difficulty` hardcodeada | 5 (medida en 2) | D14 espaciado en s, no en px | 5 |
-| D7 `?public=1` muerto | 0 ✅ | D15 sin validación de jugabilidad | 5 |
+| D6 `difficulty` hardcodeada | 5 ✅ (medida en 2) | D14 espaciado en s, no en px | 5 ✅ |
+| D7 `?public=1` muerto | 0 ✅ | D15 sin validación de jugabilidad | 5 ✅ (básica desde 3) |
 | D8 sin índice `is_public` | 0 ✅ | D16 sin suelo de energía en `pickPeaks` | 4 ✅ en el servidor (JS local: mitigado en 3) |
 | D17 relleno a 0.15 s del siguiente | 3 ✅ | D18 onsets 23 ms adelantados | 3 ✅ |
 | D19 física detrás del reloj de audio | 3 ✅ | D20 salto de `outputLatency` | 3 ✅ |

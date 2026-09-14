@@ -16,7 +16,9 @@ let scoreEl = null;
 let timerEl = null;
 let progressFgEl = null;
 let messageEl = null;
+let bannerEl = null;
 let songEl = null;
+let lastPhase = '';
 let lastScore = -1;
 let lastTimeKey = '';
 let lastRatio = -1;
@@ -90,7 +92,14 @@ export function createHud(_unused) {
     messageEl.className = 'daino-hud__message';
     messageEl.setAttribute('role', 'alert');
 
+    // Rótulo secundario (Ola 5): "¡Superado!" cuando ya no quedan obstáculos
+    // y la canción termina sonando. No tapa el centro de la escena.
+    bannerEl = document.createElement('div');
+    bannerEl.className = 'daino-hud__banner';
+    bannerEl.setAttribute('role', 'status');
+
     rootEl.appendChild(topBar);
+    rootEl.appendChild(bannerEl);
     rootEl.appendChild(messageEl);
     host.appendChild(rootEl);
 
@@ -101,10 +110,16 @@ function resetState() {
     lastScore = -1;
     lastTimeKey = '';
     lastRatio = -1;
+    lastPhase = '';
     if (messageEl) {
         messageEl.textContent = '';
         messageEl.dataset.shown = 'false';
     }
+    if (bannerEl) {
+        bannerEl.textContent = '';
+        bannerEl.dataset.shown = 'false';
+    }
+    if (rootEl) delete rootEl.dataset.phase;
 }
 
 const api = {
@@ -142,6 +157,23 @@ const api = {
         messageEl.textContent = text;
         messageEl.dataset.shown = (text && text !== '') ? 'true' : 'false';
     },
+    /** Rótulo secundario (p. ej. "¡Superado!"). Pasar '' para ocultar. */
+    setBanner(text) {
+        if (!bannerEl) return;
+        bannerEl.textContent = text;
+        bannerEl.dataset.shown = (text && text !== '') ? 'true' : 'false';
+    },
+    /**
+     * Fase de la canción para el CSS (Ola 5): 'climax' enciende la barra de
+     * progreso; '' la deja normal. Solo toca el DOM si cambia.
+     * @param {'' | 'climax' | 'cleared'} phase
+     */
+    setPhase(phase) {
+        if (!rootEl || phase === lastPhase) return;
+        lastPhase = phase;
+        if (phase === '') delete rootEl.dataset.phase;
+        else rootEl.dataset.phase = phase;
+    },
     dispose() {
         if (rootEl !== null) {
             rootEl.remove();
@@ -150,6 +182,7 @@ const api = {
             timerEl = null;
             progressFgEl = null;
             messageEl = null;
+            bannerEl = null;
             songEl = null;
         }
         resetState();

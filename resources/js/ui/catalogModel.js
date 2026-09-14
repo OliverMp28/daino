@@ -6,15 +6,12 @@
 // acumula condiciones sueltas.
 
 import { mergeBest } from '../storage/localBests.js';
+import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { publishView } from './publishModel.js';
 
-export const DIFFICULTY_NAMES = Object.freeze({
-    1: 'Relajado',
-    2: 'Fácil',
-    3: 'Normal',
-    4: 'Difícil',
-    5: 'Extremo',
-});
+// Los nombres viven con los perfiles del charter (Ola 5); se reexportan para
+// quien ya los importaba desde aquí.
+export { DIFFICULTY_NAMES };
 
 /** Qué puede hacer el jugador con un nivel desde el catálogo. */
 export const PLAY_MODE = Object.freeze({

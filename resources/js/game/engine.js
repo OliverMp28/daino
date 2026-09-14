@@ -49,6 +49,7 @@ let scenery = null;        // resultado de createScenery()
 let isPaused = false;
 let timeAccum = 0;         // segundos desde init — siempre avanza salvo pausa
 let worldSpeed = SCENERY.menuSpeed;  // px/s del scroll del scenery
+let musicIntensity = 0;    // intensidad del tramo de la canción (Ola 5), 0 en el menú
 
 // --- Perfiles de render (Ola 1) ---
 let profileName = 'MENU';        // estado actual de la app
@@ -343,7 +344,9 @@ function tick(ticker) {
         }
     }
 
-    if (particleLayer.tick) particleLayer.tick(dt, rms);
+    // Las motas suben con la energía de lo que suena y más en los tramos que
+    // empujan: en una estrofa flotan, en el clímax vuelan.
+    if (particleLayer.tick) particleLayer.tick(dt, rms * (0.6 + 0.9 * musicIntensity));
 }
 
 /**
@@ -362,7 +365,9 @@ export function attachAudio(audioEngine) {
  */
 export function detachAudio() {
     audio = null;
+    musicIntensity = 0;
     if (audioFilter) audioFilter.setMode('idle');
+    if (scenery) scenery.setPulse(0, 0);
 }
 
 /**
@@ -402,6 +407,19 @@ export function setAmbientDinoSkin(skinId) {
  */
 export function setBeatPulse(v) {
     if (audioFilter) audioFilter.setUniforms({ bpmPulse: v });
+    if (scenery) scenery.setPulse(v, musicIntensity);
+}
+
+/**
+ * Estado de la estructura de la canción (Ola 5). GameSession lo empuja cada
+ * frame desde su director: intensidad del tramo, progreso (el sol se pone con
+ * él), si es el clímax y el destello de un drop.
+ *
+ * @param {{ intensity?: number, progress?: number, climax?: number, flash?: number }} s
+ */
+export function setMusicState(s) {
+    if (s.intensity !== undefined) musicIntensity = s.intensity;
+    if (audioFilter) audioFilter.setUniforms(s);
 }
 
 function getApi() {
@@ -411,6 +429,7 @@ function getApi() {
         detachAudio,
         setWorldSpeed,
         setBeatPulse,
+        setMusicState,
         setRenderPaused,
         setRenderProfile,
         setQualityTier,

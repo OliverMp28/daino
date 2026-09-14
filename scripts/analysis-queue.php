@@ -8,6 +8,7 @@ declare(strict_types=1);
  *     docker compose exec -T php composer analysis:enqueue -- --missing-charts
  *     docker compose exec -T php composer analysis:enqueue -- --level=12,15
  *     docker compose exec -T php composer analysis:enqueue -- --client-charts
+ *     docker compose exec -T php composer analysis:enqueue -- --charter-below=3
  *
  *   --missing-charts  niveles con audio en el servidor y SIN chart (p. ej. los
  *                     publicados antes de la Ola 3): se analizan y se les pone.
@@ -15,6 +16,10 @@ declare(strict_types=1);
  *   --client-charts   niveles PÚBLICOS de la comunidad cuyo chart lo generó el
  *                     navegador de su autor: se reanalizan en el servidor. Cambia
  *                     su chart, así que las marcas previas dejan de ser comparables.
+ *   --charter-below=N niveles de la comunidad con chart de un charter anterior a
+ *                     la versión N: re-chart con el análisis guardado (Ola 5:
+ *                     `--charter-below=3` los pasa al charter musical). También
+ *                     cambia su chart: mismo aviso que --client-charts.
  *
  * Nunca encola un nivel que ya tenga un trabajo activo.
  */
@@ -51,7 +56,7 @@ if ($command === 'status') {
 }
 
 if ($command !== 'enqueue') {
-    fwrite(STDERR, "Uso: analysis-queue.php status | enqueue --missing-charts | --level=IDS | --client-charts\n");
+    fwrite(STDERR, "Uso: analysis-queue.php status | enqueue --missing-charts | --level=IDS | --client-charts | --charter-below=N\n");
     exit(2);
 }
 
@@ -74,6 +79,23 @@ foreach ($flags as $flag) {
         )->fetchAll();
         foreach ($rows as $r) {
             $targets[(int) $r['id']] = [$r, AnalysisJob::PURPOSE_REANALYZE];
+        }
+    } elseif (str_starts_with($flag, '--charter-below=')) {
+        // Ola 5: niveles de la comunidad con chart de un charter anterior. Se
+        // re-chartean con el análisis guardado (segundos, sin reanalizar) y la
+        // dificultad que su autor tuviera pedida.
+        $version = (int) substr($flag, strlen('--charter-below='));
+        if ($version < 2) {
+            fwrite(STDERR, "--charter-below necesita una versión ≥ 2\n");
+            exit(2);
+        }
+        $stmt = $pdo->prepare(
+            "SELECT id, file_path, audio_sha256 FROM levels
+             WHERE file_path IS NOT NULL AND is_official = FALSE AND chart_status = 'ready' AND chart_version < ?",
+        );
+        $stmt->execute([$version]);
+        foreach ($stmt->fetchAll() as $r) {
+            $targets[(int) $r['id']] = [$r, AnalysisJob::PURPOSE_RECHART];
         }
     } elseif (str_starts_with($flag, '--level=')) {
         $ids = array_filter(array_map('intval', explode(',', substr($flag, 8))));

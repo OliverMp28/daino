@@ -158,6 +158,32 @@ final class Progress
         return ($row === false ? 0 : (int) $row['ahead']) + 1;
     }
 
+    /**
+     * Jugadores con marca en cada nivel sin contar a un usuario (su autor), en
+     * una consulta. Ola 5: la dificultad de un nivel se puede cambiar mientras
+     * nadie más lo haya jugado.
+     *
+     * @param list<int> $levelIds
+     * @return array<int, int>  indexado por level_id (ausente = 0)
+     */
+    public static function otherPlayerCounts(array $levelIds, int $excludeUserId): array
+    {
+        if ($levelIds === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($levelIds), '?'));
+        $stmt = Database::getInstance()->prepare(
+            "SELECT level_id, COUNT(*) AS players FROM progress
+             WHERE level_id IN ({$in}) AND user_id <> ? GROUP BY level_id",
+        );
+        $stmt->execute([...$levelIds, $excludeUserId]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(int) $row['level_id']] = (int) $row['players'];
+        }
+        return $out;
+    }
+
     public static function countForLevel(int $levelId): int
     {
         $stmt = Database::getInstance()->prepare('SELECT COUNT(*) AS c FROM progress WHERE level_id = :level_id');

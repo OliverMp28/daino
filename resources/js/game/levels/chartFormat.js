@@ -26,16 +26,28 @@
 // Tolerancia hacia delante
 // ------------------------
 // Un cliente viejo puede recibir un chart con tipos de evento que no conoce
-// (`section`, `mode`, `fx` en olas futuras). Se CONSERVAN y el runtime ignora
-// lo que no sabe interpretar: así un chart nuevo no rompe un cliente viejo.
-// Lo que sí se descarta son obstáculos de un `kind` desconocido, porque
-// instanciarlos haría que Obstacle leyera medidas de `undefined` a mitad de
-// partida.
+// (`mode` en la Ola 6). Se CONSERVAN y el runtime ignora lo que no sabe
+// interpretar: así un chart nuevo no rompe un cliente viejo. Lo que sí se
+// descarta son obstáculos de un `kind` desconocido, porque instanciarlos haría
+// que Obstacle leyera medidas de `undefined` a mitad de partida.
+//
+// Formato 2 (Ola 5)
+// -----------------
+// Añade lo que el charter musical decide además de los obstáculos:
+//   - `world.speedChanges`  la velocidad cambia con la estructura de la canción.
+//     Es un cambio de SEMÁNTICA (un cliente de formato 1 colocaría los
+//     obstáculos a velocidad constante), por eso sube la versión mayor.
+//   - `music.beats` / `music.downbeats`  el pulso real, para que el mundo
+//     entero lata con la canción y no solo con los obstáculos.
+//   - `difficulty`  la dificultad efectiva, la pedida y el techo de la canción.
+//   - eventos `section` (nivel e intensidad de cada tramo) y `fx` (drops).
+// Un chart de formato 1 se sigue leyendo igual: sin cambios de velocidad ni
+// pulso propio.
 
 import { OBSTACLE_KIND } from '../config.js';
 
-/** Versión mayor del formato que este cliente sabe interpretar. */
-export const CHART_FORMAT_VERSION = 1;
+/** Versión mayor del formato que este cliente sabe interpretar (y la que genera). */
+export const CHART_FORMAT_VERSION = 2;
 
 /**
  * Versión del algoritmo de charting de este cliente. Súbela cuando cambie
@@ -43,14 +55,21 @@ export const CHART_FORMAT_VERSION = 1;
  * así los charts cacheados o persistidos con una versión anterior se detectan
  * como obsoletos en lugar de mezclarse con los nuevos.
  */
-export const CHARTER_VERSION = 2;
+export const CHARTER_VERSION = 3;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */
 export const MAX_EVENTS = 20_000;
 
+/** Techo de beats (~20 min a 250 BPM) y de cambios de velocidad. */
+export const MAX_BEATS = 30_000;
+export const MAX_SPEED_CHANGES = 400;
+
 /** Rango sensato de velocidad de mundo. Fuera de esto no es un chart jugable. */
 const SPEED_RANGE = Object.freeze({ min: 50, max: 2000 });
+
+/** Rampa máxima de un cambio de velocidad. */
+const MAX_RAMP_S = 10;
 
 /** Precisión de serialización del tiempo: 1 ms es inferior a un frame. */
 const TIME_DECIMALS = 3;
@@ -58,7 +77,7 @@ const TIME_DECIMALS = 3;
 /**
  * @typedef {Object} ChartEvent
  * @property {number} t     Segundos de canción en los que el jugador actúa.
- * @property {string} type  'obstacle' hoy; otros tipos reservados a olas futuras.
+ * @property {string} type  'obstacle', 'section', 'fx'; otros se conservan sin interpretar.
  * @property {string} [kind] Clave de OBSTACLE_KIND cuando `type === 'obstacle'`.
  */
 
@@ -68,8 +87,9 @@ const TIME_DECIMALS = 3;
  * @property {{ name: string, version: number }} charter
  * @property {number} seed
  * @property {{ sha256: string|null, durationSec: number, sampleRate: number }} audio
- * @property {{ bpm: number, bpmConfidence: number, beatPeriodS: number }} music
- * @property {{ speedPxS: number }} world
+ * @property {{ bpm: number, bpmConfidence: number, beatPeriodS: number, beats: number[], downbeats: number[] }} music
+ * @property {{ level: number, requested: 'auto'|number, ceiling: number|null } | null} difficulty
+ * @property {{ speedPxS: number, speedChanges: Array<{ t: number, speedPxS: number, rampS: number }> }} world
  * @property {ChartEvent[]} events  Ordenados por `t` ascendente.
  */
 
@@ -161,6 +181,14 @@ export function normalizeChart(raw) {
         ? raw.music.beatPeriodS
         : 60 / bpm;
 
+    // Formato 2. Todo opcional: un chart sin estos campos se juega como uno de
+    // formato 1. Lo mal formado se descarta entero con aviso (un pulso o un
+    // perfil de velocidad a medias es peor que ninguno).
+    const beats = timeList(raw.music?.beats, durationSec, 'music.beats', warnings);
+    const downbeats = timeList(raw.music?.downbeats, durationSec, 'music.downbeats', warnings);
+    const speedChanges = speedChangeList(raw.world?.speedChanges, durationSec, warnings);
+    const difficulty = difficultyInfo(raw.difficulty);
+
     const sha = raw.audio?.sha256;
     const chart = {
         formatVersion,
@@ -178,12 +206,69 @@ export function normalizeChart(raw) {
             bpm,
             bpmConfidence: isFiniteNumber(raw.music?.bpmConfidence) ? raw.music.bpmConfidence : 0,
             beatPeriodS,
+            beats,
+            downbeats,
         },
-        world: { speedPxS },
+        difficulty,
+        world: { speedPxS, speedChanges },
         events,
     };
 
     return { chart, warnings };
+}
+
+/** Lista de instantes estrictamente creciente dentro de la canción, o [] con aviso. */
+function timeList(raw, durationSec, name, warnings) {
+    if (raw === undefined || raw === null) return [];
+    if (!Array.isArray(raw) || raw.length > MAX_BEATS) {
+        warnings.push(`${name} descartado: no es una lista acotada.`);
+        return [];
+    }
+    let prev = -Infinity;
+    for (const t of raw) {
+        if (!isFiniteNumber(t) || t < 0 || t > durationSec + 0.001 || t <= prev) {
+            warnings.push(`${name} descartado: instantes fuera de la canción o desordenados.`);
+            return [];
+        }
+        prev = t;
+    }
+    return raw.slice();
+}
+
+function speedChangeList(raw, durationSec, warnings) {
+    if (raw === undefined || raw === null) return [];
+    if (!Array.isArray(raw) || raw.length > MAX_SPEED_CHANGES) {
+        warnings.push('world.speedChanges descartado: no es una lista acotada.');
+        return [];
+    }
+    const out = [];
+    let prev = -Infinity;
+    for (const c of raw) {
+        const ok = c !== null && typeof c === 'object'
+            && isFiniteNumber(c.t) && c.t >= 0 && c.t <= durationSec && c.t >= prev
+            && isFiniteNumber(c.speedPxS) && c.speedPxS >= SPEED_RANGE.min && c.speedPxS <= SPEED_RANGE.max
+            && (c.rampS === undefined || (isFiniteNumber(c.rampS) && c.rampS >= 0 && c.rampS <= MAX_RAMP_S));
+        if (!ok) {
+            // A velocidad equivocada los obstáculos siguen cruzando en su
+            // instante, pero el nivel validado era otro: mejor ninguno.
+            warnings.push('world.speedChanges descartado: cambio de velocidad inválido.');
+            return [];
+        }
+        out.push({ t: c.t, speedPxS: c.speedPxS, rampS: c.rampS ?? 0 });
+        prev = c.t;
+    }
+    return out;
+}
+
+function difficultyInfo(raw) {
+    if (raw === null || typeof raw !== 'object') return null;
+    const level = Number.isInteger(raw.level) && raw.level >= 1 && raw.level <= 5 ? raw.level : null;
+    if (level === null) return null;
+    const requested = raw.requested === 'auto' || (Number.isInteger(raw.requested) && raw.requested >= 1 && raw.requested <= 5)
+        ? raw.requested
+        : 'auto';
+    const ceiling = Number.isInteger(raw.ceiling) && raw.ceiling >= 1 && raw.ceiling <= 5 ? raw.ceiling : null;
+    return { level, requested, ceiling };
 }
 
 /**
@@ -197,7 +282,7 @@ export function normalizeChart(raw) {
  * @returns {Chart}
  */
 export function compactChart(chart) {
-    return {
+    const out = {
         ...chart,
         audio: { ...chart.audio, durationSec: round(chart.audio.durationSec, TIME_DECIMALS) },
         music: {
@@ -208,6 +293,22 @@ export function compactChart(chart) {
         world: { speedPxS: round(chart.world.speedPxS, 2) },
         events: chart.events.map((e) => ({ ...e, t: round(e.t, TIME_DECIMALS) })),
     };
+    if (chart.music.beats?.length > 0) out.music.beats = chart.music.beats.map((t) => round(t, TIME_DECIMALS));
+    if (chart.music.downbeats?.length > 0) out.music.downbeats = chart.music.downbeats.map((t) => round(t, TIME_DECIMALS));
+    if (chart.world.speedChanges?.length > 0) {
+        out.world.speedChanges = chart.world.speedChanges.map((c) => ({
+            t: round(c.t, TIME_DECIMALS),
+            speedPxS: round(c.speedPxS, 2),
+            rampS: round(c.rampS ?? 0, TIME_DECIMALS),
+        }));
+    }
+    if (chart.difficulty === null || chart.difficulty === undefined) delete out.difficulty;
+    return out;
+}
+
+/** Eventos de estructura del chart (`section`), en orden. */
+export function sectionEvents(chart) {
+    return chart.events.filter((e) => e.type === 'section' && isFiniteNumber(e.level));
 }
 
 /** Solo los eventos jugables de obstáculo, en orden. */

@@ -226,10 +226,18 @@ test('los oficiales horneados del repo están al día con el analizador, el char
         assert.equal(baked.bakedWith.charter, `${CHARTER_NAME}@${CHARTER_VERSION}`, `${entry.slug}: charter`);
 
         const sha = baked.audio.sha256;
-        const rebuilt = buildChart(a, { sha256: sha, seed: seedFromSha256(sha) }).chart;
-        assert.deepEqual(rebuilt, baked.chart, `${entry.slug}: el chart se reproduce desde su análisis`);
+        const requested = entry.difficulty ?? 'auto';
+        const { chart: rebuilt, report } = buildChart(a, { sha256: sha, seed: seedFromSha256(sha), difficulty: requested });
+        assert.deepEqual(rebuilt, baked.chart, `${entry.slug}: el chart se reproduce desde su análisis y su dificultad`);
         assert.equal(normalizeChart(baked.chart).warnings.length, 0, `${entry.slug}: chart limpio`);
-        assert.equal(difficultyFromStats(chartStats(normalizeChart(rebuilt).chart)), baked.difficulty, `${entry.slug}: dificultad`);
+        // Ola 5: la dificultad guardada es la del charter (la del manifiesto
+        // limitada por el techo); la medida es la comprobación independiente.
+        assert.equal(baked.difficulty, report.difficulty, `${entry.slug}: dificultad`);
+        assert.equal(baked.chart.difficulty.level, report.difficulty, `${entry.slug}: dificultad en el chart`);
+        assert.equal(baked.requestedDifficulty, requested, `${entry.slug}: dificultad pedida`);
+        const measured = difficultyFromStats(chartStats(normalizeChart(rebuilt).chart));
+        assert.equal(baked.measuredDifficulty, measured, `${entry.slug}: dificultad medida`);
+        assert.ok(Math.abs(measured - report.difficulty) <= 1, `${entry.slug}: medida ${measured}★ lejos de la elegida ${report.difficulty}★`);
         const ceiling = difficultyCeiling(a);
         assert.equal(baked.difficultyCeiling, ceiling.ceiling, `${entry.slug}: techo de dificultad`);
         assert.equal(baked.stats.musicalDensity, ceiling.density, `${entry.slug}: densidad musical`);

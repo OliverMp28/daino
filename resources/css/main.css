@@ -572,6 +572,59 @@ dialog.daino-modal .modal-footer {
     opacity: 1;
 }
 
+/* Ola 5 — el HUD sigue la estructura de la canción.
+ * Clímax: la barra de progreso se enciende y late; es el tramo final y se ve.
+ * "¡Superado!": ya no quedan obstáculos y la canción termina de sonar. */
+.daino-hud__progress-fg {
+    transition: width 100ms linear, background-color 400ms ease-out, box-shadow 400ms ease-out;
+}
+
+.daino-hud[data-phase="climax"] .daino-hud__progress-fg {
+    background: linear-gradient(90deg, var(--color-daino-beat), var(--color-daino-high));
+    box-shadow: 0 0 14px color-mix(in oklch, var(--color-daino-beat) 80%, transparent);
+    animation: daino-climax-glow 0.9s ease-in-out infinite alternate;
+}
+
+.daino-hud[data-phase="cleared"] .daino-hud__progress-fg {
+    background: var(--color-daino-high);
+    box-shadow: 0 0 12px color-mix(in oklch, var(--color-daino-high) 70%, transparent);
+}
+
+@keyframes daino-climax-glow {
+    from { filter: brightness(1); }
+    to   { filter: brightness(1.45); }
+}
+
+.daino-hud__banner {
+    position: absolute;
+    top: 24%;
+    left: 50%;
+    transform: translate(-50%, 0.5rem) scale(0.96);
+    font-size: clamp(1.4rem, 3.4vw, 2.4rem);
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-daino-high);
+    text-shadow: 0 0 24px color-mix(in oklch, var(--color-daino-high) 60%, transparent), 0 4px 24px rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    transition: opacity 300ms ease-out, transform 300ms ease-out;
+    white-space: nowrap;
+}
+
+.daino-hud__banner[data-shown="true"] {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-hud[data-phase="climax"] .daino-hud__progress-fg {
+        animation: none;
+    }
+    .daino-hud__banner {
+        transition: none;
+    }
+}
+
 @media (max-width: 640px) {
     .daino-hud__top {
         padding: 0.75rem 4rem 0.75rem 0.85rem;
@@ -1291,6 +1344,89 @@ dialog.daino-catalog::backdrop {
     min-height: 1.2em;
     font-size: 0.85rem;
     color: color-mix(in oklch, var(--color-daino-fg) 65%, transparent);
+}
+
+/* ----- Dificultad elegida por el autor (Ola 5) ----- */
+
+.daino-difficulty {
+    margin: 0.2rem 0 0;
+    padding: 0.8rem 1rem 0.7rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 14%, transparent);
+    border-radius: 0.75rem;
+    min-width: 0;
+}
+
+.daino-difficulty__legend {
+    padding: 0 0.35rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: color-mix(in oklch, var(--color-daino-fg) 70%, transparent);
+}
+
+.daino-difficulty__options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.daino-difficulty__option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
+    border-radius: 0.6rem;
+    background: color-mix(in oklch, var(--color-daino-bg-lifted) 60%, transparent);
+    color: var(--color-daino-fg);
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 150ms ease-out, background-color 150ms ease-out;
+}
+
+.daino-difficulty__option:hover:not(:disabled) {
+    border-color: color-mix(in oklch, var(--color-daino-high) 60%, transparent);
+}
+
+.daino-difficulty__option:focus-visible {
+    outline: 2px solid var(--color-daino-high);
+    outline-offset: 2px;
+}
+
+.daino-difficulty__option[aria-checked="true"] {
+    border-color: var(--color-daino-high);
+    background: color-mix(in oklch, var(--color-daino-high) 16%, transparent);
+}
+
+.daino-difficulty__option:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.daino-difficulty__option[aria-checked="true"]:disabled {
+    opacity: 0.9;
+}
+
+.daino-difficulty__label {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.daino-difficulty__hint {
+    font-size: 0.7rem;
+    color: color-mix(in oklch, var(--color-daino-fg) 60%, transparent);
+    letter-spacing: 0.05em;
+}
+
+.daino-difficulty__note {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    color: color-mix(in oklch, var(--color-daino-fg) 65%, transparent);
+}
+
+.daino-difficulty[data-busy="true"] .daino-difficulty__note {
+    color: var(--color-daino-high);
 }
 
 /* ----- Análisis en servidor (Ola 4): progreso al publicar ----- */

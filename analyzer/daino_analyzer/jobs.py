@@ -26,6 +26,8 @@ from dataclasses import dataclass
 
 LEASE_SECONDS = 90
 BACKOFF_BASE_SECONDS = 30
+# Misma prioridad que AnalysisJob::PRIORITY_INTERACTIVE (PHP): alguien espera.
+INTERACTIVE_PRIORITY = 10
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,13 @@ class Result:
     difficulty: int
     difficulty_ceiling: int | None
     charter_version: int
+    # Ola 5: la dificultad pedida con la que se charteó (None = Automática).
+    requested_difficulty: int | None = None
+
+
+# Trabajos que sustituyen el chart de un nivel ya publicado: una reanálisis
+# explícita o un cambio de dificultad de su autor (Ola 5).
+REPLACES_PUBLIC_CHART = ("reanalyze", "rechart")
 
 
 def reap_expired(conn) -> int:
@@ -118,6 +127,20 @@ def heartbeat(conn, job: Job, worker_id: str, stage: str, progress: float, lease
     return ok
 
 
+def requested_difficulty(conn, level_id: int | None) -> int | None:
+    """Dificultad que pide el autor del nivel ahora mismo (None = Automática).
+    Se lee justo antes de chartear: un cambio durante el análisis se aplica."""
+    if level_id is None:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("SELECT difficulty_requested FROM levels WHERE id = %s", (level_id,))
+        found = cur.fetchone()
+    conn.commit()
+    if found is None or found["difficulty_requested"] is None:
+        return None
+    return int(found["difficulty_requested"])
+
+
 def cached_analysis(conn, audio_sha256: str, analyzer_key: str) -> dict | None:
     with conn.cursor() as cur:
         cur.execute(
@@ -158,7 +181,7 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
         outcome = "chart_updated"
         if job.level_id is not None:
             cur.execute(
-                """SELECT id, file_path, audio_sha256, is_public, pending_public, chart_status
+                """SELECT id, file_path, audio_sha256, is_public, pending_public, chart_status, difficulty_requested
                    FROM levels WHERE id = %s FOR UPDATE""",
                 (job.level_id,),
             )
@@ -174,10 +197,11 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                 conn.commit()
                 return "abandoned"
 
-            frozen = bool(level["is_public"]) and level["chart_status"] == "ready" and job.purpose != "reanalyze"
+            frozen = bool(level["is_public"]) and level["chart_status"] == "ready" and job.purpose not in REPLACES_PUBLIC_CHART
             if frozen:
                 # Un nivel ya publicado conserva su chart: otros jugadores tienen
-                # marcas sobre él. Solo se sustituye con una reanálisis explícita.
+                # marcas sobre él. Solo se sustituye con una reanálisis explícita
+                # o un cambio de dificultad de su autor.
                 outcome = "chart_frozen"
             else:
                 cur.execute(
@@ -199,6 +223,19 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                     ),
                 )
                 outcome = "published" if level["pending_public"] else "chart_updated"
+
+                # El autor cambió la dificultad DESPUÉS de que este trabajo la
+                # leyera (entre chartear y guardar): se encola ya otro re-chart,
+                # en esta misma transacción, para que el nivel nunca se quede con
+                # una dificultad que ya no es la pedida.
+                current = level["difficulty_requested"]
+                current = None if current is None else int(current)
+                if current != result.requested_difficulty:
+                    cur.execute(
+                        """INSERT INTO analysis_jobs (level_id, audio_path, audio_sha256, purpose, priority)
+                           VALUES (%s, %s, %s, 'rechart', %s)""",
+                        (job.level_id, job.audio_path, result.audio_sha256, INTERACTIVE_PRIORITY),
+                    )
 
         _finish(cur, job.id, "done", None, None)
     conn.commit()

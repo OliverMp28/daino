@@ -94,7 +94,7 @@ export const MAX_BURST_PARTICLES = 140;
 /**
  * Catálogo de tipos de obstáculo — REGISTRO ÚNICO Y EXTENSIBLE. Añadir un
  * obstáculo nuevo = dibujar su sprite en assets/pixelart.js + una entrada
- * aquí; LevelGenerator, spawner y Obstacle lo consumen sin tocar código.
+ * aquí; el charter, el spawner y Obstacle lo consumen sin tocar código.
  *
  * Campos por kind:
  *   w/h            Tamaño en px (= celdas del sprite × PIXEL_SCALE).
@@ -102,16 +102,19 @@ export const MAX_BURST_PARTICLES = 140;
  *                  >0 = volador (se pasa agachándose o con salto preciso).
  *   sprites        Frames de animación (1 entrada = estático).
  *   animPeriodS    Segundos por frame cuando hay >1 sprite.
- *   weight         Peso relativo en el pick del PRNG (no hace falta que
- *                  sumen 1 — se normalizan entre los kinds disponibles).
- *   availableFromS Segundos de canción antes de los cuales este kind NO
- *                  aparece (el peso se reparte entre los disponibles).
- *                  Regla determinista: misma seed ⇒ misma timeline.
+ *   role           Papel musical en el charter (Ola 5):
+ *                    'jump'    salto normal, un golpe del pulso;
+ *                    'accent'  salto que exige precisión, reservado a los
+ *                              golpes fuertes (primer tiempo, drops);
+ *                    'duck'    agacharse, para los sonidos brillantes y los
+ *                              contratiempos.
+ *   weight         Peso relativo entre kinds del MISMO papel (variedad
+ *                  determinista con la seed del nivel).
  */
 export const OBSTACLE_KIND = Object.freeze({
-    CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], weight: 0.40, availableFromS: 0 },
-    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], weight: 0.30, availableFromS: 0 },
-    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, weight: 0.30, availableFromS: 10 },
+    CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], role: 'jump', weight: 1 },
+    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], role: 'accent', weight: 1 },
+    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, role: 'duck', weight: 1 },
 });
 
 /** Padding del hitbox del obstacle (más ajustado que el del Dino). */
@@ -148,14 +151,12 @@ export function speedFromBpm(bpm) {
 }
 
 // --------------------------- Generación de nivel ---------------------------
-
-/**
- * Tiempo mínimo y máximo entre obstáculos consecutivos en segundos. El
- * LevelGenerator descarta onsets que estén a menos de `min` del anterior
- * aceptado (para no amontonar) y rellena gaps mayores que `max` (para no
- * dejar tramos aburridos).
- */
-export const SPAWN_WINDOW_S = Object.freeze({ min: 0.7, max: 1.8 });
+//
+// Los huecos entre obstáculos ya no son constantes de aquí (el antiguo
+// SPAWN_WINDOW_S de 0.7-1.8 s, defecto D14): desde la Ola 5 el charter los
+// deriva de la física para cada par de acciones, a la velocidad de ese tramo y
+// con la tolerancia de la dificultad (levels/patterns.js, PAIR_GAP), y la
+// densidad sale del arco de la canción (levels/difficulty.js).
 
 /**
  * BPM de fallback si la autocorrelación del envelope no encuentra un pico
@@ -224,6 +225,29 @@ export const HITSTOP_S = 0.09;
 
 /** Flash blanco al morir: alpha inicial y duración del fade. */
 export const DEATH_FLASH = Object.freeze({ alpha: 0.45, durationS: 0.28 });
+
+/**
+ * Drop (Ola 5): al entrar en un tramo mucho más intenso. Destello aditivo de
+ * pantalla completa, golpe de cámara hacia abajo y ola de partículas por el
+ * suelo, todo en unas décimas. Con `prefers-reduced-motion` solo se aviva el
+ * fondo, sin destello ni golpe.
+ */
+export const DROP_FX = Object.freeze({
+    flashS: 0.42,
+    overlayAlpha: 0.16,
+    overlayColor: 0xbfe9ff,
+    kickPx: 6,
+    kickS: 0.18,
+    waveBursts: 6,
+    /** Un "lift" (subir un nivel hacia el empuje): fondo al 50 %, sin destello ni golpe. */
+    liftStrength: 0.5,
+});
+
+/**
+ * Pulsar sobre el golpe (Ola 5): margen para reconocer que una pulsación cae
+ * en el instante de acción de un obstáculo, y color del destello.
+ */
+export const ON_BEAT = Object.freeze({ windowS: 0.06, color: 0x8fe0ff });
 
 /** Partículas ambientales (capa 2): cuántas y rango de velocidad base px/s. */
 export const AMBIENT_PARTICLES = Object.freeze({ count: 80, minSpeed: 8, maxSpeed: 26 });

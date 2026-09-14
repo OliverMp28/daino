@@ -31,7 +31,17 @@ use App\Core\ValidationException;
  */
 final class ChartValidator
 {
-    public const CHART_FORMAT_VERSION = 1;
+    /** Formato que genera el charter actual (Ola 5). */
+    public const CHART_FORMAT_VERSION = 2;
+
+    /**
+     * 1 = charter de las Olas 3-4 (velocidad constante). 2 = charter musical
+     * (Ola 5): cambios de velocidad, pulso, dificultad y eventos de estructura.
+     */
+    public const CHART_FORMAT_VERSIONS = [1, 2];
+
+    public const MAX_SPEED_CHANGES = 400;
+    private const MAX_RAMP_S = 10;
 
     /**
      * 1 = analizador JS del navegador (bpm + onsets). 2 = analizador del servidor
@@ -80,7 +90,7 @@ final class ChartValidator
         }
 
         $formatVersion = $chart['formatVersion'] ?? null;
-        if ($formatVersion !== self::CHART_FORMAT_VERSION) {
+        if (!in_array($formatVersion, self::CHART_FORMAT_VERSIONS, true)) {
             self::fail($f, 'formatVersion no soportado.');
         }
 
@@ -174,7 +184,7 @@ final class ChartValidator
         }
 
         $normalized = [
-            'formatVersion' => self::CHART_FORMAT_VERSION,
+            'formatVersion' => $formatVersion,
             'charter'       => ['name' => $charter['name'], 'version' => $charter['version']],
             'seed'          => $seed,
             'audio'         => ['sha256' => $sha, 'durationSec' => $durationSec, 'sampleRate' => $sampleRate],
@@ -182,6 +192,9 @@ final class ChartValidator
             'world'         => ['speedPxS' => $speedPxS],
             'events'        => $cleanEvents,
         ];
+        if ($formatVersion === 2) {
+            self::addChartV2($normalized, $chart, $music, $world, $durationSec);
+        }
 
         $json = json_encode($normalized, self::JSON_FLAGS);
         if (strlen($json) > self::CHART_MAX_BYTES) {
@@ -195,6 +208,79 @@ final class ChartValidator
             'speedPxS'       => $speedPxS,
             'bpm'            => $bpm,
         ];
+    }
+
+    /**
+     * Campos opcionales del chart de formato 2 (Ola 5). Mismas reglas que
+     * `chartFormat.js::normalizeChart`, pero aquí lo mal formado se rechaza: en
+     * el cliente se descarta con aviso, en el servidor no se persiste.
+     *
+     * @param array<string, mixed> $normalized
+     * @param array<string, mixed> $chart
+     * @param array<string, mixed> $music
+     * @param array<string, mixed> $world
+     */
+    private static function addChartV2(array &$normalized, array $chart, array $music, array $world, float $durationSec): void
+    {
+        $f = 'chart';
+        foreach (['beats', 'downbeats'] as $key) {
+            if (!array_key_exists($key, $music)) {
+                continue;
+            }
+            $list = $music[$key];
+            if (!is_array($list) || !array_is_list($list) || count($list) > self::MAX_BEATS) {
+                self::fail($f, "music.{$key} inválido.");
+            }
+            $prev = -INF;
+            $clean = [];
+            foreach ($list as $i => $t) {
+                $t = self::number($t, $f, "music.{$key}[{$i}]", 0, $durationSec + 0.001);
+                if ($t <= $prev) {
+                    self::fail($f, "music.{$key} debe ser estrictamente creciente.");
+                }
+                $prev = $t;
+                $clean[] = $t;
+            }
+            $normalized['music'][$key] = $clean;
+        }
+
+        if (array_key_exists('speedChanges', $world)) {
+            $changes = $world['speedChanges'];
+            if (!is_array($changes) || !array_is_list($changes) || count($changes) > self::MAX_SPEED_CHANGES) {
+                self::fail($f, 'world.speedChanges inválido.');
+            }
+            $prev = -INF;
+            $clean = [];
+            foreach ($changes as $i => $c) {
+                if (!is_array($c) || array_is_list($c)) {
+                    self::fail($f, "world.speedChanges[{$i}] no es un objeto.");
+                }
+                $t = self::number($c['t'] ?? null, $f, "world.speedChanges[{$i}].t", 0, $durationSec);
+                if ($t < $prev) {
+                    self::fail($f, 'world.speedChanges debe estar ordenado por t.');
+                }
+                $prev = $t;
+                $clean[] = [
+                    't'        => $t,
+                    'speedPxS' => self::number($c['speedPxS'] ?? null, $f, "world.speedChanges[{$i}].speedPxS", 50, 2000),
+                    'rampS'    => self::number($c['rampS'] ?? 0, $f, "world.speedChanges[{$i}].rampS", 0, self::MAX_RAMP_S),
+                ];
+            }
+            $normalized['world']['speedChanges'] = $clean;
+        }
+
+        if (array_key_exists('difficulty', $chart) && $chart['difficulty'] !== null) {
+            $d = $chart['difficulty'];
+            $level = is_array($d) ? ($d['level'] ?? null) : null;
+            $requested = is_array($d) ? ($d['requested'] ?? 'auto') : null;
+            $ceiling = is_array($d) ? ($d['ceiling'] ?? null) : null;
+            if (!is_int($level) || $level < 1 || $level > 5
+                || !($requested === 'auto' || (is_int($requested) && $requested >= 1 && $requested <= 5))
+                || !($ceiling === null || (is_int($ceiling) && $ceiling >= 1 && $ceiling <= 5))) {
+                self::fail($f, 'difficulty inválida.');
+            }
+            $normalized['difficulty'] = ['level' => $level, 'requested' => $requested, 'ceiling' => $ceiling];
+        }
     }
 
     /**

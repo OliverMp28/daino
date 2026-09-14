@@ -5,6 +5,10 @@
 // (PublishService.php). Aquí se decide, sin DOM, qué enseña la UI en cada
 // momento: la insignia, el progreso con palabras que entienda un jugador, qué
 // hacer si falla y cuándo se puede reintentar. `catalog.js` solo lo pinta.
+//
+// Ola 5: también la dificultad que elige el autor (`difficultyChoiceView`).
+
+import { DIFFICULTY_NAMES, autoDifficulty } from '../game/levels/difficulty.js';
 
 /** En qué punto está un nivel respecto al catálogo público. */
 export const PUBLISH_STATE = Object.freeze({
@@ -148,16 +152,63 @@ export function publishView(level) {
 }
 
 /**
- * ¿Ha terminado la publicación? Devuelve el desenlace, o null si sigue en curso.
- * Se decide con la respuesta de GET /api/levels/{id}/analysis.
+ * ¿Ha terminado el trabajo que se sigue? Devuelve el desenlace, o null si sigue
+ * en curso. Se decide con la respuesta de GET /api/levels/{id}/analysis.
+ *
+ * Un nivel ya público puede tener trabajo en marcha: aplicar otra dificultad
+ * (re-chart, Ola 5). Mientras esté en cola o corriendo no ha terminado; si
+ * falla, el nivel sigue publicado con su chart anterior y el desenlace es un
+ * fallo, no una publicación.
  *
  * @param {{ is_public?: boolean, pending_public?: boolean, analysis?: object | null }} status
  * @returns {'published' | 'failed' | 'cancelled' | null}
  */
 export function publishOutcome(status) {
-    if (status?.is_public === true) return 'published';
+    const job = status?.analysis;
+    const active = job?.status === 'queued' || job?.status === 'running';
+    if (status?.is_public === true) {
+        if (active) return null;
+        return job?.purpose === 'rechart' && job.status === 'failed' ? 'failed' : 'published';
+    }
     if (status?.pending_public === true) return null;
-    return status?.analysis?.status === 'failed' ? 'failed' : 'cancelled';
+    return job?.status === 'failed' ? 'failed' : 'cancelled';
+}
+
+/**
+ * Lo que enseña el selector de dificultad de un nivel propio (Ola 5).
+ *
+ * Solo aparece cuando el servidor ya analizó la canción: antes no se sabe hasta
+ * qué dificultad admite, y ofrecer opciones que luego no se podrían aplicar
+ * sería la etiqueta "con calzador" que el doc 10 §2.3 prohíbe.
+ *
+ * @param {object} level  Fila de la API con `difficulty_choice` (solo la recibe su autor).
+ * @returns {{ current: 'auto' | number, effective: number,
+ *             options: Array<{ value: 'auto' | number, label: string, hint: string }>,
+ *             locked: boolean, busy: boolean, note: string } | null}
+ */
+export function difficultyChoiceView(level) {
+    const choice = level?.difficulty_choice;
+    if (choice === null || typeof choice !== 'object' || !Array.isArray(choice.options) || choice.options.length === 0) return null;
+    const ceiling = Math.max(...choice.options);
+    const auto = autoDifficulty(ceiling);
+    const job = level.analysis;
+    const busy = level.pending_public === true || (job?.purpose === 'rechart' && (job.status === 'queued' || job.status === 'running'));
+    const locked = choice.locked === true;
+    let note;
+    if (locked) note = 'Otros jugadores ya tienen marca en este nivel: su dificultad queda fija.';
+    else if (busy) note = level.pending_public === true ? 'Se aplicará al terminar el análisis.' : 'Aplicando la dificultad…';
+    else note = `La canción admite hasta ${DIFFICULTY_NAMES[ceiling]}.`;
+    return {
+        current: choice.requested === 'auto' || !choice.options.includes(choice.requested) ? 'auto' : choice.requested,
+        effective: Number.isInteger(level.difficulty) ? level.difficulty : auto,
+        options: [
+            { value: 'auto', label: 'Automática', hint: DIFFICULTY_NAMES[auto] },
+            ...choice.options.map((d) => ({ value: d, label: DIFFICULTY_NAMES[d], hint: '★'.repeat(d) })),
+        ],
+        locked,
+        busy,
+        note,
+    };
 }
 
 function clamp01(v) {

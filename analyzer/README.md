@@ -1,8 +1,9 @@
-# Analizador musical de Daino (Ola 4)
+# Analizador musical de Daino (Olas 4 y 5)
 
 Servicio `analyzer` de `docker-compose.yml`. Analiza cada canción **una vez, al
 publicarla**, y guarda su análisis y su chart. Quien juega después no analiza
-nada. Diseño y medidas: `docs/refactorizacion/10-Roadmap-Niveles-Rendimiento-UX.md`, Ola 4.
+nada. Diseño y medidas: `docs/refactorizacion/10-Roadmap-Niveles-Rendimiento-UX.md`,
+Ola 4 (analizador y cola) y Ola 5 (charter musical y dificultad elegida).
 
 ```
 PHP (publicar) ──INSERT──▶ analysis_jobs ◀──SKIP LOCKED── worker Python
@@ -17,7 +18,22 @@ PHP (publicar) ──INSERT──▶ analysis_jobs ◀──SKIP LOCKED── wo
   onsets con color de ataque; energía; secciones con rol; rasgos para el techo de
   dificultad. Formato 2, validado por `schema.py` y por `ChartValidator.php`.
 - **Charting** (JS): el MISMO `resources/js/game/levels/charter.js` que usa el
-  navegador. No hay una segunda implementación de la jugabilidad.
+  navegador. No hay una segunda implementación de la jugabilidad. Desde la Ola 5
+  recibe la **dificultad** que pidió el autor del nivel (`levels.difficulty_requested`,
+  `NULL` = Automática): el worker la lee **al chartear**, no al encolar, y si el
+  autor la cambia mientras tanto, al terminar encola otro re-chart.
+
+Propósitos de un trabajo (`analysis_jobs.purpose`):
+
+| Propósito | Quién lo encola | Chart de un nivel ya público |
+|---|---|---|
+| `publish` | subir/publicar un nivel | — (aún no es público) |
+| `backfill` | `--missing-charts` | se conserva |
+| `reanalyze` | `--level`, `--client-charts` | se sustituye |
+| `rechart` | cambiar la dificultad (`POST /api/levels/{id}/difficulty`), `--charter-below` | se sustituye |
+
+Con el análisis en caché (`audio_analyses`), cualquiera de ellos es un re-chart
+de menos de un segundo: no se vuelve a analizar el audio.
 
 ## Uso diario
 
@@ -34,7 +50,12 @@ Encolar a mano (PHP, nunca duplica un trabajo activo):
 docker compose exec -T php composer analysis:enqueue -- --missing-charts   # niveles con audio y sin chart
 docker compose exec -T php composer analysis:enqueue -- --level=12,15      # reanalizar esos niveles
 docker compose exec -T php composer analysis:enqueue -- --client-charts    # públicos con chart del navegador
+docker compose exec -T php composer analysis:enqueue -- --charter-below=3  # comunidad con charter anterior → re-chart
 ```
+
+Tras subir `CHARTER_VERSION` (cualquier cambio en el charter), `--charter-below=<nueva>`
+re-chartea los niveles de la comunidad con su análisis guardado y la dificultad que
+su autor tuviera pedida; los oficiales se re-hornean (ver abajo).
 
 `ANALYZER_ENABLED=false` en `.env` desactiva el flujo: publicar vuelve a ser
 inmediato con el chart del navegador (el sistema degrada, no se rompe).
@@ -58,7 +79,9 @@ docker compose exec -T php composer seed:official -- --rechart   # aplicar chart
 ```
 
 Si solo cambia el charter o la escala de dificultad, basta `bun run bake:official`
-(re-chartea desde el análisis guardado, sin audio ni Python).
+(re-chartea desde el análisis guardado, sin audio ni Python). La dificultad de cada
+oficial la fija `difficulty` en `database/seeds/official/manifest.json` (`auto` si
+falta); el horneado guarda también la medida (`measuredDifficulty`) para comprobarla.
 
 ## Tests
 
@@ -107,7 +130,11 @@ Garantías del worker (cada una con su test en `tests/test_worker.py`):
 - Si el autor retira o vuelve a subir el nivel mientras se analiza, el worker lo
   ve al renovar la reserva y no escribe nada.
 - Un nivel ya público **conserva su chart** (hay marcas sobre él) salvo
-  reanálisis explícito (`--level`, `--client-charts`).
+  reanálisis o re-chart explícito (`--level`, `--client-charts`, `--charter-below`,
+  cambio de dificultad del autor). La API solo deja cambiar la dificultad mientras
+  nadie más tenga progreso en el nivel.
+- Se chartea con la dificultad pedida **en el momento de chartear**; si cambió
+  durante el trabajo, se encola otro re-chart al completar.
 
 Seguridad: el contenedor solo recibe variables de base de datos y monta en solo
 lectura lo que usa (su código, el charter JS, `database/`, los audios). No ve
@@ -119,5 +146,7 @@ de error del worker (salida de ffmpeg, rutas internas): solo su código.
 La imagen (`analyzer/Dockerfile`) ya contiene el código, el modelo de beat_this y
 Node; los montajes de `analyzer/` en `docker-compose.yml` son para desarrollo.
 Fuera de desarrollo el contenedor necesita igualmente `resources/js`, `scripts`,
-`package.json`, `node_modules` (el charter importa `pixi.js` vía `physics.js`),
-`database/` y los directorios de audio.
+`package.json` (`"type": "module"`), `database/` y los directorios de audio.
+**No necesita `node_modules`**: el charting no importa ningún paquete npm
+(comprobado en la Ola 5 recorriendo los imports de `chart-from-analysis.mjs` y
+`bake-official.mjs`; la Ola 4 lo montaba creyendo que `physics.js` arrastraba Pixi).

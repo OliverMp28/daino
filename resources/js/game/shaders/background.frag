@@ -19,6 +19,16 @@
 //   uHorizon   — Y del horizonte en uv (v=0 arriba). Derivada de
 //                GROUND_OFFSET_PX; el sol, el glow y las barras FFT se anclan
 //                aquí para casar con la línea del suelo pixel-art del scenery.
+//
+// Ola 5 — la estructura de la canción, no solo su volumen:
+//   uIntensity — [0,1] intensidad del tramo (calma … clímax), suavizada. Aviva
+//                el glow del horizonte, el halo del sol, el ecualizador y el
+//                destello de cada beat.
+//   uProgress  — [0,1] cuánto va de canción. EL SOL SE PONE con ella: empieza
+//                alto y al final toca el horizonte mientras el cielo se
+//                oscurece y salen más estrellas. El final se ve llegar.
+//   uClimax    — [0,1] el clímax: tinte del cielo y ecualizador encendidos.
+//   uFlash     — [0,1] destello de un drop, decae en unas décimas.
 
 in vec2 vTextureCoord; // uv sobre la TEXTURA del pool (¡su 1.0 cae fuera de pantalla!)
 in vec2 vFrameCoord;   // uv [0,1] sobre el FRAME VISIBLE — usar este para
@@ -41,6 +51,10 @@ uniform float uHigh;
 uniform float uBpmPulse;
 uniform float uDebugMode;   // 0=normal, 1=fft crudo, 2=uv coords, 3=uniforms
 uniform float uHorizon;
+uniform float uIntensity;
+uniform float uProgress;
+uniform float uClimax;
+uniform float uFlash;
 
 // Paleta — espejo de los tokens de @theme en main.css y de PALETTE en
 // assets/pixelart.js (mantener sincronizados).
@@ -90,45 +104,60 @@ void main(void) {
     float mid   = uMid * reactive;
     float high  = uHigh * reactive;
     float rms   = uRMS * reactive;
+    // Estructura (Ola 5). En idle todo a 0: el menú se ve como siempre.
+    float intensity = uIntensity * reactive;
+    float progress  = clamp(uProgress, 0.0, 1.0) * reactive;
+    float climax    = uClimax * reactive;
+    float flash     = uFlash * reactive;
+    // El atardecer avanza despacio al principio y se acelera hacia el final.
+    float dusk = progress * progress * (3.0 - 2.0 * progress);
 
     // ---------- Cielo ----------
     // Muy oscuro arriba, levantándose hacia el horizonte (atardecer synth).
-    float toHorizon = smoothstep(0.05, uHorizon, uv.y);
-    vec3 col = mix(COLOR_BG_DEEP, COLOR_BG_LIFTED, toHorizon * toHorizon);
+    // Con la canción avanzando, la franja clara se estrecha y se calienta: se
+    // hace de noche por arriba mientras el horizonte arde.
+    float toHorizon = smoothstep(0.05 + 0.25 * dusk, uHorizon, uv.y);
+    vec3 lifted = mix(COLOR_BG_LIFTED, vec3(0.20, 0.06, 0.16), dusk * 0.6);
+    vec3 col = mix(COLOR_BG_DEEP * (1.0 - 0.35 * dusk), lifted, toHorizon * toHorizon);
+    // Tinte del clímax, más fuerte arriba y latiendo con el beat.
+    col += COLOR_BEAT * climax * (0.035 + 0.05 * pulse) * (1.0 - toHorizon);
 
     // ---------- Estrellas ----------
     // Grid-hash barato. Titilan con uTime; los agudos las excitan en partida.
+    // Salen más cuanto más de noche.
     if (uv.y < uHorizon - 0.02) {
         vec2 cell = floor(uv * vec2(220.0, 130.0));
         float n = hash21(cell);
-        float star = smoothstep(0.9972, 1.0, n);
+        float star = smoothstep(0.9972 - 0.0012 * dusk, 1.0, n);
         float tw = 0.55 + 0.45 * sin(uTime * (1.5 + 3.0 * fract(n * 7.31)) + n * 41.0);
-        col += vec3(0.85, 0.92, 1.0) * star * tw * (0.35 + high * 0.9);
+        col += vec3(0.85, 0.92, 1.0) * star * tw * (0.35 + high * 0.9) * (1.0 + 0.9 * dusk);
     }
 
     // ---------- Sol synthwave ----------
     // Disco con degradado beat→cian y rendijas horizontales en la mitad baja.
-    // Late con el beat en partida; en idle respira lento con uTime.
-    vec2 sunPos = vec2(0.76, uHorizon - 0.30);
+    // Late con el beat en partida; en idle respira lento con uTime. Baja hacia
+    // el horizonte con la canción y crece un poco (los soles al ponerse
+    // parecen más grandes); lo que queda bajo el horizonte no se pinta.
+    vec2 sunPos = vec2(0.76, uHorizon - 0.30 + 0.27 * dusk);
     float breathe = 0.5 + 0.5 * sin(uTime * 0.6);
-    float sunR = 0.095 + pulse * 0.018 + (1.0 - reactive) * breathe * 0.005;
+    float sunR = 0.095 + 0.02 * dusk + pulse * (0.012 + 0.012 * intensity) + (1.0 - reactive) * breathe * 0.005;
     float d = distance(uv, sunPos);
     // OJO: smoothstep exige edge0 < edge1 (edges invertidos = undefined en
     // GLSL — en ANGLE/D3D devuelve 0 y el disco desaparece). Invertimos con 1-.
-    float disc = 1.0 - smoothstep(sunR - 0.008, sunR, d);
+    float disc = (1.0 - smoothstep(sunR - 0.008, sunR, d)) * (1.0 - step(uHorizon, uv.y));
     // Rendijas: solo por debajo del centro del sol, más densas hacia abajo.
     float below = step(sunPos.y, uv.y);
     float slit = 1.0 - below * smoothstep(0.32, 0.5, abs(fract((uv.y - sunPos.y) * 70.0) - 0.5));
     vec3 sunCol = mix(COLOR_HIGH, COLOR_BEAT, smoothstep(sunPos.y - sunR, sunPos.y + sunR, uv.y));
     col = mix(col, sunCol, disc * slit * 0.9);
-    // Halo del sol — en partida lo hinchan los graves.
-    col += COLOR_BEAT * exp(-d * 9.0) * (0.10 + 0.05 * breathe + bass * 0.22 + pulse * 0.10);
+    // Halo del sol — en partida lo hinchan los graves, la intensidad y los drops.
+    col += COLOR_BEAT * exp(-d * 9.0) * (0.10 + 0.05 * breathe + bass * 0.22 + pulse * (0.06 + 0.10 * intensity) + 0.12 * dusk + 0.25 * flash);
 
     // ---------- Glow del horizonte ----------
     float hd = abs(uv.y - uHorizon);
-    float horizonGlow = exp(-hd * 26.0);
-    col += COLOR_BEAT * horizonGlow * (0.10 + 0.06 * breathe + bass * 0.55 + pulse * 0.30);
-    col += COLOR_HIGH * exp(-hd * 60.0) * (0.06 + high * 0.35);
+    float horizonGlow = exp(-hd * (26.0 - 8.0 * intensity));
+    col += COLOR_BEAT * horizonGlow * (0.10 + 0.06 * breathe + bass * 0.55 + pulse * (0.15 + 0.30 * intensity) + 0.10 * dusk + 0.45 * flash);
+    col += COLOR_HIGH * exp(-hd * 60.0) * (0.06 + high * 0.35 + 0.25 * flash);
 
     // ---------- Ondas senoidales tenues (idle y reactive) ----------
     float wave = sin(uv.x * 14.0 + uTime * 1.1) * 0.5 + 0.5;
@@ -149,18 +178,20 @@ void main(void) {
         float b1 = texture(uFFT, vec2(cx - 1.0 / BARS, 0.5)).r;
         float b2 = texture(uFFT, vec2(cx + 1.0 / BARS, 0.5)).r;
         float bin = (b0 * 2.0 + b1 + b2) * 0.25;
-        float h = bin * bin * 0.16;              // ² para que el silencio sea plano
+        // ² para que el silencio sea plano; más alto cuanto más empuja el tramo.
+        float h = bin * bin * (0.11 + 0.09 * intensity);
         float top = uHorizon - h;
         float gap = step(fract(uv.x * BARS), 0.68);   // 68% barra, 32% hueco
         if (uv.y > top && h > 0.004) {
             float t = (uHorizon - uv.y) / max(h, 1e-4);   // 0 en la base, 1 en la punta
-            vec3 barCol = mix(COLOR_BEAT, COLOR_HIGH, cx);
-            col += barCol * gap * (1.0 - t) * (0.16 + bass * 0.10);
+            vec3 barCol = mix(mix(COLOR_BEAT, COLOR_HIGH, cx), COLOR_BEAT, climax * 0.5);
+            col += barCol * gap * (1.0 - t) * (0.12 + 0.10 * intensity + bass * 0.10);
         }
     }
 
-    // ---------- Flash global al beat ----------
-    col *= 1.0 + pulse * 0.10;
+    // ---------- Flash global al beat y destello de drop ----------
+    col *= 1.0 + pulse * (0.05 + 0.10 * intensity);
+    col += COLOR_HIGH * flash * 0.10;
 
     // Vignette suave para dar foco al gameplay (capa 3 vive encima).
     float dx = uv.x - 0.5;

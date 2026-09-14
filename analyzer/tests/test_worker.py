@@ -183,7 +183,7 @@ def test_publish_flow_writes_chart_and_makes_the_level_public(conn, tmp_path):
 
     lvl = row(conn, "SELECT * FROM levels WHERE id = %s", level_id)
     assert lvl["is_public"] == 1 and lvl["pending_public"] == 0
-    assert lvl["chart_status"] == "ready" and lvl["chart_version"] == 2
+    assert lvl["chart_status"] == "ready" and lvl["chart_version"] == 3
     assert lvl["chart_hash"] == hashlib.sha256(lvl["chart_json"].encode()).hexdigest()
     assert lvl["difficulty_ceiling"] is not None and 1 <= lvl["difficulty"] <= 5
     chart = json.loads(lvl["chart_json"])
@@ -456,6 +456,75 @@ def test_public_chart_is_frozen_unless_reanalysis_is_explicit(conn, tmp_path):
     enqueue(conn, level_id, path, purpose="reanalyze")
     assert w.run_once() == "chart_updated"
     assert row(conn, "SELECT chart_json FROM levels WHERE id = %s", level_id)["chart_json"] != old
+
+
+def _set_difficulty(conn, level_id, value):
+    with conn.cursor() as cur:
+        cur.execute("UPDATE levels SET difficulty_requested = %s WHERE id = %s", (value, level_id))
+    conn.commit()
+
+
+def _obstacles(chart_json: str) -> int:
+    return sum(1 for e in json.loads(chart_json)["events"] if e["type"] == "obstacle")
+
+
+def test_rechart_applies_the_requested_difficulty_even_on_a_public_level(conn, tmp_path):
+    """Ola 5: cambiar la dificultad re-chartea con el análisis guardado y SÍ
+    sustituye el chart de un nivel público (decisión explícita de su autor)."""
+    level_id, path = make_level(conn, tmp_path)
+    enqueue(conn, level_id, path)
+    w = worker(_connect, tmp_path, FakeAnalyzer())
+    assert w.run_once() == "published"
+    auto = row(conn, "SELECT difficulty, difficulty_ceiling, chart_json FROM levels WHERE id = %s", level_id)
+    assert json.loads(auto["chart_json"])["difficulty"]["requested"] == "auto"
+    ceiling = auto["difficulty_ceiling"]
+    assert ceiling is not None and ceiling >= 4, "el análisis de prueba es denso: admite dificultades altas"
+
+    analyzer = FakeAnalyzer()
+    w.analyzer = analyzer
+    _set_difficulty(conn, level_id, 1)
+    enqueue(conn, level_id, path, purpose="rechart")
+    assert w.run_once() == "chart_updated"
+    easy = row(conn, "SELECT difficulty, chart_json FROM levels WHERE id = %s", level_id)
+    assert easy["difficulty"] == 1 and json.loads(easy["chart_json"])["difficulty"] == {"level": 1, "requested": 1, "ceiling": ceiling}
+    assert analyzer.calls == 0, "el re-chart usa el análisis guardado, no vuelve a analizar"
+
+    _set_difficulty(conn, level_id, 5)
+    enqueue(conn, level_id, path, purpose="rechart")
+    assert w.run_once() == "chart_updated"
+    hard = row(conn, "SELECT difficulty, chart_json FROM levels WHERE id = %s", level_id)
+    assert hard["difficulty"] == min(5, ceiling)
+    assert _obstacles(hard["chart_json"]) > _obstacles(easy["chart_json"]), "más difícil, más acciones"
+    assert row(conn, "SELECT COUNT(*) AS n FROM analysis_jobs WHERE level_id = %s AND status = 'queued'", level_id)["n"] == 0
+
+
+def test_difficulty_changed_after_charting_enqueues_another_rechart(conn, tmp_path):
+    """El autor cambia la dificultad justo cuando el worker ya ha charteado con la
+    anterior: al guardar se detecta y se encola otro re-chart en la misma
+    transacción. El siguiente aplica la nueva y no encola nada más."""
+    level_id, path = make_level(conn, tmp_path)
+    enqueue(conn, level_id, path)
+
+    def charter_while_author_changes(analysis, sha, difficulty):
+        out = chart_from_analysis(analysis, sha, difficulty)
+        other = _connect()
+        try:
+            _set_difficulty(other, level_id, 2)
+        finally:
+            other.close()
+        return out
+
+    config = WorkerConfig(worker_id="test-worker", heartbeat_seconds=0.0, poll_seconds=0.01)
+    w = Worker(_connect, config, analyzer=FakeAnalyzer(), charter=charter_while_author_changes, root=tmp_path, log=lambda *a, **k: None)
+    assert w.run_once() == "published"
+    assert json.loads(row(conn, "SELECT chart_json FROM levels WHERE id = %s", level_id)["chart_json"])["difficulty"]["requested"] == "auto"
+    follow = row(conn, "SELECT purpose, status, priority FROM analysis_jobs WHERE level_id = %s ORDER BY id DESC LIMIT 1", level_id)
+    assert follow == {"purpose": "rechart", "status": "queued", "priority": 10}
+
+    assert worker(_connect, tmp_path, FakeAnalyzer()).run_once() == "chart_updated"
+    lvl = row(conn, "SELECT difficulty, chart_json FROM levels WHERE id = %s", level_id)
+    assert lvl["difficulty"] == 2 and json.loads(lvl["chart_json"])["difficulty"]["requested"] == 2
+    assert row(conn, "SELECT COUNT(*) AS n FROM analysis_jobs WHERE level_id = %s AND status = 'queued'", level_id)["n"] == 0
 
 
 def test_legacy_level_without_hash_gets_it_from_the_file(conn, tmp_path):

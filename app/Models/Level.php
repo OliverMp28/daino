@@ -30,7 +30,7 @@ final class Level
 {
     /** Columnas de metadata. Nunca incluir `chart_json` ni `analysis_json` aquí. */
     private const LIST_COLUMNS = 'id, user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
-        difficulty, file_path, audio_sha256, generator_seed, is_public, pending_public, chart_status, chart_version,
+        difficulty, difficulty_requested, file_path, audio_sha256, generator_seed, is_public, pending_public, chart_status, chart_version,
         chart_hash, difficulty_ceiling, is_official, official_slug, created_at, updated_at';
 
     /** Pestañas públicas del catálogo. */
@@ -61,6 +61,8 @@ final class Level
         public ?float $bpmExact,
         public ?int $gameSpeed,
         public int $difficulty,
+        /** Ola 5: la dificultad que pidió el autor (null = Automática). `difficulty` es la efectiva. */
+        public ?int $difficultyRequested,
         public ?string $filePath,
         public ?string $audioSha256,
         public string $generatorSeed,
@@ -426,6 +428,17 @@ final class Level
         }
     }
 
+    /**
+     * Guarda la dificultad que pide el autor (Ola 5). null = Automática. No
+     * toca el chart: lo regenera el worker (PublishService::changeDifficulty).
+     */
+    public function setDifficultyRequested(?int $difficulty): void
+    {
+        Database::getInstance()->prepare('UPDATE levels SET difficulty_requested = :d WHERE id = :id')
+            ->execute(['d' => $difficulty, 'id' => $this->id]);
+        $this->difficultyRequested = $difficulty;
+    }
+
     public function delete(): void
     {
         $stmt = Database::getInstance()->prepare('DELETE FROM levels WHERE id = :id');
@@ -448,6 +461,7 @@ final class Level
             bpmExact:          $row['bpm_exact'] === null ? null : (float) $row['bpm_exact'],
             gameSpeed:         $row['game_speed'] === null ? null : (int) $row['game_speed'],
             difficulty:        (int) $row['difficulty'],
+            difficultyRequested: $row['difficulty_requested'] === null ? null : (int) $row['difficulty_requested'],
             filePath:          $row['file_path'] === null ? null : (string) $row['file_path'],
             audioSha256:       $row['audio_sha256'] === null ? null : (string) $row['audio_sha256'],
             generatorSeed:     (string) $row['generator_seed'],

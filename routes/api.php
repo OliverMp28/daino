@@ -70,6 +70,8 @@ $router->group(['prefix' => '/api'], static function (Router $r): void {
         // Ola 4: estado y reintento del análisis en servidor (solo el autor).
         $r->get('/levels/{id}/analysis',     'Api\\LevelApiController@analysisStatus');
         $r->post('/levels/{id}/analysis',    'Api\\LevelApiController@retryAnalysis');
+        // Ola 5: dificultad elegida por el autor (vuelve a chartear en el servidor).
+        $r->post('/levels/{id}/difficulty',  'Api\\LevelApiController@changeDifficulty');
 
         $r->post('/comments', 'Api\\CommentApiController@store');
     });

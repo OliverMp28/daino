@@ -1,258 +1,405 @@
-// Charter: análisis → chart jugable (Ola 3).
+// Charter musical: análisis → nivel (Ola 5).
 //
-// El charter es puro, así que estos tests usan análisis sintéticos con la
-// distribución de fuerzas medida en audio real (ver makeSyntheticAnalysis) y
-// corren en milisegundos. El análisis de audio de verdad se prueba en
-// analyze.test.mjs.
+// El charter es puro, así que estos tests usan canciones sintéticas con
+// estructura conocida (helpers/synthetic-audio.mjs: secciones de energía
+// distinta, bombo grave en 1 y 3, caja brillante en 2 y 4, charles a
+// contratiempo) y, al final, los análisis REALES de los 8 oficiales horneados.
 //
 // Invariantes protegidos:
-//   - Determinismo: mismo análisis + misma seed ⇒ mismo chart byte a byte.
-//   - Musicalidad: los eventos caen en golpes, nunca en picos de ruido.
-//   - Justicia: todo chart generado es superable con ±40 ms.
+//   - Determinismo: mismo análisis + misma seed + misma dificultad ⇒ mismo chart.
+//   - Rejilla: toda acción cae en un pulso o un contratiempo de la canción.
+//   - Dinámica: la densidad sigue al arco (reposo < calma < groove < empuje < clímax).
+//   - Estructura: un clímax en la segunda mitad, el mundo acelera en los tramos
+//     que empujan y nunca por debajo de la base, drops con respiración antes.
+//   - Dificultad: más difícil ⇒ más acciones; cada chart se supera con la
+//     tolerancia de su dificultad; nunca por encima del techo de la canción.
+//   - Progresión: las mecánicas se estrenan en su momento del arco.
+//   - Justicia: 0 patrones imposibles en las 8 canciones reales × 5 dificultades.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import {
-    buildChart,
-    CHARTER_RULES,
-    dropWeakOnsets,
-    fillGapsOnBeats,
-    gameplayTempo,
-    selectStrongestSpaced,
-    snapFillersToBeats,
-} from '../../resources/js/game/levels/charter.js';
-import { normalizeChart, seedFromSha256 } from '../../resources/js/game/levels/chartFormat.js';
+import { buildChart, CHARTER_RULES, gameplayTempo, unlockSchedule } from '../../resources/js/game/levels/charter.js';
+import { normalizeChart, seedFromSha256, CHART_FORMAT_VERSION } from '../../resources/js/game/levels/chartFormat.js';
+import { buildMusicModel } from '../../resources/js/game/levels/musicModel.js';
+import { buildSongArc } from '../../resources/js/game/levels/songArc.js';
+import { DIFFICULTY_PROFILES } from '../../resources/js/game/levels/difficulty.js';
 import { OBSTACLE_KIND } from '../../resources/js/game/config.js';
 import { actionLeadS } from '../../resources/js/game/systems/physics.js';
 import { toSimObstacles, validatePlayability } from '../../resources/js/game/systems/playability.js';
-import { makeSyntheticAnalysis } from './helpers/synthetic-audio.mjs';
+import { speedProfileOf } from '../../resources/js/game/systems/speedProfile.js';
+import { makeSyntheticAnalysis, makeSyntheticSong } from './helpers/synthetic-audio.mjs';
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const SHA = 'c0ffee'.padEnd(64, '0');
 
-const isOnBeat = (t, bpm, firstBeatS = 0) => {
-    const period = 60 / bpm;
-    const k = Math.round((t - firstBeatS) / period);
-    return Math.abs(t - (firstBeatS + k * period)) <= 0.0015;
-};
+const obstacles = (chart) => chart.events.filter((e) => e.type === 'obstacle');
+const sections = (chart) => chart.events.filter((e) => e.type === 'section');
 
-test('misma entrada + misma seed ⇒ mismo chart, byte a byte', () => {
-    const analysis = makeSyntheticAnalysis({ bpm: 130 });
-    const a = buildChart(analysis, { seed: 4242, sha256: SHA }).chart;
-    const b = buildChart(analysis, { seed: 4242, sha256: SHA }).chart;
-    assert.equal(JSON.stringify(a), JSON.stringify(b));
-    assert.equal(a.seed, 4242);
-    assert.equal(a.audio.sha256, SHA);
+/** Acciones por minuto dentro de [t0, t1). */
+function apmIn(chart, t0, t1) {
+    return (obstacles(chart).filter((e) => e.t >= t0 && e.t < t1).length / Math.max(1e-6, t1 - t0)) * 60;
+}
+
+/** ¿Cae t en un beat o a mitad de dos beats de la lista (±tol)? */
+function onGrid(t, beats, tol = 0.002) {
+    let lo = 0;
+    let hi = beats.length;
+    while (lo < hi) {
+        const m = (lo + hi) >> 1;
+        if (beats[m] < t) lo = m + 1;
+        else hi = m;
+    }
+    const a = beats[Math.max(0, lo - 1)];
+    const b = beats[Math.min(beats.length - 1, lo)];
+    return [a, b, (a + b) / 2].some((c) => Math.abs(c - t) <= tol);
+}
+
+test('determinismo: misma entrada, seed y dificultad ⇒ mismo chart byte a byte', () => {
+    const analysis = makeSyntheticSong({ bpm: 118 });
+    for (const difficulty of [1, 3, 5, 'auto']) {
+        const a = buildChart(analysis, { seed: 4242, sha256: SHA, difficulty }).chart;
+        const b = buildChart(analysis, { seed: 4242, sha256: SHA, difficulty }).chart;
+        assert.equal(JSON.stringify(a), JSON.stringify(b), `dificultad ${difficulty}`);
+    }
+    const c = buildChart(analysis, { sha256: SHA }).chart;
+    assert.equal(c.seed, seedFromSha256(SHA), 'sin seed explícita se deriva del hash del audio');
 });
 
-test('sin seed explícita se deriva del hash: mismo archivo ⇒ mismo nivel', () => {
-    const analysis = makeSyntheticAnalysis({ bpm: 130 });
-    const a = buildChart(analysis, { sha256: SHA }).chart;
-    assert.equal(a.seed, seedFromSha256(SHA));
-    assert.equal(JSON.stringify(a), JSON.stringify(buildChart(analysis, { sha256: SHA }).chart));
+test('formato 2: un chart generado se normaliza sin avisos y conserva velocidad, pulso y dificultad', () => {
+    const analysis = makeSyntheticSong({ bpm: 124 });
+    const { chart } = buildChart(analysis, { sha256: SHA, difficulty: 4 });
+    const { chart: n, warnings } = normalizeChart(chart);
+    assert.deepEqual(warnings, []);
+    assert.equal(n.formatVersion, CHART_FORMAT_VERSION);
+    assert.equal(n.difficulty.level, 4);
+    assert.equal(n.difficulty.requested, 4);
+    assert.ok(n.world.speedChanges.length > 0, 'una canción con estribillos cambia de velocidad');
+    assert.equal(n.music.beats.length, analysis.beats.length);
+    assert.equal(n.music.downbeats.length, analysis.downbeats.length);
 });
 
-test('seeds distintas cambian los tipos, no los instantes', () => {
-    const analysis = makeSyntheticAnalysis({ bpm: 130 });
-    const a = buildChart(analysis, { seed: 1 }).chart;
-    const b = buildChart(analysis, { seed: 999 }).chart;
-    assert.deepEqual(a.events.map((e) => e.t), b.events.map((e) => e.t));
-    assert.notEqual(a.events.map((e) => e.kind).join(), b.events.map((e) => e.kind).join());
-});
-
-test('ningún evento cae en un pico de ruido: todos sobre golpes', () => {
-    for (const bpm of [70, 90, 128, 150, 174, 200]) {
-        for (const seed of [1, 2]) {
-            const analysis = makeSyntheticAnalysis({ bpm, durationSec: 90, seed, noisePerBeat: 4 });
-            const { chart, report } = buildChart(analysis, { seed });
-            const off = chart.events.filter((e) => !isOnBeat(e.t, bpm));
-            assert.equal(off.length, 0, `${bpm} BPM: ${off.length}/${chart.events.length} fuera de beat (${JSON.stringify(report)})`);
-            assert.ok(chart.events.length > 40, `${bpm} BPM: solo ${chart.events.length} eventos`);
+test('rejilla: toda acción cae en un pulso o un contratiempo real, a cualquier tempo', () => {
+    for (const bpm of [66, 92, 120, 146, 174]) {
+        const analysis = makeSyntheticSong({ bpm, seed: bpm });
+        for (const difficulty of [1, 3, 5]) {
+            const { chart } = buildChart(analysis, { seed: 1, difficulty });
+            const off = obstacles(chart).filter((e) => !onGrid(e.t, analysis.beats));
+            assert.equal(off.length, 0, `${bpm} BPM, dificultad ${difficulty}: ${off.length} fuera de rejilla`);
+            assert.ok(obstacles(chart).length > 20, `${bpm} BPM: solo ${obstacles(chart).length} acciones`);
         }
     }
 });
 
-test('respeta la ventana inicial, el hueco mínimo y el descanso final', () => {
-    const analysis = makeSyntheticAnalysis({ bpm: 140, durationSec: 60 });
-    const { chart } = buildChart(analysis, { seed: 3 });
-    const maxLead = Math.max(...Object.values(OBSTACLE_KIND).map(actionLeadS));
-
-    assert.ok(chart.events[0].t >= CHARTER_RULES.firstActionMinS - 1e-9);
-    const last = chart.events.at(-1);
-    assert.ok(last.t + maxLead <= analysis.durationSec - CHARTER_RULES.tailRestS + 1e-3);
-    for (let i = 1; i < chart.events.length; i++) {
-        const gap = chart.events[i].t - chart.events[i - 1].t;
-        assert.ok(gap >= CHARTER_RULES.minGapS - 0.001, `hueco ${gap.toFixed(3)} s en ${i}`);
+test('dinámica: la densidad sigue al arco (reposo < calma < groove < empuje < clímax)', () => {
+    const analysis = makeSyntheticSong({ bpm: 96 });
+    const { chart } = buildChart(analysis, { seed: 2, difficulty: 4 });
+    const secs = sections(chart);
+    const byLevel = new Map();
+    for (let i = 0; i < secs.length; i++) {
+        const t1 = secs[i + 1]?.t ?? chart.audio.durationSec - CHARTER_RULES.tailRestS;
+        const t0 = Math.max(secs[i].t, CHARTER_RULES.firstActionMinS);
+        if (t1 <= t0) continue;
+        const acc = byLevel.get(secs[i].level) ?? { n: 0, dur: 0 };
+        acc.n += obstacles(chart).filter((e) => e.t >= t0 && e.t < t1).length;
+        acc.dur += t1 - t0;
+        byLevel.set(secs[i].level, acc);
     }
+    const apm = [...byLevel.entries()].sort((a, b) => a[0] - b[0]).map(([level, { n, dur }]) => [level, (n / dur) * 60]);
+    for (let i = 1; i < apm.length; i++) {
+        assert.ok(apm[i][1] > apm[i - 1][1], `nivel ${apm[i][0]} (${apm[i][1].toFixed(0)}/min) no supera a ${apm[i - 1][0]} (${apm[i - 1][1].toFixed(0)}/min)`);
+    }
+    assert.deepEqual(apm.map(([level]) => level), [0, 1, 2, 3, 4], 'la canción sintética recorre los cinco niveles');
 });
 
-test('los kinds con availableFromS no aparecen antes de su gracia', () => {
-    const { chart } = buildChart(makeSyntheticAnalysis({ bpm: 150 }), { seed: 3 });
-    for (const e of chart.events) {
-        assert.ok(e.t >= (OBSTACLE_KIND[e.kind].availableFromS ?? 0), `"${e.kind}" en t=${e.t}`);
-    }
-});
+test('estructura: un único clímax, en la segunda mitad, el tramo más denso y el más rápido', () => {
+    for (const bpm of [80, 128]) {
+        const analysis = makeSyntheticSong({ bpm });
+        const { chart, report } = buildChart(analysis, { seed: 3, difficulty: 3 });
+        const climaxes = sections(chart).filter((s) => s.climax);
+        assert.equal(climaxes.length, 1, `${bpm} BPM: un clímax`);
+        assert.ok(report.climax.t0 > chart.audio.durationSec * 0.45, 'el clímax llega en la segunda mitad');
+        // El último estribillo de DEFAULT_SONG_SECTIONS es el clímax.
+        const lastChorus = analysis.sections.filter((s) => s.role === 'chorus').at(-1);
+        assert.ok(Math.abs(report.climax.t0 - lastChorus.startSec) < 60 / bpm * 4 + 1e-6, 'y es el último estribillo');
 
-test('todo chart generado es superable con un jugador de ±40 ms', () => {
-    for (const bpm of [60, 80, 100, 128, 160, 190, 220]) {
-        for (const seed of [1, 2, 3, 4]) {
-            const analysis = makeSyntheticAnalysis({ bpm, durationSec: 120, seed });
-            const { chart, report } = buildChart(analysis, { seed });
-            const v = validatePlayability(toSimObstacles(chart.events), chart.world.speedPxS);
-            assert.ok(v.ok, `${bpm} BPM seed ${seed}: injugable en t=${v.t} (${v.pattern}), reparados ${report.repaired}`);
+        const climaxApm = apmIn(chart, report.climax.t0, report.climax.t1);
+        const others = sections(chart).filter((s) => !s.climax);
+        for (let i = 0; i < others.length; i++) {
+            const next = chart.events.find((e) => e.type === 'section' && e.t > others[i].t)?.t ?? chart.audio.durationSec;
+            if (next - others[i].t < 8) continue;
+            assert.ok(apmIn(chart, Math.max(others[i].t, 3), next) <= climaxApm + 1e-9, `${bpm} BPM: tramo en ${others[i].t} más denso que el clímax`);
+        }
+
+        const speed = speedProfileOf(chart);
+        const base = chart.world.speedPxS;
+        const climaxSpeed = speed.speedAt((report.climax.t0 + report.climax.t1) / 2);
+        assert.ok(climaxSpeed > base, 'el clímax corre más que la base');
+        for (let t = 0; t < chart.audio.durationSec; t += 0.5) {
+            const v = speed.speedAt(t);
+            assert.ok(v >= base - 1e-9 && v <= climaxSpeed + 1e-9, `velocidad ${v} en t=${t}: nunca por debajo de la base ni por encima del clímax`);
+            assert.ok(v <= CHARTER_RULES.maxSpeedPxS + 1e-9);
         }
     }
 });
 
-test('ante dos onsets demasiado juntos se queda el más fuerte, no el primero', () => {
-    const accepted = selectStrongestSpaced([
-        { t: 5.0, strength: 0.2 },   // pre-transitorio débil: pierde contra 5.1
-        { t: 5.1, strength: 0.9 },   // el golpe de verdad
-        { t: 6.0, strength: 0.5 },   // a 0.9 s de 5.1: cabe
-    ], 0.7);
-    assert.deepEqual(accepted, [5.1, 6.0]);
+test('regresión: una canción que arranca ya empujando empieza a esa velocidad, sin portal en el segundo 0', () => {
+    // Estribillo de entrada muy por encima de la intensidad típica (dos estrofas
+    // largas): el primer tramo empuja (nivel 3) desde el segundo 0.
+    const analysis = makeSyntheticSong({
+        bpm: 120,
+        sections: [
+            { bars: 12, energy: 0.92, hits: 0.95, role: 'chorus', cluster: 'C' },
+            { bars: 16, energy: 0.45, hits: 0.45, role: 'verse', cluster: 'V' },
+            { bars: 16, energy: 0.5, hits: 0.5, role: 'verse', cluster: 'V' },
+            { bars: 12, energy: 0.95, hits: 1, role: 'chorus', cluster: 'C' },
+        ],
+    });
+    const arc = buildSongArc(buildMusicModel(analysis));
+    assert.equal(arc.segments[0].level, 3, `niveles ${arc.segments.map((s) => s.level)}`);
+    const { chart } = buildChart(analysis, { seed: 1, difficulty: 4 });
+    assert.ok(chart.world.speedChanges.every((c) => c.t > 0), `cambios: ${JSON.stringify(chart.world.speedChanges)}`);
+    const tempoOnly = buildChart({ ...analysis, sections: [] }, { seed: 1, difficulty: 4 });
+    assert.ok(chart.world.speedPxS > tempoOnly.chart.world.speedPxS - 1e-9, 'la base ya es la del tramo que empuja');
+    const verse = analysis.sections[1];
+    assert.ok(chart.world.speedChanges.some((c) => Math.abs(c.t - verse.startSec) < 0.01 && c.speedPxS < chart.world.speedPxS), `baja al entrar en la estrofa: ${JSON.stringify(chart.world)}`);
 });
 
-test('el suelo LOCAL quita el ruido pero conserva una estrofa suave', () => {
-    const onsets = [
-        { t: 10.0, strength: 0.9 },
-        { t: 10.5, strength: 0.05 },  // ruido junto a golpes fuertes
-        { t: 11.0, strength: 0.9 },
-        { t: 30.0, strength: 0.2 },   // estrofa suave, lejos de los fuertes
-        { t: 31.0, strength: 0.22 },
-        { t: 32.0, strength: 0.21 },
+test('drops y lifts: momentos en el primer tiempo; antes del drop, el último beat respira', () => {
+    const analysis = makeSyntheticSong({ bpm: 104 });
+    const { chart } = buildChart(analysis, { seed: 5, difficulty: 4 });
+    const fx = chart.events.filter((e) => e.type === 'fx');
+    const drops = fx.filter((e) => e.fx === 'drop');
+    const lifts = fx.filter((e) => e.fx === 'lift');
+    // Estructura sintética: estrofa → estribillo sube un nivel (lift) dos veces;
+    // puente → estribillo final es el clímax (drop).
+    assert.equal(drops.length, 1, 'un drop: el clímax tras el puente');
+    assert.equal(lifts.length, 2, 'dos lifts: la entrada de cada estribillo');
+    const choruses = analysis.sections.filter((s) => s.role === 'chorus').map((s) => s.startSec);
+    for (const e of fx) {
+        assert.ok(choruses.some((c) => Math.abs(c - e.t) < 0.002), `el momento de ${e.t} cae en el primer tiempo de un estribillo`);
+    }
+    const period = 60 / 104;
+    for (const drop of drops) {
+        if (drop.t < CHARTER_RULES.firstActionMinS) continue;
+        assert.ok(obstacles(chart).some((e) => Math.abs(e.t - drop.t) < 0.002), `el drop de ${drop.t} tiene su acción en el primer tiempo`);
+        const breath = obstacles(chart).filter((e) => e.t > drop.t - period - 0.02 && e.t < drop.t - 0.002);
+        assert.equal(breath.length, 0, `el beat anterior al drop de ${drop.t} respira`);
+    }
+});
+
+test('silencio: donde la música calla no hay acciones', () => {
+    const analysis = makeSyntheticSong({
+        bpm: 110,
+        sections: [
+            { bars: 8, energy: 0.7, hits: 0.8, role: 'verse' },
+            { bars: 6, energy: 0, hits: 0, role: 'break', silent: true },
+            { bars: 8, energy: 0.8, hits: 0.9, role: 'chorus' },
+        ],
+    });
+    const silent = analysis.sections[1];
+    for (const difficulty of [1, 5]) {
+        const { chart } = buildChart(analysis, { seed: 1, difficulty });
+        const inside = obstacles(chart).filter((e) => e.t > silent.startSec + 0.3 && e.t < silent.endSec - 0.3);
+        assert.equal(inside.length, 0, `dificultad ${difficulty}: ${inside.length} acciones en el silencio`);
+    }
+});
+
+test('dificultad: más difícil ⇒ más acciones, más rápido y validado con menos margen', () => {
+    const analysis = makeSyntheticSong({ bpm: 100 });
+    let prevCount = 0;
+    let prevTop = 0;
+    for (const difficulty of [1, 2, 3, 4, 5]) {
+        const { chart, report } = buildChart(analysis, { seed: 9, difficulty });
+        assert.equal(report.difficulty, difficulty, 'la canción sintética admite hasta Extremo');
+        const n = obstacles(chart).length;
+        assert.ok(n > prevCount, `dificultad ${difficulty}: ${n} acciones, no más que ${prevCount}`);
+        prevCount = n;
+        const top = Math.max(chart.world.speedPxS, ...chart.world.speedChanges.map((c) => c.speedPxS));
+        assert.ok(top >= prevTop, `dificultad ${difficulty}: velocidad máxima ${top} < ${prevTop}`);
+        prevTop = top;
+        const v = validatePlayability(toSimObstacles(obstacles(chart)), speedProfileOf(chart), { toleranceS: DIFFICULTY_PROFILES[difficulty].toleranceS });
+        assert.ok(v.ok, `dificultad ${difficulty}: injugable en t=${v.t} (${v.pattern}) con ±${DIFFICULTY_PROFILES[difficulty].toleranceS * 1000} ms`);
+    }
+});
+
+test('dificultad: nunca por encima del techo de la canción; "auto" es Normal o el techo', () => {
+    const soft = makeSyntheticSong({
+        bpm: 76,
+        sections: [
+            { bars: 12, energy: 0.4, hits: 0.2, role: 'verse' },
+            { bars: 12, energy: 0.6, hits: 0.3, role: 'chorus' },
+        ],
+    });
+    // Densidad musical 10 + ¼·60·0.5 = 17.5 → techo 2 (difficultyCeiling.js).
+    soft.features = { ...soft.features, strongEventsPerMin: 10, eventsPerMin: 60, beatSupport: 0.5 };
+    const extreme = buildChart(soft, { seed: 1, difficulty: 5 });
+    assert.equal(extreme.report.ceiling, 2);
+    assert.equal(extreme.report.difficulty, 2, 'pedir Extremo en una balada da su techo');
+    assert.equal(extreme.chart.difficulty.requested, 5);
+    assert.equal(buildChart(soft, { seed: 1 }).report.difficulty, 2, 'auto con techo 2');
+    assert.equal(buildChart(makeSyntheticSong({ bpm: 128 }), { seed: 1 }).report.difficulty, 3, 'auto con techo 5 es Normal');
+    // Formato 1 (navegador): sin techo calculable, se respeta lo pedido y auto es Normal.
+    assert.equal(buildChart(makeSyntheticAnalysis({ bpm: 120, durationSec: 60 }), { seed: 1, difficulty: 5 }).report.difficulty, 5);
+    assert.equal(buildChart(makeSyntheticAnalysis({ bpm: 120, durationSec: 60 }), { seed: 1 }).report.difficulty, 3);
+});
+
+test('progresión: cada mecánica se estrena en su momento del arco, nunca antes', () => {
+    const analysis = makeSyntheticSong({ bpm: 90 });
+    const model = buildMusicModel(analysis);
+    const arc = buildSongArc(model);
+    for (const difficulty of [1, 2, 3, 4, 5]) {
+        const profile = DIFFICULTY_PROFILES[difficulty];
+        const unlock = unlockSchedule(arc, profile);
+        const { chart } = buildChart(analysis, { seed: 11, difficulty });
+        const obs = obstacles(chart);
+        const first = (kind) => obs.find((e) => e.kind === kind)?.t ?? Infinity;
+        assert.ok(first('PTERO') >= unlock.duck - 1e-9, `d${difficulty}: agachado en ${first('PTERO')} antes de ${unlock.duck}`);
+        assert.ok(first('CACTUS_WIDE') >= unlock.wide - 1e-9, `d${difficulty}: cactus ancho en ${first('CACTUS_WIDE')} antes de ${unlock.wide}`);
+        // Contratiempos solo tras su desbloqueo.
+        const period = 60 / 90;
+        for (const e of obs) {
+            const isOffbeat = !analysis.beats.some((b) => Math.abs(b - e.t) < 0.002);
+            if (isOffbeat) assert.ok(e.t >= unlock.offbeat - period, `d${difficulty}: contratiempo en ${e.t} antes de ${unlock.offbeat}`);
+        }
+    }
+    const easy = obstacles(buildChart(analysis, { seed: 11, difficulty: 1 }).chart);
+    assert.equal(easy.filter((e) => e.kind === 'CACTUS_WIDE').length, 0, 'Relajado no usa cactus anchos');
+});
+
+test('intro de tutorial, ventana inicial y descanso final', () => {
+    const analysis = makeSyntheticSong({ bpm: 140 });
+    for (const difficulty of [1, 3, 5]) {
+        const { chart } = buildChart(analysis, { seed: 3, difficulty });
+        const obs = obstacles(chart);
+        assert.ok(obs[0].t >= CHARTER_RULES.firstActionMinS - 1e-9, 'primera acción tras la ventana inicial');
+        for (let i = 0; i < CHARTER_RULES.introActions; i++) {
+            assert.equal(OBSTACLE_KIND[obs[i].kind].altitude, 0, `d${difficulty}: la acción ${i} del tutorial es un salto`);
+            if (i > 0) assert.ok(obs[i].t - obs[i - 1].t >= 1.1 - 1e-9, `d${difficulty}: tutorial espaciado`);
+        }
+        const maxLead = Math.max(...Object.values(OBSTACLE_KIND).map(actionLeadS));
+        assert.ok(obs.at(-1).t + maxLead <= chart.audio.durationSec - CHARTER_RULES.tailRestS + 1e-3, 'descanso final');
+    }
+});
+
+test('memoria de frases: un riff que se repite se juega con el mismo patrón', () => {
+    const riff = { bars: 12, energy: 0.8, hits: 0.9, role: 'chorus', cluster: 'R', riff: true };
+    const blocks = [
+        { bars: 4, energy: 0.5, hits: 0.5, role: 'intro', cluster: 'I' },
+        riff,
+        riff,
+        { bars: 4, energy: 0.3, hits: 0.3, role: 'outro', cluster: 'O' },
     ];
-    assert.deepEqual(dropWeakOnsets(onsets, 4, 0.3).map((o) => o.t), [10.0, 11.0, 30.0, 31.0, 32.0]);
-});
-
-test('el suelo local es O(n): su coste no depende del tamaño de la ventana', () => {
-    // Test de COMPLEJIDAD, no de milisegundos: compara dos tiempos medidos en
-    // la misma máquina y en el mismo momento, así que no depende de lo cargada
-    // que esté. Con n fijo se multiplica la ventana ×80: una implementación
-    // ingenua O(n·ventana) tardaría ~×80; la cola monótona, lo mismo.
-    const make = (n) => {
-        const out = [];
-        for (let i = 0; i < n; i++) out.push({ t: i * 0.02, strength: ((i * 7919) % 97) / 97 });
-        return out;
-    };
-    const onsets = make(40_000);
-    const small = minTime(() => dropWeakOnsets(onsets, 0.5, 0.3));   // ventana ~50
-    const large = minTime(() => dropWeakOnsets(onsets, 40, 0.3));    // ventana ~4000
-    assert.ok(large < small * 8, `ventana ×80 costó ×${(large / small).toFixed(1)} (O(n·ventana) daría ~×80)`);
-});
-
-test('D17: un relleno nunca queda a menos del hueco mínimo del siguiente golpe', () => {
-    const anchors = [3.0, 4.95, 9.0];
-    const out = fillGapsOnBeats(anchors, { beatPeriodS: 0.45, minGapS: 0.7, maxGapS: 1.8, tMin: 3, tMax: 20 });
-    for (let i = 1; i < out.length; i++) {
-        assert.ok(out[i] - out[i - 1] >= 0.7 - 1e-9, `hueco ${(out[i] - out[i - 1]).toFixed(3)} entre ${out[i - 1]} y ${out[i]}`);
-    }
-    const fillers = out.filter((t) => !anchors.includes(t));
-    assert.ok(fillers.length > 0);
-    for (const f of fillers) {
-        const anchor = anchors.filter((a) => a < f).pop();
-        const beats = (f - anchor) / 0.45;
-        assert.ok(Math.abs(beats - Math.round(beats)) < 1e-6, `relleno ${f} no cae en beat desde ${anchor}`);
+    for (const difficulty of [3, 5]) {
+        const analysis = makeSyntheticSong({ bpm: 100, sections: blocks });
+        const { chart } = buildChart(analysis, { seed: 1, difficulty });
+        const period = 60 / 100;
+        const barLen = 4 * period;
+        const patternOf = (barStart) => obstacles(chart)
+            .filter((e) => e.t >= barStart - 0.01 && e.t < barStart + barLen - 0.01)
+            .map((e) => `${Math.round((e.t - barStart) / (period / 2))}:${e.kind}`)
+            .join(' ');
+        const downbeats = analysis.downbeats;
+        // Dentro de cada bloque del riff, sin su primer compás (puede ser un drop)
+        // ni los dos últimos (subida y respiración antes del siguiente bloque):
+        // una frase dura 4 compases (la acción extra de la densidad cae en el
+        // mismo compás de cada frase), así que cada compás debe jugarse igual
+        // que el de cuatro compases después.
+        let same = 0;
+        let pairs = 0;
+        const patterns = [];
+        for (const start of [4, 16]) {
+            const block = downbeats.slice(start + 1, start + 12 - 2).map(patternOf);
+            patterns.push(block);
+            for (let i = 0; i + 4 < block.length; i++) {
+                pairs++;
+                if (block[i] === block[i + 4] && block[i] !== '') same++;
+            }
+        }
+        assert.ok(pairs >= 8);
+        assert.ok(same / pairs >= 0.9, `d${difficulty}: solo ${same}/${pairs} compases repiten la frase: ${JSON.stringify(patterns)}`);
     }
 });
 
-test('los rellenos se anclan localmente: un error de BPM no los saca del beat', () => {
-    // Golpes reales a 120 BPM (0.5 s) pero el análisis cree 121 BPM (≈1 % de
-    // error, típico). Con una rejilla global los rellenos derivarían; anclados
-    // al golpe anterior, siguen a milisegundos del beat.
-    const real = [];
-    for (let i = 0; i < 20; i++) real.push(3 + i * 10);   // golpes sueltos, huecos de 10 s
-    const out = fillGapsOnBeats(real, { beatPeriodS: 60 / 121, minGapS: 0.7, maxGapS: 1.8, tMin: 3, tMax: 200 });
-    for (const t of out) {
-        const err = Math.abs(t - (3 + Math.round((t - 3) / 0.5) * 0.5));
-        assert.ok(err < 0.1, `relleno en ${t.toFixed(3)} a ${(err * 1000).toFixed(0)} ms del beat real`);
-    }
-});
-
-test('v2: la velocidad sale del pulso jugable; el bpm del chart sigue siendo el real', () => {
+test('velocidad base: sale del pulso jugable; el bpm del chart sigue siendo el real', () => {
     assert.equal(gameplayTempo(63), 126);
     assert.equal(gameplayTempo(40), 160, 'dos doblados');
     assert.equal(gameplayTempo(145.9), 145.9);
     assert.equal(gameplayTempo(250), 125);
-    const slow = buildChart(makeSyntheticAnalysis({ bpm: 63, durationSec: 40 }), { seed: 1 }).chart;
-    const fast = buildChart(makeSyntheticAnalysis({ bpm: 126, durationSec: 40 }), { seed: 1 }).chart;
+    const slow = buildChart(makeSyntheticSong({ bpm: 63 }), { seed: 1 }).chart;
+    const fast = buildChart(makeSyntheticSong({ bpm: 126 }), { seed: 1 }).chart;
     assert.equal(slow.music.bpm, 63);
     assert.equal(slow.world.speedPxS, fast.world.speedPxS);
 });
 
-test('v2: con beats reales del analizador, los rellenos caen EN esos beats', () => {
-    // Beats reales con swing y pequeñas irregularidades (lo que devuelve un
-    // seguidor de beats de verdad); el análisis dice el periodo medio.
-    const beats = [];
-    for (let i = 0, t = 1; t < 120; i++) {
-        beats.push(Math.round(t * 1000) / 1000);
-        t += 0.5 + (i % 2 === 0 ? 0.012 : -0.012) + ((i % 7) - 3) * 0.002;
+test('formato 1 (análisis del navegador): pulso reconstruido, en rejilla y jugable', () => {
+    for (const bpm of [80, 128, 170]) {
+        const analysis = makeSyntheticAnalysis({ bpm, durationSec: 90, noisePerBeat: 4, seed: bpm });
+        const { chart } = buildChart(analysis, { seed: 1 });
+        const period = 60 / bpm;
+        const truth = [];
+        for (let t = 0; t < 90; t += period) truth.push(t);
+        const off = obstacles(chart).filter((e) => !onGrid(e.t, truth, 0.015));
+        assert.equal(off.length, 0, `${bpm} BPM: ${off.length}/${obstacles(chart).length} fuera del pulso real`);
+        assert.ok(obstacles(chart).length > 15);
+        const v = validatePlayability(toSimObstacles(obstacles(chart)), speedProfileOf(chart), { toleranceS: DIFFICULTY_PROFILES[3].toleranceS });
+        assert.ok(v.ok, `${bpm} BPM: injugable en ${v.t}`);
     }
-    const analysis = {
-        ...makeSyntheticAnalysis({ bpm: 120, durationSec: 120, noisePerBeat: 0 }),
-        // Casi ningún golpe utilizable: el nivel es sobre todo relleno. Los
-        // onsets de un análisis real caen en su golpe, que coincide con su beat.
-        onsets: [[beats[8], 1], [beats[79], 1], [beats[159], 1]],
-        beats,
-    };
-    const { chart, report } = buildChart(analysis, { seed: 3 });
-    assert.ok(report.fillers > 30);
-    for (const e of chart.events) {
-        const nearest = beats.reduce((best, b) => (Math.abs(b - e.t) < Math.abs(best - e.t) ? b : best), beats[0]);
-        assert.ok(Math.abs(nearest - e.t) <= 0.0011, `evento en ${e.t} a ${((e.t - nearest) * 1000).toFixed(1)} ms de un beat real`);
-    }
-    for (let i = 1; i < chart.events.length; i++) {
-        assert.ok(chart.events[i].t - chart.events[i - 1].t >= CHARTER_RULES.minGapS - 1e-9);
-    }
-    assert.ok(validatePlayability(toSimObstacles(chart.events), chart.world.speedPxS).ok);
 });
 
-test('v2: llevar un relleno a su beat nunca rompe el hueco mínimo', () => {
-    const out = snapFillersToBeats([3.0, 3.72, 4.44], [3.0], [3.0, 3.6, 4.2, 4.44], { maxShiftS: 0.15, minGapS: 0.7, tMin: 3, tMax: 10 });
-    assert.equal(out[1], 3.72, '3.6 quedaría a 0.6 s del golpe anterior: se respeta el relleno');
-    assert.equal(out[2], 4.44);
-});
+test('canciones extremas: vacía, muy corta o sin golpes no rompen', () => {
+    const tiny = makeSyntheticAnalysis({ bpm: 120, durationSec: 4 });
+    const { chart: empty } = buildChart(tiny, { seed: 1 });
+    assert.equal(obstacles(empty).length, 0);
+    assert.doesNotThrow(() => normalizeChart(empty));
 
-test('D13: los onsets anteriores a la ventana no suprimen onsets válidos', () => {
-    const analysis = makeSyntheticAnalysis({ bpm: 120, durationSec: 30 });
-    analysis.onsets = [[2.9, 1.0], [3.3, 0.8]];
-    const { chart } = buildChart(analysis, { seed: 1 });
-    assert.ok(chart.events.some((e) => e.t === 3.3), 'el onset de 3.3 s debe sobrevivir');
-});
-
-test('una canción sin golpes utilizables se rellena y es jugable', () => {
-    const analysis = { ...makeSyntheticAnalysis({ bpm: 120, durationSec: 40 }), onsets: [] };
-    const { chart } = buildChart(analysis, { seed: 1 });
-    assert.ok(chart.events.length > 10);
-    assert.ok(validatePlayability(toSimObstacles(chart.events), chart.world.speedPxS).ok);
-});
-
-test('una canción demasiado corta produce un chart vacío, no uno roto', () => {
-    const analysis = makeSyntheticAnalysis({ bpm: 120, durationSec: 4 });
-    const { chart } = buildChart(analysis, { seed: 1 });
-    assert.equal(chart.events.length, 0);
+    const noHits = { ...makeSyntheticAnalysis({ bpm: 120, durationSec: 40 }), onsets: [] };
+    const { chart } = buildChart(noHits, { seed: 1 });
     assert.doesNotThrow(() => normalizeChart(chart));
+    const v = validatePlayability(toSimObstacles(obstacles(chart)), speedProfileOf(chart));
+    assert.ok(v.ok);
+});
+
+test('los 8 oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos y con dinámica', async () => {
+    const dir = path.join(ROOT, 'database/seeds/official/baked');
+    const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
+    assert.equal(files.length, 8);
+    for (const file of files) {
+        const baked = JSON.parse(await readFile(path.join(dir, file), 'utf8'));
+        const analysis = baked.analysis;
+        for (const difficulty of [1, 2, 3, 4, 5]) {
+            const { chart, report } = buildChart(analysis, { sha256: baked.audio.sha256, difficulty });
+            const label = `${file} d${difficulty}→${report.difficulty}`;
+            const { warnings } = normalizeChart(chart);
+            assert.deepEqual(warnings, [], label);
+            const obs = obstacles(chart);
+            const v = validatePlayability(toSimObstacles(obs), speedProfileOf(chart), { toleranceS: DIFFICULTY_PROFILES[report.difficulty].toleranceS });
+            assert.ok(v.ok, `${label}: patrón imposible en t=${v.t} (${v.pattern})`);
+            const off = obs.filter((e) => !onGrid(e.t, analysis.beats, 0.065));
+            assert.equal(off.length, 0, `${label}: ${off.length} acciones fuera de la rejilla`);
+            assert.ok(report.difficulty <= (report.ceiling ?? 5), `${label}: por encima del techo`);
+            assert.equal(sections(chart).filter((s) => s.climax).length, 1, `${label}: un clímax`);
+        }
+    }
 });
 
 test('el charter escala linealmente con la duración de la canción', () => {
-    // Una canción el cuádruple de larga debe costar ~×4, no ×16. De nuevo por
-    // proporción y no en milisegundos, para ser estable en cualquier máquina.
-    const short = makeSyntheticAnalysis({ bpm: 128, durationSec: 60, noisePerBeat: 6 });
-    const long = makeSyntheticAnalysis({ bpm: 128, durationSec: 240, noisePerBeat: 6 });
-    const tShort = minTime(() => buildChart(short, { seed: 1 }));
-    const tLong = minTime(() => buildChart(long, { seed: 1 }));
+    // Por proporción y no en milisegundos: estable en cualquier máquina.
+    const short = makeSyntheticSong({ bpm: 128, sections: [{ bars: 16, energy: 0.6, hits: 0.7 }, { bars: 16, energy: 0.9, hits: 1 }] });
+    const long = makeSyntheticSong({ bpm: 128, sections: Array.from({ length: 8 }, (_, i) => ({ bars: 16, energy: i % 2 ? 0.9 : 0.6, hits: i % 2 ? 1 : 0.7, cluster: i % 2 ? 'B' : 'A' })) });
+    const tShort = minTime(() => buildChart(short, { seed: 1, difficulty: 4 }));
+    const tLong = minTime(() => buildChart(long, { seed: 1, difficulty: 4 }));
     assert.ok(tLong < tShort * 9, `×4 de duración costó ×${(tLong / tShort).toFixed(1)}`);
 });
 
 /**
- * Tiempo MÍNIMO de varias ejecuciones tras calentar el JIT.
- *
- * Mínimo y no media ni mediana: la carga de la máquina (otros procesos, otros
- * archivos de test en paralelo, el GC) solo puede AÑADIR tiempo, nunca
- * quitarlo. El mínimo es la mejor estimación del coste intrínseco del código y
- * la única que se mantiene estable en una máquina ocupada.
+ * Tiempo MÍNIMO de varias ejecuciones tras calentar el JIT: la carga de la
+ * máquina solo puede añadir tiempo, así que el mínimo es la estimación estable.
  */
-function minTime(fn, runs = 9) {
+function minTime(fn, runs = 7) {
     fn();
     fn();
     let best = Infinity;

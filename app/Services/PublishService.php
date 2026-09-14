@@ -7,6 +7,7 @@ use App\Core\Database;
 use App\Core\Env;
 use App\Models\AnalysisJob;
 use App\Models\Level;
+use App\Models\Progress;
 
 /**
  * Publicación de niveles con análisis en servidor (Ola 4).
@@ -86,6 +87,54 @@ final class PublishService
                 (string) $level->filePath,
                 $level->audioSha256,
                 AnalysisJob::PURPOSE_PUBLISH,
+                AnalysisJob::PRIORITY_INTERACTIVE,
+            );
+        });
+    }
+
+    /**
+     * Cambia la dificultad que pide el autor de un nivel (Ola 5, doc 10 §2.3).
+     *
+     * Reglas (el controlador valida el valor y el techo antes de llegar aquí):
+     *   - Bloqueada si otros jugadores ya tienen marca: sus marcas se hicieron
+     *     sobre el chart actual (`difficulty_locked`).
+     *   - Nivel sin audio en el servidor (privado, solo local): se guarda la
+     *     preferencia y se aplicará cuando se publique. Devuelve null.
+     *   - Con un análisis ya en marcha (se está publicando): se guarda y ese
+     *     mismo trabajo la usará al chartear. Devuelve ese trabajo.
+     *   - Si no: se encola un re-chart con el análisis guardado. Devuelve el
+     *     trabajo nuevo.
+     *
+     * @throws \DomainException 'difficulty_locked' | 'analyzer_disabled'
+     */
+    public static function changeDifficulty(Level $level, ?int $requested): ?AnalysisJob
+    {
+        return self::transaction(static function () use ($level, $requested): ?AnalysisJob {
+            $pdo = Database::getInstance();
+            $pdo->prepare('SELECT id FROM levels WHERE id = :id FOR UPDATE')->execute(['id' => $level->id]);
+            // Todas las comprobaciones ANTES de escribir: si esta llamada va
+            // dentro de una transacción ajena, un fallo no puede dejar la
+            // dificultad cambiada sin su re-chart.
+            if ($level->userId !== null && (Progress::otherPlayerCounts([$level->id], $level->userId)[$level->id] ?? 0) > 0) {
+                throw new \DomainException('difficulty_locked');
+            }
+            if ($level->filePath !== null && !self::analyzerEnabled()) {
+                // Sin analizador no hay quien vuelva a chartear en el servidor.
+                throw new \DomainException('analyzer_disabled');
+            }
+            $level->setDifficultyRequested($requested);
+            if ($level->filePath === null) {
+                return null;
+            }
+            $active = AnalysisJob::latestForLevel($level->id);
+            if ($active !== null && $active->isActive()) {
+                return $active;
+            }
+            return AnalysisJob::enqueue(
+                $level->id,
+                $level->filePath,
+                $level->audioSha256,
+                AnalysisJob::PURPOSE_RECHART,
                 AnalysisJob::PRIORITY_INTERACTIVE,
             );
         });

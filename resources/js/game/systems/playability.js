@@ -24,11 +24,12 @@ import {
     dinoHitbox,
     obstacleHitbox,
     obstacleTopY,
-    obstacleLeftX,
     actionLeadS,
     isDuckKind,
     aabbHit,
+    DINO_CENTER_X,
 } from './physics.js';
+import { asSpeedProfile } from './speedProfile.js';
 
 /**
  * Paso por defecto: EL MISMO que la física del juego (`PHYSICS_STEP_S`). La
@@ -47,9 +48,9 @@ const SIM_GROUND_Y = 1000;
 const DUCK_HOLD_MARGIN_PX = 60;
 
 /**
- * Tolerancia humana por defecto: ±40 ms. Con ella, el hueco mínimo real entre
- * acciones de la configuración actual es 0.70 s en el peor caso (medido), que
- * coincide con SPAWN_WINDOW_S.min.
+ * Tolerancia humana por defecto: ±40 ms (la de Extremo). Cada dificultad
+ * valida con la suya (levels/difficulty.js): Relajado exige superar el chart
+ * con ±80 ms. Con ±40 ms, dos saltos seguidos necesitan 0.68 s (medido).
  */
 export const DEFAULT_TOLERANCE_S = 0.04;
 
@@ -84,23 +85,33 @@ export function toSimObstacles(events) {
  * Juega una lista de obstáculos con un jugador virtual.
  *
  * @param {SimObstacle[]} obstacles
- * @param {number} speedPxS
+ * @param {number | import('./speedProfile.js').SpeedProfile} speed
+ *        Velocidad constante o perfil de velocidad del nivel (Ola 5).
  * @param {{ dt?: number, pressOffset?: (index: number) => number }} [opts]
  *        `pressOffset(i)` desplaza la pulsación del obstáculo i (segundos;
  *        negativo = se adelanta). Por defecto 0: jugador perfecto.
  * @returns {{ ok: true } | { ok: false, index: number, t: number, atSongTime: number }}
  */
-export function simulateRun(obstacles, speedPxS, opts = {}) {
+export function simulateRun(obstacles, speed, opts = {}) {
     if (obstacles.length === 0) return { ok: true };
 
     const dt = opts.dt ?? DEFAULT_DT;
     const pressOffset = opts.pressOffset ?? (() => 0);
+    const profile = asSpeedProfile(speed);
 
-    // Guion de pulsaciones del jugador virtual, ordenado en el tiempo.
+    // Distancia del mundo en el cruce de cada obstáculo: la x de cada paso es
+    // DINO + (crossD − D(ahora)) − w/2, con D(ahora) calculada una vez por paso.
+    const crossD = new Float64Array(obstacles.length);
+    if (!profile.constant) {
+        for (let i = 0; i < obstacles.length; i++) crossD[i] = profile.distanceAt(obstacles[i].cross);
+    }
+
+    // Guion de pulsaciones del jugador virtual, ordenado en el tiempo. Suelta el
+    // agachado cuando el ptero ya pasó del todo, a la velocidad de ESE momento.
     const presses = obstacles.map((o, i) => {
         const at = o.t + pressOffset(i);
         return isDuckKind(o.def)
-            ? { at, action: 'duck', id: i, releaseAt: o.cross + (o.def.w / 2 + DUCK_HOLD_MARGIN_PX) / speedPxS }
+            ? { at, action: 'duck', id: i, releaseAt: o.cross + (o.def.w / 2 + DUCK_HOLD_MARGIN_PX) / profile.speedAt(o.cross) }
             : { at, action: 'jump', id: i };
     }).sort((a, b) => a.at - b.at);
 
@@ -119,8 +130,9 @@ export function simulateRun(obstacles, speedPxS, opts = {}) {
 
     // Ventana de obstáculos que pueden tocar al Dino en este instante: los que
     // cruzan en ±(margen) segundos. Dos punteros sobre la lista ordenada — el
-    // coste por paso es O(obstáculos cercanos), no O(total).
-    const reachS = 400 / speedPxS;
+    // coste por paso es O(obstáculos cercanos), no O(total). Con la velocidad
+    // más baja del perfil, la ventana más holgada.
+    const reachS = 400 / profile.minSpeed;
     let lo = 0;
     let hi = 0;
 
@@ -168,9 +180,13 @@ export function simulateRun(obstacles, speedPxS, opts = {}) {
         if (lo === hi) continue;
 
         dinoHitbox(body, dh);
+        const nowD = profile.distanceAt(tau);
         for (let i = lo; i < hi; i++) {
             const o = obstacles[i];
-            const x = obstacleLeftX(o.def, o.cross, tau, speedPxS);
+            // Con velocidad constante, la fórmula exacta de la Ola 3 (sin restar
+            // dos distancias grandes): mismos resultados bit a bit que antes.
+            const ahead = profile.constant ? (o.cross - tau) * profile.base : crossD[i] - nowD;
+            const x = DINO_CENTER_X + ahead - o.def.w / 2;
             obstacleHitbox(o.def, x, obstacleTopY(o.def, SIM_GROUND_Y), oh);
             if (aabbHit(dh, oh)) {
                 return { ok: false, index: i, t: o.t, atSongTime: tau };
@@ -191,19 +207,20 @@ export function simulateRun(obstacles, speedPxS, opts = {}) {
  * deja los huecos iguales y cada obstáculo ya se prueba desplazado.
  *
  * @param {SimObstacle[]} obstacles
- * @param {number} speedPxS
+ * @param {number | import('./speedProfile.js').SpeedProfile} speed
  * @param {{ toleranceS?: number, dt?: number }} [opts]
  * @returns {{ ok: true } | { ok: false, index: number, t: number, pattern: string }}
  */
-export function validatePlayability(obstacles, speedPxS, opts = {}) {
+export function validatePlayability(obstacles, speed, opts = {}) {
     const tol = opts.toleranceS ?? DEFAULT_TOLERANCE_S;
+    const profile = asSpeedProfile(speed);
     const patterns = [
         ['perfecto', () => 0],
         ['tarde-pronto', (i) => (i % 2 === 0 ? tol : -tol)],
         ['pronto-tarde', (i) => (i % 2 === 0 ? -tol : tol)],
     ];
     for (const [name, pressOffset] of patterns) {
-        const r = simulateRun(obstacles, speedPxS, { dt: opts.dt, pressOffset });
+        const r = simulateRun(obstacles, profile, { dt: opts.dt, pressOffset });
         if (!r.ok) return { ok: false, index: r.index, t: r.t, pattern: name };
     }
     return { ok: true };

@@ -61,6 +61,11 @@ export function createAudioFilter() {
                 // Y del horizonte en uv [0,1] (v=0 arriba). El engine la deriva
                 // de GROUND_OFFSET_PX / viewport height y la refresca en resize.
                 uHorizon:    { value: 0.94, type: 'f32' },
+                // Estructura de la canción (Ola 5): ver background.frag.
+                uIntensity:  { value: 0.0, type: 'f32' },
+                uProgress:   { value: 0.0, type: 'f32' },
+                uClimax:     { value: 0.0, type: 'f32' },
+                uFlash:      { value: 0.0, type: 'f32' },
             },
             // CRÍTICO: pasar el TextureSource (BufferImageSource extiende de él),
             // no una Texture wrapper. Si pones `Texture` aquí, Pixi v8 deja el
@@ -75,7 +80,7 @@ export function createAudioFilter() {
     // datos y el sample devuelve memoria sin inicializar.
     fftSource.update();
 
-    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon }) {
+    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, intensity, progress, climax, flash }) {
         const u = filter.resources.audioUniforms.uniforms;
         if (time      !== undefined) u.uTime      = time;
         if (rms       !== undefined) u.uRMS       = rms;
@@ -85,6 +90,10 @@ export function createAudioFilter() {
         if (bpmPulse  !== undefined) u.uBpmPulse  = bpmPulse;
         if (debugMode !== undefined) u.uDebugMode = debugMode;
         if (horizon   !== undefined) u.uHorizon   = horizon;
+        if (intensity !== undefined) u.uIntensity = intensity;
+        if (progress  !== undefined) u.uProgress  = progress;
+        if (climax    !== undefined) u.uClimax    = climax;
+        if (flash     !== undefined) u.uFlash     = flash;
     }
 
     /**
@@ -108,6 +117,10 @@ export function createAudioFilter() {
             u.uMid = 0;
             u.uHigh = 0;
             u.uBpmPulse = 0;
+            u.uIntensity = 0;
+            u.uProgress = 0;
+            u.uClimax = 0;
+            u.uFlash = 0;
             fftBuffer.fill(0);
             fftSource.update();
         }

@@ -27,9 +27,9 @@ import { renderAvatar } from './avatar.js';
 import { cardView, emptyView, tabsFor, PLAY_MODE, formatPoints } from './catalogModel.js';
 import { createModal } from './modals.js';
 import { showToast } from './toast.js';
-import { analysisView, PUBLISH_STATE } from './publishModel.js';
+import { analysisView, difficultyChoiceView, PUBLISH_STATE } from './publishModel.js';
 import {
-    LEVEL_UPDATED_EVENT, retryAnalysis, subscribeAnalysis, trackPending, trackPublish,
+    LEVEL_UPDATED_EVENT, changeDifficulty, retryAnalysis, subscribeAnalysis, trackPending, trackPublish,
 } from './publishTracker.js';
 
 const DIALOG_ID = 'modal-catalog';
@@ -479,6 +479,8 @@ function openDetail(level, fromButton) {
         actions.appendChild(publish);
     }
     info.append(actions, status);
+    const difficultyChoice = renderDifficultyChoice(level);
+    if (difficultyChoice !== null) info.appendChild(difficultyChoice);
     if (view.publish.analysis !== null) {
         info.appendChild(renderAnalysisPanel(level, view.publish));
     }
@@ -624,6 +626,62 @@ async function retryLevelAnalysis(level, btn, status) {
     if (ui.detail?.id === level.id) {
         openDetail({ ...level, pending_public: true, analysis: { status: 'queued', attempts: 0, queue_position: null } }, null);
     }
+}
+
+/**
+ * Selector de dificultad de un nivel propio (Ola 5). Qué opciones hay y cuándo
+ * se puede tocar lo decide `difficultyChoiceView`; aquí solo se pinta y se
+ * envía. Al terminar el re-chart, LEVEL_UPDATED_EVENT repinta la ficha entera.
+ *
+ * @param {object} level
+ * @returns {HTMLElement | null}
+ */
+function renderDifficultyChoice(level) {
+    const view = difficultyChoiceView(level);
+    if (view === null) return null;
+
+    const box = el('fieldset', 'daino-difficulty');
+    box.dataset.busy = String(view.busy);
+    const legend = el('legend', 'daino-difficulty__legend', 'Dificultad del nivel');
+    const group = el('div', 'daino-difficulty__options');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Dificultad del nivel');
+    const note = el('p', 'daino-difficulty__note', view.note);
+    note.setAttribute('role', 'status');
+    note.setAttribute('aria-live', 'polite');
+
+    for (const option of view.options) {
+        const selected = option.value === view.current;
+        const b = button('', 'daino-difficulty__option');
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(selected));
+        b.dataset.value = String(option.value);
+        b.append(el('span', 'daino-difficulty__label', option.label), el('span', 'daino-difficulty__hint', option.hint));
+        b.disabled = view.locked || view.busy;
+        b.addEventListener('click', () => {
+            if (!selected) void applyDifficulty(level, option.value, box, note);
+        });
+        group.appendChild(b);
+    }
+    box.append(legend, group, note);
+    return box;
+}
+
+async function applyDifficulty(level, value, box, note) {
+    const buttons = [...box.querySelectorAll('button')];
+    for (const b of buttons) b.disabled = true;
+    box.dataset.busy = 'true';
+    note.textContent = 'Aplicando la dificultad…';
+
+    const res = await changeDifficulty(level, value);
+    if (!res.ok) {
+        box.dataset.busy = 'false';
+        note.textContent = res.message;
+        for (const b of buttons) b.disabled = false;
+        return;
+    }
+    if (ui.detail?.id === level.id) openDetail({ ...level, ...res.level }, null);
+    if (!res.applying) showToast('Dificultad guardada: se aplicará cuando publiques el nivel.', 'info');
 }
 
 /**

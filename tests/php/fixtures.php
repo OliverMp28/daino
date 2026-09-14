@@ -46,6 +46,33 @@ function chartFor(string $audioSha, int $charterVersion = 1, int $events = 3): a
 }
 
 /**
+ * Chart de formato 2 (Ola 5): velocidad por tramos, pulso, dificultad y
+ * eventos de estructura.
+ *
+ * @return array<string, mixed>
+ */
+function chartV2For(string $audioSha, int $charterVersion = 3): array
+{
+    $chart = chartFor($audioSha, $charterVersion, 3);
+    $chart['formatVersion'] = 2;
+    $chart['music']['beats'] = [1.0, 1.5, 2.0, 2.5];
+    $chart['music']['downbeats'] = [1.0, 2.0];
+    $chart['difficulty'] = ['level' => 4, 'requested' => 'auto', 'ceiling' => 5];
+    $chart['world']['speedChanges'] = [
+        ['t' => 20.0, 'speedPxS' => 480.0, 'rampS' => 0.0],
+        ['t' => 40.0, 'speedPxS' => 437.5, 'rampS' => 0.9],
+    ];
+    $chart['events'] = [
+        ['t' => 0.0, 'type' => 'section', 'level' => 1, 'intensity' => 0.3, 'role' => 'intro', 'climax' => false],
+        ['t' => 20.0, 'type' => 'section', 'level' => 3, 'intensity' => 0.71, 'role' => 'chorus', 'climax' => false],
+        ['t' => 20.0, 'type' => 'fx', 'fx' => 'drop', 'level' => 3],
+        ['t' => 20.0, 'type' => 'obstacle', 'kind' => 'CACTUS_WIDE'],
+        ['t' => 20.8, 'type' => 'obstacle', 'kind' => 'PTERO'],
+    ];
+    return $chart;
+}
+
+/**
  * @return array<string, mixed>
  */
 function storeBody(string $audioSha, array $overrides = []): array
