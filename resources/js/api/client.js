@@ -233,6 +233,21 @@ async function tryRefresh() {
 }
 
 /**
+ * GET de un recurso binario (audio de un nivel) con el Bearer de la sesión si
+ * la hay. Devuelve la `Response` tal cual: quien llama lee el cuerpo en streaming.
+ * Con sesión, el autor recibe también el audio de su nivel sin publicar (listo
+ * para publicar); sin ella, solo lo público.
+ *
+ * @param {string} path
+ * @returns {Promise<Response>}
+ */
+export function fetchBinary(path) {
+    const headers = {};
+    if (accessToken !== null) headers['Authorization'] = `Bearer ${accessToken}`;
+    return fetch(path, { credentials: 'same-origin', headers });
+}
+
+/**
  * Upload multipart con Bearer (sin Content-Type explícito — el browser lo
  * setea con el boundary correcto). Same retry-on-401 behavior que `request()`.
  * `formData` debe ser una instancia de FormData.

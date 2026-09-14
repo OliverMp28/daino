@@ -212,7 +212,7 @@ class InProcessAnalyzer:
 
 class Worker:
     def __init__(self, connect: Callable, config: WorkerConfig, analyzer=None,
-                 charter: Callable[[dict, str, int | None], dict] = chart_from_analysis,
+                 charter: Callable[..., dict] = chart_from_analysis,
                  root: Path | None = None, log: Callable[..., None] | None = None):
         self._connect = connect
         self.config = config
@@ -287,11 +287,12 @@ class Worker:
 
             if not beat("charting", 0.92, force=True):
                 raise Cancelled()
-            # Ola 5: la dificultad que pide el autor AHORA (puede haberla cambiado
-            # mientras se analizaba). Si la cambia después, complete() lo detecta.
+            # La dificultad que pide el autor ahora (la de un nivel que se vuelve a
+            # publicar se conserva), y el chart de cada una que la canción admite:
+            # un nivel sin publicar queda listo para que su autor elija al instante.
             requested = jobs.requested_difficulty(conn, job.level_id)
             try:
-                charted = self.charter(analysis, sha, requested)
+                charted = self.charter(analysis, sha, requested, variants=True)
             except CharterError as exc:
                 raise AnalysisFailed("charter_failed", str(exc), permanent=True) from exc
 
@@ -299,7 +300,7 @@ class Worker:
                 audio_sha256=sha, analyzer_key=ANALYZER_KEY, analysis=analysis, chart=charted["chart"],
                 difficulty=int(charted["difficulty"]), difficulty_ceiling=charted["difficultyCeiling"],
                 charter_version=int(charted["chart"]["charter"]["version"]),
-                requested_difficulty=requested,
+                variants=charted.get("variants"),
             )
             outcome = jobs.complete(conn, job, self.config.worker_id, result)
             self.log("job_done", job=job.id, level=job.level_id, outcome=outcome, cached_analysis=cached,

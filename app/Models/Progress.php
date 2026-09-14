@@ -159,29 +159,28 @@ final class Progress
     }
 
     /**
-     * Jugadores con marca en cada nivel sin contar a un usuario (su autor), en
-     * una consulta. Ola 5: la dificultad de un nivel se puede cambiar mientras
-     * nadie más lo haya jugado.
+     * Borra las marcas de un nivel cuyo chart deja de ser el que se jugó y
+     * recalcula el ranking global de quienes las tenían. Una marca solo vale
+     * para el chart con el que se hizo: si no, bastaría con superar un nivel en
+     * Relajado y publicarlo en Extremo para estrenar su ranking con un 100 %.
      *
-     * @param list<int> $levelIds
-     * @return array<int, int>  indexado por level_id (ausente = 0)
+     * @return int  marcas borradas
      */
-    public static function otherPlayerCounts(array $levelIds, int $excludeUserId): array
+    public static function invalidateForLevel(int $levelId): int
     {
-        if ($levelIds === []) {
-            return [];
+        $pdo = Database::getInstance();
+        $stmt = $pdo->prepare('SELECT DISTINCT user_id FROM progress WHERE level_id = :level_id');
+        $stmt->execute(['level_id' => $levelId]);
+        $userIds = array_map('intval', $stmt->fetchAll(\PDO::FETCH_COLUMN));
+        if ($userIds === []) {
+            return 0;
         }
-        $in = implode(',', array_fill(0, count($levelIds), '?'));
-        $stmt = Database::getInstance()->prepare(
-            "SELECT level_id, COUNT(*) AS players FROM progress
-             WHERE level_id IN ({$in}) AND user_id <> ? GROUP BY level_id",
-        );
-        $stmt->execute([...$levelIds, $excludeUserId]);
-        $out = [];
-        foreach ($stmt->fetchAll() as $row) {
-            $out[(int) $row['level_id']] = (int) $row['players'];
+        $delete = $pdo->prepare('DELETE FROM progress WHERE level_id = :level_id');
+        $delete->execute(['level_id' => $levelId]);
+        foreach ($userIds as $userId) {
+            Ranking::recompute($userId);
         }
-        return $out;
+        return $delete->rowCount();
     }
 
     public static function countForLevel(int $levelId): int

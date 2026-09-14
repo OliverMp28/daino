@@ -91,6 +91,20 @@ export function createLocalBests(deps = {}) {
             writeAll(map);
             return { best, improved };
         },
+
+        /**
+         * Olvida la marca de un nivel cuyo chart cambió (su autor eligió otra
+         * dificultad antes de publicarlo): era de un nivel que ya no existe.
+         *
+         * @param {number} levelId
+         */
+        forget(levelId) {
+            const map = readAll();
+            const key = String(levelId);
+            if (!Object.hasOwn(map, key)) return;
+            delete map[key];
+            writeAll(map);
+        },
     };
 }
 

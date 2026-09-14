@@ -40,7 +40,7 @@ import { openCatalog } from './catalog.js';
 import { PLAY_REQUEST_EVENT, PREFETCH_REQUEST_EVENT } from './playRequests.js';
 import { showToast } from './toast.js';
 import { Input } from '../game/systems/input.js';
-import { getUser, request as apiRequest } from '../api/client.js';
+import { fetchBinary, getUser, request as apiRequest } from '../api/client.js';
 import { invalidateLevels } from '../api/levelsCache.js';
 import { getSkin, getQuality } from './settings.js';
 
@@ -94,7 +94,9 @@ export function start(cfg) {
 
     loader = createLevelLoader({
         cache: createLevelCache(),
-        fetchAudio: (url) => fetch(url, { credentials: 'same-origin' }),
+        // Con el Bearer de la sesión: el autor juega su nivel listo para
+        // publicar desde el audio del servidor (sin volver a elegir el MP3).
+        fetchAudio: (url) => fetchBinary(url),
         getJson: (path) => apiRequest('GET', path),
         decode: (bytes) => getAudioEngine().decode(bytes),
         // La precarga decodifica sin tocar el AudioContext del juego: crearlo o
@@ -242,9 +244,9 @@ async function handlePlayRequest(request) {
         hideHint();
         menu.setVisible(true);
         setState(STATE.MENU);
-        // Si venía de la ficha de un nivel, se vuelve a ella: el jugador puede
-        // elegir el archivo correcto sin tener que buscar el nivel otra vez.
-        if (request.level) openCatalog({ tab: request.level.is_mine ? 'mine' : undefined, level: request.level });
+        // Si venía del catálogo, se vuelve a él, en la misma pestaña: el jugador
+        // reintenta (o elige el archivo correcto) sin buscar el nivel otra vez.
+        if (request.level) openCatalog({ tab: request.level.is_mine && request.level.is_public !== true ? 'mine' : undefined });
         // DESPUÉS de abrir el catálogo: la top layer apila por orden de
         // apertura, y un aviso abierto antes quedaría debajo del diálogo.
         showToast(err instanceof LevelLoadError ? err.message : 'No se pudo preparar el nivel. Inténtalo de nuevo.');
@@ -267,9 +269,30 @@ async function handlePlayRequest(request) {
     // sesión se juega igual, pero sin intentar un POST que el servidor
     // rechazaría con 401. Canción local con sesión: se registra (o se recupera,
     // si ya se jugó) para poder guardar el progreso.
-    let levelId = null;
-    if (getUser() !== null) {
-        levelId = loaded.levelId ?? (await persistLocalLevel(loaded));
+    let levelId = loaded.levelId;
+    if (getUser() === null) {
+        levelId = null;
+    } else if (levelId === null) {
+        const saved = await persistLocalLevel(loaded);
+        if (seq !== playRequestSeq) return;
+        levelId = saved?.id ?? null;
+        if (saved !== null && !saved.created) {
+            // La canción ya era un nivel tuyo (publicado, listo para publicar con
+            // la dificultad elegida…): se juega SU chart y no el recién generado
+            // en Automática, o la marca se guardaría en un nivel distinto del que
+            // se ha jugado.
+            try {
+                loaded = await loader.loadLocal(request.file, { onStage, level: saved.level });
+            } catch (err) {
+                console.warn('[AppController] no se pudo usar el chart de tu nivel; se juega sin guardar progreso:', err);
+                levelId = null;
+            }
+            if (renderPaused) {
+                engineApi.setRenderPaused(false);
+                renderPaused = false;
+            }
+            if (seq !== playRequestSeq) return;
+        }
     }
     if (seq !== playRequestSeq) return;
 
@@ -309,10 +332,11 @@ async function handlePlayRequest(request) {
  *
  * Idempotente por hash del audio (defecto D1): la misma canción devuelve el
  * mismo nivel en vez de crear otro. Se envían el chart y el análisis para que,
- * si el usuario la publica, los demás jueguen exactamente este nivel sin
- * analizar nada. Un fallo aquí no impide jugar: solo no se guardará el progreso.
+ * si el usuario la publica sin analizador en el servidor, los demás jueguen
+ * exactamente este nivel. Un fallo aquí no impide jugar: solo no se guardará el
+ * progreso.
  *
- * @returns {Promise<number|null>}
+ * @returns {Promise<{ id: number, level: object, created: boolean } | null>}
  */
 async function persistLocalLevel(loaded) {
     if (getUser() === null) return null;
@@ -330,9 +354,10 @@ async function persistLocalLevel(loaded) {
             },
         });
         if (res.ok && typeof res.data?.id === 'number') {
+            const created = res.status === 201;
             // "Mis niveles" cambió si el nivel es nuevo.
-            if (res.status === 201) invalidateLevels('mine');
-            return res.data.id;
+            if (created) invalidateLevels('mine');
+            return { id: res.data.id, level: res.data, created };
         }
         console.warn('[AppController] POST /api/levels falló:', res.status, res.data);
     } catch (err) {
@@ -449,6 +474,11 @@ function setState(next) {
     state = next;
     // `<body data-app-state>` permite al CSS mostrar/ocultar UI por modo.
     document.body.dataset.appState = next;
+
+    // Fuera del menú, el chip de sesión no solo se ve transparente: no recibe
+    // clics ni foco (una capa invisible encima del juego no debe hacer nada).
+    const authAnchor = document.getElementById('auth-anchor');
+    if (authAnchor !== null) authAnchor.inert = next !== STATE.MENU;
 
     // El dino ambiente del scenery solo corre en el menú.
     engineApi?.setAmbientDinoVisible?.(next === STATE.MENU);

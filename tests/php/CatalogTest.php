@@ -137,6 +137,26 @@ test('scope=community excluye oficiales y privados; scope=public incluye oficial
     assertTrue(in_array($official->id, ids($all['items']), true), 'el listado público incluye oficiales');
 });
 
+test('scope=public es la vista única: primero los oficiales (de menos a más difíciles), después la comunidad (lo más reciente primero)', function (): void {
+    $hard = makeOfficial('vista-duro', ['difficulty' => 5, 'title' => 'AAA duro']);
+    $easy = makeOfficial('vista-facil', ['difficulty' => 1, 'title' => 'ZZZ fácil']);
+    $user = makeUser();
+    $older = makeUserLevel($user, 'comunidad antigua', true);
+    $newer = makeUserLevel($user, 'comunidad nueva', true);
+    $hidden = makeUserLevel($user, 'comunidad privada', false);
+
+    $items = listLevels(['scope' => 'public', 'limit' => '50'])['items'];
+    $official = array_column($items, 'is_official');
+    $firstCommunity = array_search(false, $official, true);
+    $lastOfficial = max(array_keys(array_filter($official)));
+    assertTrue($firstCommunity !== false && $lastOfficial < $firstCommunity, 'ningún nivel de la comunidad antes que un oficial');
+
+    $order = ids($items);
+    assertTrue(array_search($easy->id, $order, true) < array_search($hard->id, $order, true), 'oficiales de menos a más difíciles');
+    assertTrue(array_search($newer->id, $order, true) < array_search($older->id, $order, true), 'comunidad: lo más reciente primero');
+    assertTrue(!in_array($hidden->id, $order, true), 'lo privado nunca');
+});
+
 test('scope=mine exige sesión e incluye los privados propios; mine=1 sigue funcionando', function (): void {
     $res = (new LevelApiController())->index(Request::make('GET', '/api/levels', [], ['scope' => 'mine']));
     assertSame(401, $res->status());

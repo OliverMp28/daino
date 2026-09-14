@@ -97,53 +97,53 @@ test('D12: embebido, un 401 no intenta /auth/refresh (no hay cookie): espera al 
 const level = (id) => ({ id, title: `Nivel ${id}` });
 
 test('catálogo: peticiones simultáneas de la misma pestaña se deduplican y se cachean', async () => {
-    levelPages = { official: [level(1), level(2)] };
+    levelPages = { public: [level(1), level(2)] };
     catalog.invalidateLevels();
     const n = calls.length;
 
-    const [a, b] = await Promise.all([catalog.getLevels('official'), catalog.getLevels('official')]);
+    const [a, b] = await Promise.all([catalog.getLevels('public'), catalog.getLevels('public')]);
     assert.equal(calls.length - n, 1, 'una sola petición');
     assert.deepEqual(a.data.items.map((l) => l.id), [1, 2]);
     assert.equal(a.data, b.data);
 
-    await catalog.getLevels('official');
+    await catalog.getLevels('public');
     assert.equal(calls.length - n, 1, 'fresco: sin red');
-    await catalog.getLevels('official', { force: true });
+    await catalog.getLevels('public', { force: true });
     assert.equal(calls.length - n, 2, 'force revalida');
-    assert.match(calls.at(-1).url, /scope=official&limit=24&offset=0$/);
+    assert.match(calls.at(-1).url, /scope=public&limit=24&offset=0$/, 'oficiales y comunidad en una sola vista');
 });
 
 test('catálogo: "cargar más" acumula páginas sin duplicar si se publicó algo entre medias', async () => {
     const many = Array.from({ length: 30 }, (_, i) => level(100 + i));
-    levelPages = { community: many };
+    levelPages = { public: many };
     catalog.invalidateLevels();
 
-    const first = await catalog.getLevels('community');
+    const first = await catalog.getLevels('public');
     assert.equal(first.data.items.length, 24);
     assert.equal(first.data.total, 30);
 
     // Se publica uno nuevo al principio: la página 2 empieza un puesto antes.
-    levelPages = { community: [level(999), ...many] };
-    const more = await catalog.loadMoreLevels('community');
+    levelPages = { public: [level(999), ...many] };
+    const more = await catalog.loadMoreLevels('public');
     const ids = more.data.items.map((l) => l.id);
     assert.equal(new Set(ids).size, ids.length, 'sin repetidos');
     assert.equal(ids.length, 30);
-    assert.equal(catalog.peekLevels('community').items.length, 30, 'reabrir conserva lo cargado');
+    assert.equal(catalog.peekLevels('public').items.length, 30, 'reabrir conserva lo cargado');
 });
 
 test('catálogo: guardar progreso revalida sin vaciar; cambiar de sesión sí vacía', async () => {
-    levelPages = { official: [level(1)] };
+    levelPages = { public: [level(1)] };
     catalog.invalidateLevels();
-    await catalog.getLevels('official');
+    await catalog.getLevels('public');
     const n = calls.length;
 
     win.dispatchEvent(new CustomEvent('daino:progress-saved', { detail: { levelId: 1 } }));
-    assert.ok(catalog.peekLevels('official') !== null, 'se sigue pudiendo enseñar lo anterior al instante');
-    await catalog.getLevels('official');
+    assert.ok(catalog.peekLevels('public') !== null, 'se sigue pudiendo enseñar lo anterior al instante');
+    await catalog.getLevels('public');
     assert.equal(calls.length - n, 1, 'pero la siguiente lectura revalida');
 
     win.dispatchEvent(new CustomEvent('daino:auth:logout'));
-    assert.equal(catalog.peekLevels('official'), null, 'nada de la sesión anterior queda visible');
+    assert.equal(catalog.peekLevels('public'), null, 'nada de la sesión anterior queda visible');
 });
 
 test('catálogo: una respuesta que llega tras invalidar no resucita datos viejos', async () => {
@@ -156,5 +156,8 @@ test('catálogo: una respuesta que llega tras invalidar no resucita datos viejos
 });
 
 test('catálogo: una pestaña desconocida es un error de programación, no una petición', () => {
-    assert.throws(() => catalog.getLevels('public'), /pestaña desconocida/);
+    // Las pestañas separadas de oficiales y comunidad ya no existen.
+    for (const gone of ['official', 'community']) {
+        assert.throws(() => catalog.getLevels(gone), /pestaña desconocida/);
+    }
 });

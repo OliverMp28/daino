@@ -26,8 +26,6 @@ from dataclasses import dataclass
 
 LEASE_SECONDS = 90
 BACKOFF_BASE_SECONDS = 30
-# Misma prioridad que AnalysisJob::PRIORITY_INTERACTIVE (PHP): alguien espera.
-INTERACTIVE_PRIORITY = 10
 
 
 @dataclass(frozen=True)
@@ -50,12 +48,14 @@ class Result:
     difficulty: int
     difficulty_ceiling: int | None
     charter_version: int
-    # Ola 5: la dificultad pedida con la que se charteó (None = Automática).
-    requested_difficulty: int | None = None
+    # El chart de cada dificultad que la canción admite ('auto', '1'…). Solo se
+    # guarda en niveles sin publicar: su autor elige una antes de publicar.
+    variants: dict | None = None
 
 
-# Trabajos que sustituyen el chart de un nivel ya publicado: una reanálisis
-# explícita o un cambio de dificultad de su autor (Ola 5).
+# Trabajos que sustituyen el chart de un nivel ya publicado: una reanálisis o un
+# re-chart explícitos de quien opera el servidor. El autor ya no puede cambiar la
+# dificultad de un nivel publicado (tiene una sola).
 REPLACES_PUBLIC_CHART = ("reanalyze", "rechart")
 
 
@@ -129,7 +129,8 @@ def heartbeat(conn, job: Job, worker_id: str, stage: str, progress: float, lease
 
 def requested_difficulty(conn, level_id: int | None) -> int | None:
     """Dificultad que pide el autor del nivel ahora mismo (None = Automática).
-    Se lee justo antes de chartear: un cambio durante el análisis se aplica."""
+    Se lee justo antes de chartear: la de un nivel que se vuelve a publicar tras
+    retirarlo, o la de uno re-charteado sin publicar, se conserva."""
     if level_id is None:
         return None
     with conn.cursor() as cur:
@@ -153,12 +154,19 @@ def cached_analysis(conn, audio_sha256: str, analyzer_key: str) -> dict | None:
 
 
 def complete(conn, job: Job, worker_id: str, result: Result) -> str:
-    """Escribe el resultado. Devuelve qué pasó: 'published', 'chart_updated',
+    """Escribe el resultado. Devuelve qué pasó: 'ready' (se pidió publicarlo: queda
+    listo para que su autor elija la dificultad y confirme), 'chart_updated',
     'chart_frozen', o 'abandoned' (el trabajo ya no era de este worker, o el nivel
-    cambió mientras se analizaba)."""
+    cambió mientras se analizaba).
+
+    El worker NUNCA hace público un nivel: publicar es la confirmación de su
+    autor, con la dificultad ya elegida (PublishService::confirmPublish)."""
     analysis_json = json.dumps(result.analysis, ensure_ascii=False, separators=(",", ":"))
     chart_json = json.dumps(result.chart, ensure_ascii=False, separators=(",", ":"))
     chart_hash = hashlib.sha256(chart_json.encode("utf-8")).hexdigest()
+    variants_json = (
+        json.dumps(result.variants, ensure_ascii=False, separators=(",", ":")) if result.variants else None
+    )
     duration = float(result.chart["audio"]["durationSec"])
     bpm = float(result.chart["music"]["bpm"])
 
@@ -181,7 +189,7 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
         outcome = "chart_updated"
         if job.level_id is not None:
             cur.execute(
-                """SELECT id, file_path, audio_sha256, is_public, pending_public, chart_status, difficulty_requested
+                """SELECT id, file_path, audio_sha256, is_public, pending_public, chart_status
                    FROM levels WHERE id = %s FOR UPDATE""",
                 (job.level_id,),
             )
@@ -197,11 +205,11 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                 conn.commit()
                 return "abandoned"
 
-            frozen = bool(level["is_public"]) and level["chart_status"] == "ready" and job.purpose not in REPLACES_PUBLIC_CHART
+            public = bool(level["is_public"])
+            frozen = public and level["chart_status"] == "ready" and job.purpose not in REPLACES_PUBLIC_CHART
             if frozen:
                 # Un nivel ya publicado conserva su chart: otros jugadores tienen
-                # marcas sobre él. Solo se sustituye con una reanálisis explícita
-                # o un cambio de dificultad de su autor.
+                # marcas sobre él. Solo se sustituye con una reanálisis explícita.
                 outcome = "chart_frozen"
             else:
                 cur.execute(
@@ -210,7 +218,7 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                          duration_sec = %s, duration_ms = %s, bpm = %s, bpm_exact = %s, game_speed = %s,
                          generator_seed = %s, chart_json = %s, analysis_json = %s, chart_status = 'ready',
                          chart_version = %s, chart_hash = %s, difficulty = %s, difficulty_ceiling = %s,
-                         is_public = (is_public OR pending_public), pending_public = FALSE
+                         chart_variants_json = %s, pending_public = FALSE
                        WHERE id = %s""",
                     (
                         result.audio_sha256,
@@ -219,23 +227,12 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                         int(round(float(result.chart["world"]["speedPxS"]))),
                         str(result.chart["seed"]), chart_json, analysis_json,
                         result.charter_version, chart_hash, result.difficulty, result.difficulty_ceiling,
+                        # Un nivel publicado tiene una sola dificultad: sin variantes.
+                        None if public else variants_json,
                         job.level_id,
                     ),
                 )
-                outcome = "published" if level["pending_public"] else "chart_updated"
-
-                # El autor cambió la dificultad DESPUÉS de que este trabajo la
-                # leyera (entre chartear y guardar): se encola ya otro re-chart,
-                # en esta misma transacción, para que el nivel nunca se quede con
-                # una dificultad que ya no es la pedida.
-                current = level["difficulty_requested"]
-                current = None if current is None else int(current)
-                if current != result.requested_difficulty:
-                    cur.execute(
-                        """INSERT INTO analysis_jobs (level_id, audio_path, audio_sha256, purpose, priority)
-                           VALUES (%s, %s, %s, 'rechart', %s)""",
-                        (job.level_id, job.audio_path, result.audio_sha256, INTERACTIVE_PRIORITY),
-                    )
+                outcome = "ready" if level["pending_public"] else "chart_updated"
 
         _finish(cur, job.id, "done", None, None)
     conn.commit()

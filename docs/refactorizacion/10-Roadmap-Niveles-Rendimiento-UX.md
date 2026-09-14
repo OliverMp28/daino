@@ -730,10 +730,67 @@ Los 8 oficiales, charter v2 → v3, con la dificultad del manifiesto. La densida
 - El vocabulario sigue siendo saltar, agacharse y el cactus ancho: los momentos nuevos (modos, portales) son la Ola 6.
 - Tramos, niveles y roles del arco son heurísticos: comprobados con canciones sintéticas de estructura conocida e inspeccionados en los 8 oficiales y 2 de la comunidad, sin anotación humana.
 - Con el análisis local (sin servidor) no hay secciones ni color de golpe: el arco sale de la densidad de golpes y la dinámica es más plana.
-- Cambiar la dificultad queda bloqueado en cuanto otra persona juega el nivel; desbloquearlo exigiría rankings por dificultad.
+- ~~Cambiar la dificultad queda bloqueado en cuanto otra persona juega el nivel.~~ Sustituido tras el playtest (abajo): un nivel publicado ya no cambia de dificultad.
 - La dificultad medida se desvía una estrella de la elegida en 2 oficiales (Running With the Wolves y Dawn of Faith). Los umbrales de la medida están calibrados con estas 8 canciones.
 - Más dificultad da más acciones en el conjunto de la canción, pero no siempre en cada tramo: a partir de ~85-90 BPM dos saltos no caben en beats consecutivos, las acciones seguidas alternan con agachados y la cuota aérea las limita. En What's Up Danger el clímax sale a 87 acciones/min en Difícil y a 81 en Extremo (que en conjunto es más denso, 58 frente a 51, y mide 5★).
 - Aceleración conservadora a propósito hasta el playtest: como mucho +21 % y nunca por encima de 690 px/s.
+
+#### Ajustes tras el primer playtest (Sep 2026)
+
+El propietario jugó la Ola 5 y encontró cinco problemas de UX y de coherencia. No abren ola nueva: corrigen lo que había.
+
+**1. Un nivel publicado cambiaba de dificultad.** Su autor podía hacerlo desde "De la comunidad", con un aviso de "aplicando" que apenas se veía y **Jugar pulsable mientras tanto**. Y la pregunta de fondo: ¿qué vale superar un nivel si su dificultad cambia? → **Un nivel publicado tiene una sola dificultad, para siempre.** Su autor la elige ANTES de publicarlo, y solo entre las que la canción admite.
+
+**2. Elegir con sentido exige el análisis del servidor.** Antes de decidir dónde vive la elección se midió si el análisis del navegador (el de un nivel sin publicar) sirve para estimar el techo. **No sirve**: la fuerza de sus onsets es relativa al máximo de cada canción, así que no distingue una balada de un tema con batería. Con los 11 temas disponibles:
+
+| Canción | Techo (servidor) | Onsets fuertes/min (navegador) | Golpes en la rejilla/min (navegador) |
+|---|---|---|---|
+| HOPE | 2 | 150 | 137 |
+| Time | 2 | 30 | 113 |
+| Instrumental | 4 | **3** | 55 |
+| Dawn of Faith | 4 | 30 | 86 |
+| Running With the Wolves | 5 | 59 | 128 |
+| What's Up Danger | 5 | 62 | 120 |
+| conga | 5 | 77 | 209 |
+| Mi Fiesta | 5 | 91 | 196 |
+| Sugar Red · Last Christmas | 5 | 100 · 117 | 249 · 201 |
+
+HOPE, tranquila, suena "más fuerte" que tres temas de techo 5; Instrumental, de techo 4, es la más floja. Ningún umbral los ordena. Por eso **publicar pasa a dos pasos**:
+
+1. **"Publicar…"** sube el MP3 y lo analiza (como en la Ola 4), pero al terminar el worker **ya no lo hace público**: lo deja **listo para publicar**, con el chart de **cada dificultad que la canción admite** ya generado por el servidor (`levels.chart_variants_json`, migración `011`; un CHECK impide que un nivel público conserve variantes).
+2. En su ficha, su autor elige la dificultad (Automática y 1…techo). **Cambiar es instantáneo**: el servidor copia la variante, sin cola ni análisis (5-8 ms de trabajo medido). Mientras dura la petición, la opción elegida se marca al momento y **Jugar, Publicar y No publicar quedan bloqueados y lo parecen** (antes `.daino-btn` no tenía estilo deshabilitado). Puede probarlo con Jugar (su audio se sirve desde el servidor solo a él) y confirma con **"Publicar en Difícil"**. "No publicar" lo devuelve a privado y borra su audio del servidor.
+
+Sin analizador (`ANALYZER_ENABLED=false`) se sigue publicando al instante en Automática: sin análisis del servidor no hay dificultades con sentido que ofrecer.
+
+**3. Una marca vale para el chart con el que se hizo.** Si no, bastaría con superar un nivel en Relajado y publicarlo en Extremo para estrenar su ranking con un 100 %. Por eso: elegir otra dificultad en un nivel listo borra la marca de prueba de su autor (y la local); subir un nivel a publicar borra la de su versión privada (el nivel publicado se genera de nuevo en el servidor); y soltar otra vez el MP3 de un nivel propio juega **el chart de ese nivel**, no uno recién generado en Automática. Confirmar la publicación conserva la marca hecha probando: es el mismo chart.
+
+**4. Los botones del menú seguían activos en plena partida.** El menú oculto tenía opacidad 0, pero `#menu-root [data-interactive]` reactivaba los eventos de sus botones: pulsar cerca del centro abría "Subir mi canción" en mitad del juego (y en táctil ese toque no llegaba al juego). Ahora la UI oculta es **inerte**: el menú con `inert` y `visibility: hidden` al terminar el fundido, y el chip de sesión también fuera del menú.
+
+**5. Menos viaje hasta jugar.** Oficiales y comunidad van **en una sola vista** ("Todos"; "Míos" aparte, con sesión): primero los oficiales de menos a más difíciles y después lo más reciente de la comunidad, distinguidos por la insignia "Oficial" o su autor. Y **pulsar una tarjeta juega** (▶, o ♪ si pide tu MP3): antes eran JUGAR → nivel → ficha → Jugar. La ficha (ranking, publicar, dificultad) se abre con el botón de detalles de la tarjeta. Lo que aún no se puede jugar (analizándose) abre la ficha.
+
+Decisiones que quedan sustituidas: la de la Ola 4 "el worker publica al terminar el análisis" (ahora lo deja listo y publica su autor); la de la Ola 5 "la elección de dificultad vive en la ficha del nivel publicado y se bloquea en cuanto otro tiene marca"; y las de la Ola 2 "pestañas Oficiales / De la comunidad / Míos" y "la ficha antes de jugar" (la precarga al abrir la ficha sigue igual).
+
+Archivos: migración `011_add_publish_ready_variants.sql`; `Level` (`hasVariants`, `publishReady`, `chartVariants`, `applyVariant`, `confirmPublic`, orden de `scope=public`), `PublishService` (`changeDifficulty` por variantes, `confirmPublish`, marcas en `requestPublish`), `Progress::invalidateForLevel`, `LevelPresenter` (`publish_ready`, `difficulty_choice` solo en listos), `LevelApiController` (`changeDifficulty`, `visibility` que confirma, `streamFile` para el autor); worker (`charter.py`, `worker.py`, `jobs.py`: variantes, desenlace `ready`, sin re-chart de seguimiento); `scripts/lib/chartFromAnalysis.mjs` (`variants`); cliente: `catalog.js`, `catalogModel.js`, `publishModel.js` (estado `READY`), `publishTracker.js` (`changeDifficulty`, `confirmPublish`, `withdrawPublish`), `analysisWatcher.js`, `levelsCache.js` (`public`/`mine`), `client.js` (`fetchBinary`), `menu.js` y `AppController.js` (UI inerte, canción propia con su chart), `localBests.js` (`forget`), `main.css`.
+
+**Verificación.** Tests: **166 JS**, **65 PHP** (+5) y **71 Python** (dos tests del re-chart de dificultad se sustituyen por uno). En el navegador:
+
+| Qué | Resultado |
+|---|---|
+| Catálogo sin sesión | una vista sin pestañas: 8 oficiales de Relajado a Extremo y después la comunidad, de lo más reciente a lo más antiguo |
+| Pulsar una tarjeta | partida en **1.5 s** con el fundido de 600 ms incluido; la ficha no aparece |
+| Detalles de un nivel publicado | ranking y Jugar, sin selector de dificultad (también para su autor) |
+| Clic en plena partida donde estaban "Subir mi canción" y "JUGAR" | lo que hay en ese punto es el canvas; ningún diálogo, sigue jugando, el reloj de la canción avanza y Tab no lleva el foco al menú |
+| Canción local con sesión | queda en "Míos" como privada, sin selector (análisis del navegador) |
+| "Publicar…" con HOPE | el worker la deja **lista** en 1.5 s (análisis en caché), no pública; se le borra la marca de la versión privada |
+| Nivel listo | ofrece Automática (Fácil), Relajado y Fácil: **nada por encima de su techo 2** |
+| Cambiar con la petición retenida 1.2 s | Relajado marcado al momento; Jugar, Publicar y No publicar bloqueados y atenuados; pulsar Jugar no hace nada |
+| Cambiar de verdad | 0.6-0.9 s de principio a fin en este Docker Desktop de Windows, donde `/api/health` ya tarda 0.3-0.6 s; 5-8 ms de trabajo del servidor |
+| Jugar un nivel listo | chart con dificultad 1, pedida 1 y techo 2; el audio lo recibe su autor (200, 1 265 008 bytes) y nadie más (404) |
+| "Publicar en Relajado" | público al instante, aviso, sin selector; la API devuelve **409 `difficulty_fixed`** a su autor; en "Todos" es el primero de la comunidad |
+| Volver a soltar el mismo MP3 | juega el chart del nivel publicado (Relajado), no uno nuevo en Automática |
+| Móvil (412 px) | dos columnas; el botón de detalles no tapa la marca |
+
+Limitaciones: en este entorno local cada petición a la API cuesta 0.3-0.6 s aunque no haga nada (Docker Desktop en Windows con el código montado y `opcache.revalidate_freq=0`), así que el bloqueo breve al cambiar la dificultad se nota más que en producción. Un nivel listo que su autor nunca publica conserva su audio en el servidor hasta que pulse "No publicar". Desde la ficha solo se puede retirar un nivel que todavía no se ha publicado.
 
 ---
 

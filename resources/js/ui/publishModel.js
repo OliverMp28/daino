@@ -1,12 +1,15 @@
 // Estado de publicación de un nivel propio y del análisis del servidor (Ola 4).
 //
 // Con el analizador activo, publicar ya no es instantáneo: el MP3 se sube, el
-// nivel queda "pendiente" y el servidor lo analiza antes de hacerlo público
-// (PublishService.php). Aquí se decide, sin DOM, qué enseña la UI en cada
-// momento: la insignia, el progreso con palabras que entienda un jugador, qué
-// hacer si falla y cuándo se puede reintentar. `catalog.js` solo lo pinta.
+// nivel queda "pendiente" y el servidor lo analiza (PublishService.php). Aquí se
+// decide, sin DOM, qué enseña la UI en cada momento: la insignia, el progreso con
+// palabras que entienda un jugador, qué hacer si falla y cuándo se puede
+// reintentar. `catalog.js` solo lo pinta.
 //
-// Ola 5: también la dificultad que elige el autor (`difficultyChoiceView`).
+// Tras el playtest de la Ola 5, publicar son dos pasos: al terminar el análisis
+// el nivel queda LISTO PARA PUBLICAR, su autor elige la dificultad entre las que
+// la canción admite (`difficultyChoiceView`) y confirma. Publicado, su
+// dificultad queda fija para todos.
 
 import { DIFFICULTY_NAMES, autoDifficulty } from '../game/levels/difficulty.js';
 
@@ -16,6 +19,8 @@ export const PUBLISH_STATE = Object.freeze({
     PRIVATE: 'private',
     /** Subido: el servidor lo está analizando (o lo tiene en cola). */
     ANALYZING: 'analyzing',
+    /** Analizado: su autor elige la dificultad y confirma la publicación. */
+    READY: 'ready',
     /** El análisis falló: sigue privado, con su audio en el servidor. */
     FAILED: 'failed',
     /** En el catálogo. */
@@ -65,6 +70,7 @@ const UNKNOWN_FAILURE = Object.freeze({ message: 'El analizador falló por un mo
 export function publishStateFor(level) {
     if (level?.is_public === true) return PUBLISH_STATE.PUBLIC;
     if (level?.pending_public === true) return PUBLISH_STATE.ANALYZING;
+    if (level?.publish_ready === true) return PUBLISH_STATE.READY;
     // Un fallo solo cuenta mientras el audio sigue subido: si después lo retiró
     // (pasó a privado y se borró el MP3), vuelve a ser un privado normal.
     if (level?.has_audio === true && level.analysis?.status === 'failed') return PUBLISH_STATE.FAILED;
@@ -130,8 +136,11 @@ export function analysisView(summary) {
 /**
  * Todo lo que la tarjeta y la ficha necesitan sobre publicar.
  *
+ * `canPublish`: se puede empezar a publicar (subir el MP3 para analizarlo).
+ * `canConfirm`: está listo y su autor puede publicarlo ya, con la dificultad elegida.
+ *
  * @param {object} level
- * @returns {{ state: string, badge: string | null, canPublish: boolean, canRetry: boolean,
+ * @returns {{ state: string, badge: string | null, canPublish: boolean, canConfirm: boolean, canRetry: boolean,
  *             analysis: ReturnType<typeof analysisView> }}
  */
 export function publishView(level) {
@@ -140,64 +149,62 @@ export function publishView(level) {
     const analysis = state === PUBLISH_STATE.ANALYZING || state === PUBLISH_STATE.FAILED ? analysisView(level.analysis) : null;
     switch (state) {
         case PUBLISH_STATE.PUBLIC:
-            return { state, badge: null, canPublish: false, canRetry: false, analysis: null };
+            return { state, badge: null, canPublish: false, canConfirm: false, canRetry: false, analysis: null };
         case PUBLISH_STATE.ANALYZING:
             // Sin resumen todavía (la lista llegó justo antes del trabajo): en cola.
-            return { state, badge: 'Analizando', canPublish: false, canRetry: false, analysis: analysis ?? analysisView({ status: 'queued', attempts: 0 }) };
+            return { state, badge: 'Analizando', canPublish: false, canConfirm: false, canRetry: false, analysis: analysis ?? analysisView({ status: 'queued', attempts: 0 }) };
+        case PUBLISH_STATE.READY:
+            return { state, badge: 'Listo para publicar', canPublish: false, canConfirm: own, canRetry: false, analysis: null };
         case PUBLISH_STATE.FAILED:
-            return { state, badge: 'Sin publicar', canPublish: own, canRetry: own && (analysis?.canRetry ?? false), analysis };
+            return { state, badge: 'Sin publicar', canPublish: own, canConfirm: false, canRetry: own && (analysis?.canRetry ?? false), analysis };
         default:
-            return { state, badge: own ? 'Privado' : null, canPublish: own, canRetry: false, analysis: null };
+            return { state, badge: own ? 'Privado' : null, canPublish: own, canConfirm: false, canRetry: false, analysis: null };
     }
 }
 
 /**
- * ¿Ha terminado el trabajo que se sigue? Devuelve el desenlace, o null si sigue
+ * ¿Ha terminado el análisis que se sigue? Devuelve el desenlace, o null si sigue
  * en curso. Se decide con la respuesta de GET /api/levels/{id}/analysis.
  *
- * Un nivel ya público puede tener trabajo en marcha: aplicar otra dificultad
- * (re-chart, Ola 5). Mientras esté en cola o corriendo no ha terminado; si
- * falla, el nivel sigue publicado con su chart anterior y el desenlace es un
- * fallo, no una publicación.
+ *   ready      analizado: su autor ya puede elegir la dificultad y publicarlo
+ *   published  público (sin analizador en el servidor se publica al instante)
+ *   failed     el análisis falló; sigue privado
+ *   cancelled  se retiró o se volvió a subir mientras tanto
  *
- * @param {{ is_public?: boolean, pending_public?: boolean, analysis?: object | null }} status
- * @returns {'published' | 'failed' | 'cancelled' | null}
+ * @param {{ is_public?: boolean, pending_public?: boolean, publish_ready?: boolean, analysis?: object | null }} status
+ * @returns {'ready' | 'published' | 'failed' | 'cancelled' | null}
  */
 export function publishOutcome(status) {
     const job = status?.analysis;
     const active = job?.status === 'queued' || job?.status === 'running';
-    if (status?.is_public === true) {
-        if (active) return null;
-        return job?.purpose === 'rechart' && job.status === 'failed' ? 'failed' : 'published';
-    }
+    if (status?.is_public === true) return active ? null : 'published';
     if (status?.pending_public === true) return null;
+    if (status?.publish_ready === true) return 'ready';
     return job?.status === 'failed' ? 'failed' : 'cancelled';
 }
 
 /**
- * Lo que enseña el selector de dificultad de un nivel propio (Ola 5).
+ * Lo que enseña el selector de dificultad de un nivel propio listo para publicar.
  *
- * Solo aparece cuando el servidor ya analizó la canción: antes no se sabe hasta
- * qué dificultad admite, y ofrecer opciones que luego no se podrían aplicar
- * sería la etiqueta "con calzador" que el doc 10 §2.3 prohíbe.
+ * Solo existe en ese momento: antes del análisis del servidor no se sabe qué
+ * dificultades admite la canción (el análisis del navegador no distingue una
+ * balada de un tema con batería), y ofrecer opciones que no tendrían sentido
+ * sería la etiqueta "con calzador" que el doc 10 §2.3 prohíbe. Después de
+ * publicar tampoco: un nivel publicado tiene una sola dificultad, o su ranking
+ * compararía partidas de niveles distintos.
  *
  * @param {object} level  Fila de la API con `difficulty_choice` (solo la recibe su autor).
  * @returns {{ current: 'auto' | number, effective: number,
  *             options: Array<{ value: 'auto' | number, label: string, hint: string }>,
- *             locked: boolean, busy: boolean, note: string } | null}
+ *             note: string, resetsBest: boolean } | null}
  */
 export function difficultyChoiceView(level) {
+    if (publishStateFor(level) !== PUBLISH_STATE.READY) return null;
     const choice = level?.difficulty_choice;
     if (choice === null || typeof choice !== 'object' || !Array.isArray(choice.options) || choice.options.length === 0) return null;
     const ceiling = Math.max(...choice.options);
     const auto = autoDifficulty(ceiling);
-    const job = level.analysis;
-    const busy = level.pending_public === true || (job?.purpose === 'rechart' && (job.status === 'queued' || job.status === 'running'));
-    const locked = choice.locked === true;
-    let note;
-    if (locked) note = 'Otros jugadores ya tienen marca en este nivel: su dificultad queda fija.';
-    else if (busy) note = level.pending_public === true ? 'Se aplicará al terminar el análisis.' : 'Aplicando la dificultad…';
-    else note = `La canción admite hasta ${DIFFICULTY_NAMES[ceiling]}.`;
+    const resetsBest = level.my_best !== null && level.my_best !== undefined;
     return {
         current: choice.requested === 'auto' || !choice.options.includes(choice.requested) ? 'auto' : choice.requested,
         effective: Number.isInteger(level.difficulty) ? level.difficulty : auto,
@@ -205,9 +212,11 @@ export function difficultyChoiceView(level) {
             { value: 'auto', label: 'Automática', hint: DIFFICULTY_NAMES[auto] },
             ...choice.options.map((d) => ({ value: d, label: DIFFICULTY_NAMES[d], hint: '★'.repeat(d) })),
         ],
-        locked,
-        busy,
-        note,
+        note: ceiling >= 5
+            ? 'La canción admite todas las dificultades.'
+            : `La canción admite hasta ${DIFFICULTY_NAMES[ceiling]}.`,
+        /** Cambiarla borra la marca que su autor hizo probándolo (era de otro chart). */
+        resetsBest,
     };
 }
 

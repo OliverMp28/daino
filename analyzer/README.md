@@ -18,19 +18,26 @@ PHP (publicar) ──INSERT──▶ analysis_jobs ◀──SKIP LOCKED── wo
   onsets con color de ataque; energía; secciones con rol; rasgos para el techo de
   dificultad. Formato 2, validado por `schema.py` y por `ChartValidator.php`.
 - **Charting** (JS): el MISMO `resources/js/game/levels/charter.js` que usa el
-  navegador. No hay una segunda implementación de la jugabilidad. Desde la Ola 5
-  recibe la **dificultad** que pidió el autor del nivel (`levels.difficulty_requested`,
-  `NULL` = Automática): el worker la lee **al chartear**, no al encolar, y si el
-  autor la cambia mientras tanto, al terminar encola otro re-chart.
+  navegador. No hay una segunda implementación de la jugabilidad. Recibe la
+  **dificultad** que pidió el autor (`levels.difficulty_requested`, `NULL` =
+  Automática), leída al chartear.
+
+**Publicar son dos pasos** (tras el playtest de la Ola 5). El worker analiza y
+deja el nivel **listo para publicar**: con el chart de la dificultad pedida y,
+en `levels.chart_variants_json`, el de **cada dificultad que la canción admite**
+(`auto`, `1`…techo), todos generados aquí. El worker **nunca hace público un
+nivel**: su autor elige una dificultad (PHP copia la variante: instantáneo, sin
+cola) y confirma. Un nivel publicado tiene una sola dificultad y ninguna variante
+(lo exige un CHECK de la BD).
 
 Propósitos de un trabajo (`analysis_jobs.purpose`):
 
 | Propósito | Quién lo encola | Chart de un nivel ya público |
 |---|---|---|
-| `publish` | subir/publicar un nivel | — (aún no es público) |
+| `publish` | subir un nivel para publicarlo (queda listo, no público) | — (aún no es público) |
 | `backfill` | `--missing-charts` | se conserva |
 | `reanalyze` | `--level`, `--client-charts` | se sustituye |
-| `rechart` | cambiar la dificultad (`POST /api/levels/{id}/difficulty`), `--charter-below` | se sustituye |
+| `rechart` | `--charter-below` | se sustituye |
 
 Con el análisis en caché (`audio_analyses`), cualquiera de ellos es un re-chart
 de menos de un segundo: no se vuelve a analizar el audio.
@@ -130,11 +137,11 @@ Garantías del worker (cada una con su test en `tests/test_worker.py`):
 - Si el autor retira o vuelve a subir el nivel mientras se analiza, el worker lo
   ve al renovar la reserva y no escribe nada.
 - Un nivel ya público **conserva su chart** (hay marcas sobre él) salvo
-  reanálisis o re-chart explícito (`--level`, `--client-charts`, `--charter-below`,
-  cambio de dificultad del autor). La API solo deja cambiar la dificultad mientras
-  nadie más tenga progreso en el nivel.
-- Se chartea con la dificultad pedida **en el momento de chartear**; si cambió
-  durante el trabajo, se encola otro re-chart al completar.
+  reanálisis o re-chart explícito (`--level`, `--client-charts`, `--charter-below`).
+  Su autor no puede cambiarle la dificultad.
+- Un trabajo de publicación deja el nivel **listo, no público**, con sus variantes;
+  un re-chart de un nivel listo regenera las variantes y conserva la dificultad
+  elegida. La API no deja elegir dificultad mientras el nivel se analiza.
 
 Seguridad: el contenedor solo recibe variables de base de datos y monta en solo
 lectura lo que usa (su código, el charter JS, `database/`, los audios). No ve

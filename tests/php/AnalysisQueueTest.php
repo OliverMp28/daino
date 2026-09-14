@@ -4,6 +4,9 @@ declare(strict_types=1);
 /**
  * Ola 4 en servidor: publicación diferida hasta el análisis, cola de trabajos,
  * endpoints de estado y reintento, y validación del análisis de formato 2.
+ *
+ * Tras el playtest de la Ola 5: publicar en dos pasos (analizar → listo; elegir
+ * dificultad y confirmar) y un nivel publicado con una sola dificultad.
  */
 
 use App\Controllers\Api\LevelApiController;
@@ -70,8 +73,15 @@ function analysisV2(float $duration = 60.5): array
 
 test('con analizador, publicar deja el nivel pendiente y encola su análisis (no público todavía)', function (): void {
     withAnalyzer(true, function (): void {
-        $level = privateLevelWithChart(makeUser());
+        $author = makeUser();
+        $level = privateLevelWithChart($author);
+        // Marca hecha jugando la versión privada: el nivel publicado se genera de
+        // nuevo en el servidor, así que esa marca no es de su chart.
+        \App\Models\Progress::upsert($author->id, $level->id, 100, 5000);
+        \App\Models\Ranking::recompute($author->id);
         $result = PublishService::requestPublish($level, "levels/{$level->id}.mp3", $level->audioSha256);
+        assertSame(null, \App\Models\Progress::findByUserAndLevel($author->id, $level->id), 'la marca de la versión privada no pasa al publicado');
+        assertSame(0, \App\Models\Ranking::findByUser($author->id)->totalPoints, 'y el ranking global se recalcula sin ella');
 
         assertSame(false, $result['published']);
         $fresh = Level::findById($level->id);
@@ -218,15 +228,47 @@ test('el chart_hash de un nivel cambia con su chart (la caché del cliente no si
     assertSame(hash('sha256', Level::findChart($level->id)['json']), $after);
 });
 
-// --------------------------- Dificultad elegida (Ola 5) ---------------------------
+// --------------------------- Publicar en dos pasos con dificultad elegida ---------------------------
 
-/** Nivel propio ya publicado y analizado, con techo de dificultad conocido. */
-function publishedLevelWithCeiling(\App\Models\User $author, string $seed, int $ceiling): Level
+/**
+ * Variantes como las deja el worker: el chart de Automática y de cada
+ * dificultad hasta el techo. Cada una con otra densidad (otro chart, otro hash).
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function variantsFor(string $sha, int $ceiling): array
+{
+    $variants = [];
+    foreach (['auto', ...range(1, $ceiling)] as $key) {
+        $level = $key === 'auto' ? min(3, $ceiling) : $key;
+        $chart = chartV2For($sha);
+        $chart['difficulty'] = ['level' => $level, 'requested' => $key, 'ceiling' => $ceiling];
+        $chart['world']['speedPxS'] = 400.0 + 10 * $level;
+        for ($i = 0; $i < $level; $i++) {
+            $chart['events'][] = ['t' => 30.0 + $i * 0.8, 'type' => 'obstacle', 'kind' => 'CACTUS_SMALL'];
+        }
+        $variants[(string) $key] = $chart;
+    }
+    return $variants;
+}
+
+/** Nivel propio que el worker acaba de analizar: listo para publicar, con variantes. */
+function readyLevel(\App\Models\User $author, string $seed, int $ceiling): Level
 {
     $level = privateLevelWithChart($author, $seed);
-    \App\Core\Database::getInstance()->exec(
-        "UPDATE levels SET file_path = 'levels/{$level->id}.mp3', is_public = TRUE, difficulty_ceiling = {$ceiling} WHERE id = {$level->id}",
+    $variants = variantsFor($level->audioSha256, $ceiling);
+    $stmt = \App\Core\Database::getInstance()->prepare(
+        'UPDATE levels SET file_path = :path, pending_public = FALSE, is_public = FALSE, difficulty_ceiling = :ceiling,
+                chart_json = :chart, chart_variants_json = :variants, difficulty = :difficulty WHERE id = :id',
     );
+    $stmt->execute([
+        'path'       => "levels/{$level->id}.mp3",
+        'ceiling'    => $ceiling,
+        'chart'      => json_encode($variants['auto']),
+        'variants'   => json_encode($variants),
+        'difficulty' => min(3, $ceiling),
+        'id'         => $level->id,
+    ]);
     return Level::findById($level->id);
 }
 
@@ -235,92 +277,172 @@ function changeDifficulty(Level $level, mixed $value): \App\Core\Response
     return (new LevelApiController())->changeDifficulty(Request::make('POST', '/', ['difficulty' => $value]), ['id' => (string) $level->id]);
 }
 
-test('dificultad: el autor la cambia y se encola un re-chart que sí sustituye el chart público', function (): void {
-    withAnalyzer(true, function (): void {
-        $author = makeUser();
-        $level = publishedLevelWithCeiling($author, 'dificultad', 4);
-        AuthContext::set($author);
+function setVisibility(Level $level, bool $public): \App\Core\Response
+{
+    return (new LevelApiController())->visibility(Request::make('POST', '/', ['is_public' => $public]), ['id' => (string) $level->id]);
+}
 
-        $res = changeDifficulty($level, 2);
-        assertSame(202, $res->status());
-        $data = decode($res);
-        assertSame('queued', $data['analysis']['status']);
-        assertSame('rechart', $data['analysis']['purpose']);
-        assertSame(['requested' => 2, 'options' => [1, 2, 3, 4], 'locked' => false], $data['level']['difficulty_choice']);
-        assertSame(2, Level::findById($level->id)->difficultyRequested);
+test('listo para publicar: su autor ve la elección entre Automática y lo que la canción admite; los demás, nada', function (): void {
+    $author = makeUser('autor');
+    $level = readyLevel($author, 'listo', 4);
+    assertSame(true, $level->publishReady());
 
-        // Con el re-chart todavía en cola, otro cambio reutiliza ese trabajo.
-        $again = changeDifficulty($level, 'auto');
-        assertSame(202, $again->status());
-        assertSame(null, Level::findById($level->id)->difficultyRequested, 'auto se guarda como NULL');
-        $active = \App\Core\Database::getInstance()->query("SELECT COUNT(*) FROM analysis_jobs WHERE level_id = {$level->id} AND status IN ('queued', 'running')")->fetchColumn();
-        assertSame(1, (int) $active, 'nunca dos trabajos activos por nivel');
-    });
+    $mine = LevelPresenter::one($level, $author);
+    assertSame(true, $mine['publish_ready']);
+    assertSame(false, $mine['is_public'], 'analizado NO es publicado: falta que su autor elija y confirme');
+    assertSame(['requested' => 'auto', 'options' => [1, 2, 3, 4]], $mine['difficulty_choice']);
+
+    $other = LevelPresenter::one($level, makeUser('otro'));
+    assertSame([null, false], [$other['difficulty_choice'], $other['publish_ready']]);
+});
+
+test('dificultad: elegirla es instantáneo — el chart pasa a ser la variante que el servidor ya generó', function (): void {
+    $author = makeUser();
+    $level = readyLevel($author, 'variante', 4);
+    AuthContext::set($author);
+    $before = $level->chartHash;
+
+    $res = changeDifficulty($level, 4);
+    assertSame(200, $res->status());
+    $data = decode($res)['level'];
+    assertSame([4, ['requested' => 4, 'options' => [1, 2, 3, 4]], true], [$data['difficulty'], $data['difficulty_choice'], $data['publish_ready']]);
+
+    $fresh = Level::findById($level->id);
+    $expected = ChartValidator::validateChart(variantsFor($level->audioSha256, 4)['4'], $level->audioSha256)['json'];
+    assertSame($expected, Level::findChart($level->id)['json'], 'el chart del nivel es exactamente la variante validada');
+    assertSame(hash('sha256', $expected), $fresh->chartHash);
+    assertTrue($fresh->chartHash !== $before, 'otro chart, otro hash: la caché del cliente no sirve el anterior');
+    assertSame([4, 440], [$fresh->difficultyRequested, $fresh->gameSpeed]);
+    assertSame(null, AnalysisJob::latestForLevel($level->id), 'sin cola ni espera: nada que re-chartear');
+
+    assertSame(200, changeDifficulty($level, 'auto')->status());
+    $auto = Level::findById($level->id);
+    assertSame([null, 3], [$auto->difficultyRequested, $auto->difficulty], 'Automática se guarda como NULL y es Normal');
+    assertSame(true, $auto->publishReady(), 'puede seguir cambiando hasta confirmar');
 });
 
 test('dificultad: no se puede pedir más de lo que la canción admite ni valores inventados', function (): void {
-    withAnalyzer(true, function (): void {
-        $author = makeUser();
-        $level = publishedLevelWithCeiling($author, 'techo', 2);
-        AuthContext::set($author);
-        foreach ([3, 5, 0, 6, 'extremo', null, 2.5] as $bad) {
-            assertThrows(ValidationException::class, fn () => changeDifficulty($level, $bad), function ($e) use ($bad): void {
-                assertTrue(isset($e->fields['difficulty']), 'valor ' . json_encode($bad) . ': error en difficulty');
-            });
-        }
-        assertSame(null, Level::findById($level->id)->difficultyRequested, 'nada se guarda si se rechaza');
-        assertSame(202, changeDifficulty($level, 1)->status());
-    });
+    $author = makeUser();
+    $level = readyLevel($author, 'techo', 2);
+    AuthContext::set($author);
+    foreach ([3, 5, 0, 6, 'extremo', null, 2.5] as $bad) {
+        assertThrows(ValidationException::class, fn () => changeDifficulty($level, $bad), function ($e) use ($bad): void {
+            assertTrue(isset($e->fields['difficulty']), 'valor ' . json_encode($bad) . ': error en difficulty');
+        });
+    }
+    assertSame(null, Level::findById($level->id)->difficultyRequested, 'nada se guarda si se rechaza');
+    assertSame(200, changeDifficulty($level, 1)->status());
 });
 
-test('dificultad: bloqueada en cuanto otro jugador tiene marca; el autor sí puede tener la suya', function (): void {
-    withAnalyzer(true, function (): void {
-        $author = makeUser('autor');
-        $level = publishedLevelWithCeiling($author, 'bloqueo', 5);
-        \App\Models\Progress::upsert($author->id, $level->id, 50, 1000);
-        AuthContext::set($author);
-        assertSame(false, LevelPresenter::one(Level::findById($level->id), $author)['difficulty_choice']['locked'], 'la marca del autor no bloquea');
-        assertSame(202, changeDifficulty($level, 4)->status());
+test('dificultad: un nivel publicado tiene una sola, ni siquiera para su autor', function (): void {
+    $author = makeUser();
+    $level = readyLevel($author, 'fija', 5);
+    AuthContext::set($author);
+    assertSame(200, changeDifficulty($level, 2)->status());
+    assertSame(200, setVisibility(Level::findById($level->id), true)->status());
 
-        $player = makeUser('jugador');
-        \App\Models\Progress::upsert($player->id, $level->id, 80, 2000);
-        AuthContext::set($author);
-        $res = changeDifficulty($level, 1);
-        assertSame(409, $res->status());
-        assertSame('difficulty_locked', decode($res)['error']);
-        assertSame(4, Level::findById($level->id)->difficultyRequested, 'se conserva la anterior');
-        assertSame(true, LevelPresenter::one(Level::findById($level->id), $author)['difficulty_choice']['locked']);
-    });
+    $res = changeDifficulty(Level::findById($level->id), 5);
+    assertSame(409, $res->status());
+    assertSame('difficulty_fixed', decode($res)['error']);
+    $public = Level::findById($level->id);
+    assertSame([2, true, false], [$public->difficulty, $public->isPublic, $public->hasVariants]);
+    assertSame(null, LevelPresenter::one($public, $author)['difficulty_choice'], 'publicado: no se ofrece a nadie');
+    // Y la BD lo garantiza: un nivel público no puede conservar otras dificultades.
+    assertThrows(\PDOException::class, fn () => \App\Core\Database::getInstance()->exec(
+        "UPDATE levels SET chart_variants_json = '{}' WHERE id = {$level->id}",
+    ));
 });
 
-test('dificultad: solo el autor; sin audio en el servidor se guarda para cuando se publique', function (): void {
+test('dificultad: analizándose o sin analizar todavía no se elige; lo ajeno ni existe', function (): void {
     withAnalyzer(true, function (): void {
         $author = makeUser('autor');
-        $level = privateLevelWithChart($author, 'solo-local');
+        $local = privateLevelWithChart($author, 'solo-local');
+        AuthContext::set($author);
+        $res = changeDifficulty($local, 3);
+        assertSame([409, 'not_ready'], [$res->status(), decode($res)['error']], 'sin el análisis del servidor no se sabe qué admite');
+        assertSame(null, LevelPresenter::one(Level::findById($local->id), $author)['difficulty_choice']);
 
+        PublishService::requestPublish($local, "levels/{$local->id}.mp3", $local->audioSha256);
+        $res = changeDifficulty(Level::findById($local->id), 3);
+        assertSame([409, 'analyzing'], [$res->status(), decode($res)['error']]);
+
+        $ready = readyLevel($author, 'ajeno', 5);
         AuthContext::set(makeUser('ajeno'));
-        assertSame(404, changeDifficulty($level, 3)->status());
-        assertSame(null, LevelPresenter::one(Level::findById($level->id), makeUser('otro'))['difficulty_choice'], 'la elección no se enseña a otros');
-
-        AuthContext::set($author);
-        $res = changeDifficulty($level, 3);
-        assertSame(200, $res->status());
-        assertSame(null, decode($res)['analysis']);
-        assertSame(3, Level::findById($level->id)->difficultyRequested);
-        assertSame(null, AnalysisJob::latestForLevel($level->id), 'sin audio no hay nada que re-chartear todavía');
+        assertSame(404, changeDifficulty($ready, 3)->status());
     });
 });
 
-test('dificultad: sin analizador no se puede re-chartear un nivel publicado', function (): void {
-    withAnalyzer(false, function (): void {
+test('dificultad: cambiarla borra la marca de prueba de su autor (era de otro chart) y recalcula su ranking', function (): void {
+    $author = makeUser();
+    $level = readyLevel($author, 'prueba', 5);
+    \App\Models\Progress::upsert($author->id, $level->id, 100, 9000);
+    \App\Models\Ranking::recompute($author->id);
+    AuthContext::set($author);
+
+    assertSame(200, changeDifficulty($level, 1)->status());
+    assertSame(null, \App\Models\Progress::findByUserAndLevel($author->id, $level->id), 'un 100 % en Relajado no puede estrenar el ranking de otro chart');
+    assertSame(0, \App\Models\Ranking::findByUser($author->id)->totalPoints);
+
+    // Elegir la que ya tiene no cambia el chart: la marca hecha con él se conserva.
+    \App\Models\Progress::upsert($author->id, $level->id, 40, 3000);
+    assertSame(200, changeDifficulty(Level::findById($level->id), 1)->status());
+    assertTrue(\App\Models\Progress::findByUserAndLevel($author->id, $level->id) !== null, 'mismo chart, misma marca');
+});
+
+test('publicar un nivel listo: público al instante con la dificultad elegida y sin variantes; su marca de prueba vale', function (): void {
+    withAnalyzer(true, function (): void {
         $author = makeUser();
-        $level = publishedLevelWithCeiling($author, 'sin-analizador-dif', 5);
+        $level = readyLevel($author, 'confirmar', 4);
         AuthContext::set($author);
-        $res = changeDifficulty($level, 5);
-        assertSame(409, $res->status());
-        assertSame('analyzer_disabled', decode($res)['error']);
-        assertSame(null, Level::findById($level->id)->difficultyRequested, 'la transacción no deja nada a medias');
+        assertSame(200, changeDifficulty($level, 4)->status());
+        \App\Models\Progress::upsert($author->id, $level->id, 70, 4000);
+
+        $res = setVisibility(Level::findById($level->id), true);
+        assertSame(200, $res->status(), 'no vuelve a pasar por la cola: ya se analizó');
+        $data = decode($res);
+        assertSame([true, false, 4, null], [$data['is_public'], $data['publish_ready'], $data['difficulty'], $data['difficulty_choice']]);
+        $public = Level::findById($level->id);
+        assertSame([false, null], [$public->hasVariants, AnalysisJob::latestForLevel($level->id)]);
+        assertTrue(\App\Models\Progress::findByUserAndLevel($author->id, $level->id) !== null, 'se jugó con el chart que se publica');
+
+        $listed = decode((new LevelApiController())->index(Request::make('GET', '/', [], ['scope' => 'public', 'limit' => '50'])))['items'];
+        assertTrue(in_array($level->id, array_column($listed, 'id'), true), 'aparece en el catálogo');
     });
+});
+
+test('no publicar un nivel listo: vuelve a privado, sin audio en el servidor ni variantes', function (): void {
+    withAnalyzer(true, function (): void {
+        $author = makeUser();
+        $level = readyLevel($author, 'renunciar', 3);
+        AuthContext::set($author);
+        $res = setVisibility($level, false);
+        assertSame(200, $res->status());
+        $fresh = Level::findById($level->id);
+        assertSame([false, null, false, false], [$fresh->isPublic, $fresh->filePath, $fresh->hasVariants, $fresh->publishReady()]);
+    });
+});
+
+test('el audio de un nivel listo lo descarga su autor para probarlo; nadie más', function (): void {
+    $author = makeUser();
+    $level = readyLevel($author, 'audio-privado', 3);
+    $dir = \App\Services\FileUploadService::absolutePath("levels/{$level->id}.mp3");
+    $bytes = 'ID3 audio de prueba ' . $level->id;
+    file_put_contents($dir, $bytes);
+    try {
+        AuthContext::set(makeUser('curioso'));
+        assertSame(404, (new LevelApiController())->streamFile(Request::make('GET', '/'), ['id' => (string) $level->id])->status());
+
+        AuthContext::set($author);
+        ob_start();
+        try {
+            (new LevelApiController())->streamFile(Request::make('GET', '/'), ['id' => (string) $level->id]);
+        } finally {
+            $out = ob_get_clean();
+        }
+        assertSame($bytes, $out);
+    } finally {
+        @unlink($dir);
+    }
 });
 
 // --------------------------- Análisis de formato 2 ---------------------------

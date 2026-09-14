@@ -133,6 +133,17 @@ test('localBests: al superar el techo olvida los jugados hace más tiempo', () =
     assert.ok(!kept.includes('1') && !kept.includes('2'), 'los más antiguos se olvidan');
 });
 
+test('localBests: olvidar la marca de un nivel cuyo chart cambió no toca las demás', () => {
+    const storage = memoryStorage();
+    const bests = createLocalBests({ storage, now: () => 1 });
+    bests.record(4, { points: 100, percentage: 50 });
+    bests.record(5, { points: 200, percentage: 60 });
+    bests.forget(4);
+    bests.forget(99);   // sin marca: nada que hacer, no rompe
+    assert.equal(bests.get(4), null);
+    assert.equal(bests.get(5).points, 200);
+});
+
 test('mergeBest: la tarjeta enseña la mayor entre servidor y local', () => {
     assert.equal(mergeBest(null, null), null);
     assert.deepEqual(mergeBest({ points: 900, percentage: 30 }, { points: 400, percentage: 80 }), { points: 900, percentage: 80 });
@@ -147,12 +158,13 @@ const official = {
     audio_sha256: '6a7375ae9bfa2e39ea4d9fa73eb9b726b8cc7011062decf844bd9ae282ac0a97', author: null,
 };
 
-test('tarjeta de un oficial: sin autor, jugable y con marca local si no hay de servidor', () => {
+test('tarjeta de un oficial: sin autor, pulsarla juega y con marca local si no hay de servidor', () => {
     const view = cardView(official, { points: 1234, percentage: 42 });
     assert.equal(view.badge, 'Oficial');
     assert.equal(view.byline, '', 'sin artista no repite "oficial": ya lo dice la insignia');
     assert.equal(cardView({ ...official, artist: 'Aurora' }).byline, 'Aurora');
     assert.equal(view.playMode, PLAY_MODE.CATALOG);
+    assert.match(view.actionLabel, /^Jugar «HOPE»\. Dificultad 4 de 5: Difícil\. 1:19\.$/, 'la tarjeta anuncia lo que hace: jugar');
     assert.equal(view.duration, '1:19');
     assert.equal(view.bpm, '161 BPM');
     assert.deepEqual(view.best, { points: (1234).toLocaleString('es-ES'), percentage: '42 %', completed: false });
@@ -160,27 +172,39 @@ test('tarjeta de un oficial: sin autor, jugable y con marca local si no hay de s
     assert.equal(view.canPublish, false);
 });
 
-test('tarjeta de comunidad y privada propia: autor, publicar y jugar con el archivo (D11)', () => {
+test('tarjeta de comunidad y propias: autor, publicar, y qué hace pulsarla en cada estado', () => {
     const community = { ...official, id: 9, is_official: false, author: { username: 'ana' }, players: 1 };
     assert.equal(cardView(community).byline, 'por ana');
     assert.equal(cardView(community).players, '1 jugador');
+    assert.equal(cardView(community).badge, null, 'en la vista única, lo de la comunidad se distingue por su autor');
 
-    const privateMine = { ...official, id: 10, is_official: false, is_public: false, has_audio: false, is_mine: true };
+    const privateMine = { ...official, id: 10, is_official: false, is_public: false, has_audio: false, is_mine: true, players: 1 };
     const view = cardView(privateMine);
+    assert.equal(view.players, null, 'en lo privado el único jugador es su autor: no se cuenta');
     assert.equal(view.playMode, PLAY_MODE.NEEDS_FILE);
     assert.equal(view.playLabel, 'Elegir MP3 y jugar');
+    assert.match(view.actionLabel, /^Elegir el MP3 de «HOPE» y jugar/);
     assert.equal(view.canPublish, true);
     assert.equal(view.badge, 'Privado');
     assert.equal(view.byline, 'Tu nivel', 'lo tuyo no dice "por <tu nombre>"');
 
+    // Listo para publicar: su audio está en el servidor, su autor lo prueba sin elegir el archivo.
+    const ready = cardView({ ...privateMine, has_audio: true, publish_ready: true });
+    assert.deepEqual([ready.playMode, ready.badge, ready.canPublish, ready.publish.canConfirm], [PLAY_MODE.CATALOG, 'Listo para publicar', false, true]);
+    // Analizándose: su chart va a cambiar; pulsar abre la ficha con el progreso.
+    const analyzing = cardView({ ...privateMine, has_audio: true, pending_public: true });
+    assert.equal(analyzing.playMode, PLAY_MODE.UNAVAILABLE);
+    assert.match(analyzing.actionLabel, /analizándose/);
+
     const foreignPrivate = { ...privateMine, is_mine: false };
     assert.equal(playModeFor(foreignPrivate), PLAY_MODE.UNAVAILABLE);
+    assert.equal(playModeFor({ ...foreignPrivate, has_audio: true }), PLAY_MODE.UNAVAILABLE, 'el audio privado ajeno no se juega');
 });
 
-test('pestañas: "Míos" solo con sesión; vacíos siempre ofrecen subir canción', () => {
-    assert.deepEqual(tabsFor(false).map((t) => t.id), ['official', 'community']);
-    assert.deepEqual(tabsFor(true).map((t) => t.id), ['official', 'community', 'mine']);
-    for (const tab of ['official', 'community', 'mine']) assert.equal(emptyView(tab).action, 'upload');
+test('pestañas: una vista para todo lo jugable y "Míos" solo con sesión; vacíos ofrecen subir canción', () => {
+    assert.deepEqual(tabsFor(false).map((t) => t.id), ['public']);
+    assert.deepEqual(tabsFor(true).map((t) => t.id), ['public', 'mine']);
+    for (const tab of ['public', 'mine']) assert.equal(emptyView(tab).action, 'upload');
 });
 
 test('formatos y portada: duración, estrellas acotadas y tono estable por nivel', () => {

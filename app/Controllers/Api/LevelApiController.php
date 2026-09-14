@@ -29,11 +29,11 @@ use PDOException;
  *   - GET  /api/levels/{id}/chart        (mixto)   chart del nivel, con ETag
  *   - GET  /api/levels/{id}/ranking      (mixto)   mejores marcas del nivel + la de quien mira
  *   - POST /api/levels/{id}/upload       (auth)    multipart `file` MP3 → 200 publicado | 202 analizándose (Ola 4)
- *   - GET  /api/levels/{id}/file         (mixto)   stream MP3 si is_public, con ETag
- *   - POST /api/levels/{id}/visibility   (auth)    {is_public: bool}
+ *   - GET  /api/levels/{id}/file         (mixto)   stream MP3 si is_public, o a su autor; con ETag
+ *   - POST /api/levels/{id}/visibility   (auth)    {is_public: bool}; true en un nivel listo lo publica ya
  *   - GET  /api/levels/{id}/analysis     (auth)    estado del análisis del servidor (solo el autor)
  *   - POST /api/levels/{id}/analysis     (auth)    reintentar el análisis tras un fallo (solo el autor)
- *   - POST /api/levels/{id}/difficulty   (auth)    dificultad elegida por el autor (Ola 5)
+ *   - POST /api/levels/{id}/difficulty   (auth)    dificultad de un nivel listo para publicar (solo el autor)
  *
  * Autoría: cualquier mutación valida `$level->userId === AuthContext::user()->id`,
  * 403 si no.
@@ -331,6 +331,7 @@ final class LevelApiController
             'level_id'       => $level->id,
             'is_public'      => $level->isPublic,
             'pending_public' => $level->pendingPublic,
+            'publish_ready'  => $level->publishReady(),
             'has_chart'      => $level->hasChart(),
             'chart_version'  => $level->chartVersion,
             'chart_hash'     => $level->chartHash,
@@ -363,13 +364,14 @@ final class LevelApiController
     }
 
     /**
-     * Cambia la dificultad de un nivel propio (Ola 5, doc 10 §2.3).
+     * Elige la dificultad de un nivel propio LISTO PARA PUBLICAR (doc 10 §2.3,
+     * ajustes tras el playtest de la Ola 5).
      *
-     * Body `{difficulty: "auto" | 1..5}`. Solo hasta el techo que la canción
-     * admite (si ya se conoce); bloqueado si otros jugadores tienen marca.
-     *   200  guardada (nivel sin audio en el servidor: se aplicará al publicar)
-     *   202  guardada y en marcha: el chart se regenera con el análisis guardado
-     *   409  difficulty_locked | analyzer_disabled
+     * Body `{difficulty: "auto" | 1..5}`, solo hasta el techo que la canción
+     * admite. Instantáneo: el servidor ya generó el chart de cada dificultad al
+     * analizarla. Un nivel publicado tiene una sola dificultad para siempre.
+     *   200  aplicada: el nivel ya se juega con ella
+     *   409  difficulty_fixed (publicado) | analyzing | not_ready (sin analizar)
      *   422  valor inválido o por encima del techo
      *
      * @param array<string, string> $params
@@ -386,17 +388,16 @@ final class LevelApiController
             throw new ValidationException(['difficulty' => "Esta canción admite hasta {$level->difficultyCeiling} de 5."]);
         }
         try {
-            $job = PublishService::changeDifficulty($level, $requested);
+            $fresh = PublishService::changeDifficulty($level, $requested);
         } catch (\DomainException $e) {
-            return $e->getMessage() === 'difficulty_locked'
-                ? Response::json(['error' => 'difficulty_locked', 'message' => 'Otros jugadores ya tienen marca en este nivel: su dificultad no se puede cambiar.'], 409)
-                : Response::json(['error' => 'analyzer_disabled', 'message' => 'El análisis en servidor no está activo.'], 409);
+            return match ($e->getMessage()) {
+                'difficulty_fixed' => Response::json(['error' => 'difficulty_fixed', 'message' => 'Un nivel publicado tiene una sola dificultad: la que se eligió al publicarlo.'], 409),
+                'analyzing'        => Response::json(['error' => 'analyzing', 'message' => 'Se está analizando: podrás elegir la dificultad en cuanto termine.'], 409),
+                'unavailable'      => throw new ValidationException(['difficulty' => 'Esta canción no admite esa dificultad.']),
+                default            => Response::json(['error' => 'not_ready', 'message' => 'Publica el nivel primero: al analizarlo sabremos qué dificultades admite.'], 409),
+            };
         }
-        $fresh = Level::findById($level->id) ?? $level;
-        return Response::json([
-            'level'    => self::serialize($fresh),
-            'analysis' => $job?->summary(),
-        ], $job === null ? 200 : 202);
+        return Response::json(['level' => self::serialize($fresh)]);
     }
 
     /**
@@ -404,8 +405,11 @@ final class LevelApiController
      */
     public function streamFile(Request $req, array $params): Response
     {
-        $level = Level::findById(self::parseId($params));
-        if ($level === null || !$level->isPublic || $level->filePath === null) {
+        // Público para cualquiera; privado con audio subido (listo para
+        // publicar, o con el análisis fallido) solo para su autor, que lo prueba
+        // antes de publicarlo sin tener que volver a elegir su MP3.
+        $level = self::visibleLevel(self::parseId($params));
+        if ($level === null || $level->filePath === null) {
             return Response::json(['error' => 'not_found'], 404);
         }
 
@@ -448,6 +452,15 @@ final class LevelApiController
                     ['error' => 'duplicate_title', 'message' => 'Ya tienes un nivel público con ese título.'],
                     409,
                 );
+            }
+            // Analizado y con la dificultad elegida por su autor: esta es la
+            // confirmación del segundo paso, y publica ya.
+            if ($level->publishReady()) {
+                try {
+                    return Response::json(self::serialize(PublishService::confirmPublish($level)));
+                } catch (\DomainException) {
+                    return Response::json(['error' => 'not_ready', 'message' => 'El nivel ya no está listo para publicar.'], 409);
+                }
             }
             // Con analizador, publicar pasa SIEMPRE por el análisis del servidor:
             // este camino no puede saltárselo.

@@ -386,6 +386,33 @@ test('los 8 oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos
     }
 });
 
+test('publicar: el servidor prepara una variante por dificultad admitida, idéntica a chartear esa dificultad', async () => {
+    const { chartFromAnalysis } = await import('../../scripts/lib/chartFromAnalysis.mjs');
+    // HOPE (tranquila, techo 2) y What's Up Danger (techo 5).
+    for (const slug of ['hope', 'whats-up-danger']) {
+        const baked = JSON.parse(await readFile(path.join(ROOT, `database/seeds/official/baked/${slug}.json`), 'utf8'));
+        const { analysis } = baked;
+        const sha = baked.audio.sha256;
+        const out = chartFromAnalysis(analysis, sha, { variants: true });
+        const ceiling = out.difficultyCeiling;
+        const expectedKeys = ['auto', ...Array.from({ length: ceiling }, (_, i) => String(i + 1))];
+        assert.deepEqual(Object.keys(out.variants).sort(), expectedKeys.sort(), `${slug}: Automática y 1..techo, nunca por encima`);
+        for (const [key, chart] of Object.entries(out.variants)) {
+            const difficulty = key === 'auto' ? 'auto' : Number(key);
+            const expected = buildChart(analysis, { sha256: sha, seed: seedFromSha256(sha), difficulty }).chart;
+            assert.deepEqual(chart, expected, `${slug} ${key}: la variante es exactamente ese chart`);
+            assert.equal(normalizeChart(chart).warnings.length, 0, `${slug} ${key}: sin avisos`);
+        }
+        assert.deepEqual(out.variants.auto, out.chart, `${slug}: sin dificultad pedida, el chart del nivel es el de Automática`);
+        if (ceiling >= 2) {
+            const hard = obstacles(out.variants[String(ceiling)]).length;
+            const easy = obstacles(out.variants['1']).length;
+            assert.ok(hard > easy, `${slug}: cada variante es un nivel distinto (${easy} → ${hard} acciones)`);
+        }
+        assert.equal(chartFromAnalysis(analysis, sha).variants, null, `${slug}: sin pedirlas (horneado), no se generan`);
+    }
+});
+
 test('el charter escala linealmente con la duración de la canción', () => {
     // Por proporción y no en milisegundos: estable en cualquier máquina.
     const short = makeSyntheticSong({ bpm: 128, sections: [{ bars: 16, energy: 0.6, hits: 0.7 }, { bars: 16, energy: 0.9, hits: 1 }] });

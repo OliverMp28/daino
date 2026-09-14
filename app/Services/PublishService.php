@@ -10,17 +10,26 @@ use App\Models\Level;
 use App\Models\Progress;
 
 /**
- * Publicación de niveles con análisis en servidor (Ola 4).
+ * Publicación de niveles con análisis en servidor (Ola 4) y dificultad elegida
+ * antes de publicar (ajustes tras el playtest de la Ola 5).
  *
  * Regla: un nivel NO aparece en el catálogo hasta que el servidor lo ha
- * analizado. Al publicar se guarda el MP3, el nivel queda "pendiente de
- * publicar" y se encola su análisis en la MISMA transacción; el worker lo hace
- * público al terminar. Así todo nivel público se juega con el chart del
- * analizador del servidor, no con el que generó el navegador de quien lo subió.
+ * analizado y su autor ha elegido con qué dificultad sale. En dos pasos:
+ *
+ *   1. Publicar sube el MP3, deja el nivel "pendiente" y encola su análisis en la
+ *      MISMA transacción. El worker lo analiza y genera el chart de cada
+ *      dificultad que la canción admite: el nivel queda LISTO PARA PUBLICAR.
+ *   2. Su autor elige una de esas dificultades (instantáneo: se copia una
+ *      variante ya generada, sin cola), puede probarla, y confirma.
+ *
+ * Así todo nivel público se juega con un chart del servidor, y tiene UNA sola
+ * dificultad para siempre: las marcas de su ranking se hicieron todas sobre el
+ * mismo chart.
  *
  * Sin analizador (`ANALYZER_ENABLED=false`, p. ej. un despliegue sin el servicio
  * Python) se publica al instante con el chart del cliente, como en la Ola 3: el
- * sistema degrada, no se rompe.
+ * sistema degrada, no se rompe (y sin análisis del servidor no hay dificultades
+ * con sentido que ofrecer).
  */
 final class PublishService
 {
@@ -30,6 +39,10 @@ final class PublishService
     }
 
     /**
+     * Paso 1: sube y analiza. Con analizador, las marcas hechas en la versión
+     * privada se borran: el nivel publicado se genera de nuevo en el servidor y
+     * esas marcas no son de ese chart.
+     *
      * @return array{published: bool, job: ?AnalysisJob}
      */
     public static function requestPublish(Level $level, string $relativePath, string $audioSha256): array
@@ -47,9 +60,13 @@ final class PublishService
                 "UPDATE levels
                  SET file_path = :path,
                      pending_public = (is_public = FALSE),
+                     chart_variants_json = NULL,
                      chart_status = IF(chart_status IN ('none', 'failed'), 'analyzing', chart_status)
                  WHERE id = :id",
             )->execute(['path' => $relativePath, 'id' => $level->id]);
+            if (!$level->isPublic) {
+                Progress::invalidateForLevel($level->id);
+            }
             return AnalysisJob::enqueue(
                 $level->id,
                 $relativePath,
@@ -93,57 +110,79 @@ final class PublishService
     }
 
     /**
-     * Cambia la dificultad que pide el autor de un nivel (Ola 5, doc 10 §2.3).
+     * Paso 2a: el autor elige la dificultad de un nivel listo para publicar.
      *
-     * Reglas (el controlador valida el valor y el techo antes de llegar aquí):
-     *   - Bloqueada si otros jugadores ya tienen marca: sus marcas se hicieron
-     *     sobre el chart actual (`difficulty_locked`).
-     *   - Nivel sin audio en el servidor (privado, solo local): se guarda la
-     *     preferencia y se aplicará cuando se publique. Devuelve null.
-     *   - Con un análisis ya en marcha (se está publicando): se guarda y ese
-     *     mismo trabajo la usará al chartear. Devuelve ese trabajo.
-     *   - Si no: se encola un re-chart con el análisis guardado. Devuelve el
-     *     trabajo nuevo.
+     * Se copia como chart del nivel la variante que el servidor ya generó para
+     * esa dificultad: es instantáneo y sigue siendo un chart del servidor. Si el
+     * autor había probado el nivel con otra, su marca de prueba se borra.
      *
-     * @throws \DomainException 'difficulty_locked' | 'analyzer_disabled'
+     * @param ?int $requested  1..5, o null para "Automática".
+     * @throws \DomainException 'difficulty_fixed' | 'analyzing' | 'not_ready' | 'unavailable'
      */
-    public static function changeDifficulty(Level $level, ?int $requested): ?AnalysisJob
+    public static function changeDifficulty(Level $level, ?int $requested): Level
     {
-        return self::transaction(static function () use ($level, $requested): ?AnalysisJob {
+        return self::transaction(static function () use ($level, $requested): Level {
             $pdo = Database::getInstance();
             $pdo->prepare('SELECT id FROM levels WHERE id = :id FOR UPDATE')->execute(['id' => $level->id]);
+            $fresh = Level::findById($level->id) ?? throw new \DomainException('not_ready');
             // Todas las comprobaciones ANTES de escribir: si esta llamada va
-            // dentro de una transacción ajena, un fallo no puede dejar la
-            // dificultad cambiada sin su re-chart.
-            if ($level->userId !== null && (Progress::otherPlayerCounts([$level->id], $level->userId)[$level->id] ?? 0) > 0) {
-                throw new \DomainException('difficulty_locked');
+            // dentro de una transacción ajena, un fallo no puede dejar nada a medias.
+            if ($fresh->isPublic) {
+                throw new \DomainException('difficulty_fixed');
             }
-            if ($level->filePath !== null && !self::analyzerEnabled()) {
-                // Sin analizador no hay quien vuelva a chartear en el servidor.
-                throw new \DomainException('analyzer_disabled');
+            if ($fresh->pendingPublic) {
+                throw new \DomainException('analyzing');
             }
-            $level->setDifficultyRequested($requested);
-            if ($level->filePath === null) {
-                return null;
+            $variants = $fresh->publishReady() ? $fresh->chartVariants() : null;
+            if ($variants === null) {
+                throw new \DomainException('not_ready');
             }
-            $active = AnalysisJob::latestForLevel($level->id);
-            if ($active !== null && $active->isActive()) {
-                return $active;
+            $variant = $variants[$requested === null ? 'auto' : (string) $requested] ?? null;
+            if ($variant === null) {
+                throw new \DomainException('unavailable');
             }
-            return AnalysisJob::enqueue(
-                $level->id,
-                $level->filePath,
-                $level->audioSha256,
-                AnalysisJob::PURPOSE_RECHART,
-                AnalysisJob::PRIORITY_INTERACTIVE,
-            );
+            // Generado por el worker, pero pasa por el mismo validador que un
+            // chart del cliente antes de ser el chart del nivel.
+            $chart = ChartValidator::validateChart($variant, $fresh->audioSha256);
+            $difficulty = $variant['difficulty']['level'] ?? null;
+            if (!is_int($difficulty) || $difficulty < 1 || $difficulty > 5) {
+                throw new \DomainException('unavailable');
+            }
+
+            $changed = $fresh->chartHash !== hash('sha256', $chart['json']);
+            $fresh->applyVariant($chart, $difficulty, $requested);
+            if ($changed) {
+                Progress::invalidateForLevel($fresh->id);
+            }
+            return $fresh;
         });
     }
 
     /**
-     * Retira un nivel del catálogo: cancela su análisis, lo deja privado y borra
-     * su audio del servidor (Local-First: el audio de un nivel privado vive en
-     * el equipo de su autor).
+     * Paso 2b: publica un nivel listo con la dificultad elegida.
+     *
+     * @throws \DomainException 'not_ready'
+     */
+    public static function confirmPublish(Level $level): Level
+    {
+        return self::transaction(static function () use ($level): Level {
+            Database::getInstance()->prepare('SELECT id FROM levels WHERE id = :id FOR UPDATE')->execute(['id' => $level->id]);
+            $fresh = Level::findById($level->id) ?? throw new \DomainException('not_ready');
+            if ($fresh->isPublic) {
+                return $fresh;
+            }
+            if (!$fresh->publishReady()) {
+                throw new \DomainException('not_ready');
+            }
+            $fresh->confirmPublic();
+            return $fresh;
+        });
+    }
+
+    /**
+     * Retira un nivel del catálogo (o cancela su publicación): cancela su
+     * análisis, lo deja privado y borra su audio del servidor (Local-First: el
+     * audio de un nivel privado vive en el equipo de su autor).
      */
     public static function unpublish(Level $level): void
     {
@@ -152,7 +191,7 @@ final class PublishService
             AnalysisJob::cancelActiveForLevel($level->id, 'unpublished');
             Database::getInstance()->prepare(
                 "UPDATE levels
-                 SET is_public = FALSE, pending_public = FALSE, file_path = NULL,
+                 SET is_public = FALSE, pending_public = FALSE, file_path = NULL, chart_variants_json = NULL,
                      chart_status = IF(chart_status = 'analyzing', 'none', chart_status)
                  WHERE id = :id",
             )->execute(['id' => $level->id]);

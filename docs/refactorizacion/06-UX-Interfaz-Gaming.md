@@ -80,6 +80,7 @@ El juego tiene dos estados visibles, cambiados con una sola animación:
 > - El drag & drop sobre la ventana se mantiene como atajo.
 > - **NIVELES** deja de ser un botón del menú: su lista es la que ahora abre JUGAR.
 > - ✅ Implementado (Ola 2, `ui/menu.js` + `ui/catalog.js`). Menú final: JUGAR / SUBIR MI CANCIÓN / RANKING · PERFIL · AJUSTES.
+> - **Ajustado tras el playtest de la Ola 5 (doc 10):** el catálogo es una sola vista con oficiales y comunidad juntos ("Míos" aparte, con sesión), **pulsar un nivel lo juega** (la ficha con ranking y publicación se abre con su botón de detalles) y la UI oculta es inerte: un menú invisible no puede recibir clics en plena partida.
 >
 > El resto de este apartado (shader activo, título centrado, avatar arriba-derecha, sin navbar ni footer) sigue vigente.
 - Esquina superior derecha: avatar + username (clic → perfil/logout).

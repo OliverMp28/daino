@@ -40,7 +40,7 @@ export function mount(opts = {}) {
     // Precalentar la pestaña que abre JUGAR (defecto D9): mientras el jugador
     // mira el menú la petición ya está en vuelo, así que el catálogo pinta al
     // instante. Especulativo y silencioso: si falla, la apertura reintenta.
-    prefetchLevels('official');
+    prefetchLevels('public');
 
     rootEl = document.createElement('div');
     rootEl.className = 'daino-menu';
@@ -117,10 +117,18 @@ function handleAction(key) {
     }
 }
 
-/** Muestra/oculta el menú con clase CSS. NO desmonta — vuelve rápido. */
+/**
+ * Muestra/oculta el menú. NO desmonta — vuelve rápido.
+ *
+ * Oculto es INERTE, no solo transparente: sin esto sus botones seguían
+ * recibiendo clics y toques durante la partida (opacidad 0, pero en su sitio),
+ * y pulsar cerca del centro abría "Subir mi canción" en pleno juego. `inert`
+ * lo saca también del foco de teclado y de los lectores de pantalla.
+ */
 export function setVisible(visible) {
     if (rootEl === null) return;
     rootEl.dataset.visible = visible ? 'true' : 'false';
+    rootEl.inert = !visible;
 }
 
 export function isMounted() {

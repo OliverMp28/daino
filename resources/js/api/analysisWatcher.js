@@ -1,8 +1,8 @@
 // Seguimiento del análisis de los niveles que se están publicando (Ola 4).
 //
 // Publicar devuelve 202: el servidor analiza la canción en segundo plano y la
-// hace pública al terminar. Mientras tanto la UI consulta
-// GET /api/levels/{id}/analysis. Este módulo es el ÚNICO que consulta:
+// deja lista para que su autor elija la dificultad y la publique. Mientras tanto
+// la UI consulta GET /api/levels/{id}/analysis. Este módulo es el ÚNICO que consulta:
 //
 //   - Un solo sondeo por nivel, lo miren una tarjeta, la ficha o nadie. Varias
 //     vistas suscritas no multiplican las peticiones.
@@ -11,7 +11,7 @@
 //     espera creciente si la red falla. Nunca un intervalo fijo.
 //   - Sigue aunque se cierre el catálogo: quien publica y se va a jugar otra
 //     cosa recibe el aviso igualmente (`onSettled`).
-//   - Termina solo: al publicarse, fallar o cancelarse deja de consultar.
+//   - Termina solo: al quedar listo, publicarse, fallar o cancelarse deja de consultar.
 //
 // Sin DOM ni fetch directos: todo se inyecta, así se prueba en Node con un
 // reloj falso (tests/js/analysis-watcher.test.mjs).
@@ -42,11 +42,10 @@ export const POLL_MS = Object.freeze({
 /**
  * @typedef {Object} SettledEvent
  * @property {number} levelId
- * @property {'published' | 'failed' | 'cancelled' | 'gone'} outcome
+ * @property {'ready' | 'published' | 'failed' | 'cancelled' | 'gone'} outcome
  * @property {object | null} level   El nivel actualizado (null si ya no existe o no se pudo leer).
  * @property {object | null} status  Última respuesta de /analysis.
  * @property {string | null} title
- * @property {'publish' | 'difficulty'} reason  Qué se estaba siguiendo (Ola 5).
  */
 
 /**
@@ -59,21 +58,18 @@ export function createAnalysisWatcher(deps) {
     const onSettled = deps.onSettled ?? (() => {});
 
     /**
-     * @type {Map<number, { title: string | null, reason: string, timer: any, inFlight: boolean, failures: number,
+     * @type {Map<number, { title: string | null, timer: any, inFlight: boolean, failures: number,
      *                      last: object | null, listeners: Set<Function>, stopped: boolean }>}
      */
     const entries = new Map();
 
-    function ensure(levelId, title, reason) {
+    function ensure(levelId, title) {
         let entry = entries.get(levelId);
         if (entry === undefined) {
-            entry = { title: title ?? null, reason: reason ?? 'publish', timer: null, inFlight: false, failures: 0, last: null, listeners: new Set(), stopped: false };
+            entry = { title: title ?? null, timer: null, inFlight: false, failures: 0, last: null, listeners: new Set(), stopped: false };
             entries.set(levelId, entry);
             void poll(levelId, entry);
         } else if (title && !entry.title) {
-            // El motivo NO se sobrescribe: cambiar la dificultad de un nivel que
-            // ya se sigue (pendiente de publicar) no convierte su desenlace en
-            // otro; se anuncia la publicación, que ya incluye la dificultad.
             entry.title = title;
         }
         return entry;
@@ -138,7 +134,7 @@ export function createAnalysisWatcher(deps) {
 
     function finish(levelId, entry, outcome, level) {
         stopEntry(levelId, entry);
-        safeCall(onSettled, { levelId, outcome, level, status: entry.last, title: entry.title ?? level?.title ?? null, reason: entry.reason });
+        safeCall(onSettled, { levelId, outcome, level, status: entry.last, title: entry.title ?? level?.title ?? null });
     }
 
     function stopEntry(levelId, entry) {
@@ -153,10 +149,10 @@ export function createAnalysisWatcher(deps) {
         /**
          * Empieza a seguir un nivel (idempotente). La primera consulta sale ya.
          * @param {number} levelId
-         * @param {{ title?: string, reason?: 'publish' | 'difficulty' }} [opts]
+         * @param {{ title?: string }} [opts]
          */
         track(levelId, opts = {}) {
-            ensure(levelId, opts.title, opts.reason);
+            ensure(levelId, opts.title);
         },
 
         /**

@@ -20,15 +20,19 @@ class CharterError(Exception):
 
 
 def chart_from_analysis(analysis: dict, audio_sha256: str, difficulty: int | None = None, *,
-                        timeout_sec: float = 60.0, root: Path | None = None) -> dict:
+                        variants: bool = False, timeout_sec: float = 60.0, root: Path | None = None) -> dict:
     """`difficulty`: la que pidió el autor (1-5) o None para "Automática" (Ola 5).
-    El charter nunca supera el techo que la canción admite."""
+    El charter nunca supera el techo que la canción admite.
+
+    `variants`: además, el chart de cada dificultad que la canción admite
+    ('auto', '1'…techo). Un nivel sin publicar queda con todas y su autor elige."""
     script = (root or project_root()) / "scripts" / "chart-from-analysis.mjs"
     node = os.environ.get("NODE_BIN", "node")
     payload = json.dumps({
         "analysis": analysis,
         "sha256": audio_sha256,
         "difficulty": difficulty if difficulty is not None else "auto",
+        "variants": variants,
     }).encode("utf-8")
     try:
         proc = subprocess.run([node, str(script)], input=payload, capture_output=True, timeout=timeout_sec, check=False)
@@ -40,4 +44,6 @@ def chart_from_analysis(analysis: dict, audio_sha256: str, difficulty: int | Non
     for key in ("chart", "difficulty", "difficultyCeiling", "stats"):
         if key not in out:
             raise CharterError(f"respuesta del charter sin '{key}'")
+    if variants and not isinstance(out.get("variants"), dict):
+        raise CharterError("respuesta del charter sin 'variants'")
     return out

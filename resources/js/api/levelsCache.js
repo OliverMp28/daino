@@ -4,9 +4,10 @@
 // reutiliza entre aperturas mientras siga fresco; así el catálogo pinta al
 // instante en vez de mostrar "Cargando…" 1-1.5 s en cada apertura.
 //
-// Ola 2: una entrada por pestaña del catálogo (`official`, `community`, `mine`)
-// con paginación. La primera página se cachea; "cargar más" amplía la misma
-// entrada, de modo que reabrir el catálogo conserva lo que ya se había visto.
+// Ola 2: una entrada por pestaña del catálogo con paginación. La primera página
+// se cachea; "cargar más" amplía la misma entrada, de modo que reabrir el
+// catálogo conserva lo que ya se había visto. Tras el playtest de la Ola 5 las
+// pestañas son dos: `public` (oficiales y comunidad juntos) y `mine`.
 //
 // Deliberadamente EN MEMORIA, no localStorage: el listado incluye niveles
 // privados y la mejor marca del usuario, y cambia al publicar, al jugar o al
@@ -22,8 +23,8 @@ const TTL_MS = 30_000;
 /** Tamaño de página: una rejilla de 4 columnas × 6 filas en escritorio. */
 export const PAGE_SIZE = 24;
 
-/** @typedef {'official' | 'community' | 'mine'} CatalogTab */
-export const CATALOG_TABS = Object.freeze(['official', 'community', 'mine']);
+/** @typedef {'public' | 'mine'} CatalogTab */
+export const CATALOG_TABS = Object.freeze(['public', 'mine']);
 
 /**
  * @typedef {Object} CatalogPage
@@ -118,7 +119,7 @@ export async function loadMoreLevels(tab) {
  *
  * @param {CatalogTab} [tab]
  */
-export function prefetchLevels(tab = 'official') {
+export function prefetchLevels(tab = 'public') {
     void getLevels(tab);
 }
 

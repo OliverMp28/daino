@@ -1,9 +1,12 @@
 // Publicaciones en curso de la sesión (Ola 4): conecta el seguimiento del
 // análisis (`api/analysisWatcher.js`) con el navegador y el resto de la UI.
 //
-//   - Publicar → `trackPublish(level)`. Al terminar se actualiza la caché del
-//     catálogo, se emite `daino:level-updated` (la vista abierta se repinta) y se
-//     avisa con un toast.
+//   - Publicar → `trackPublish(level)`. Al terminar el análisis se actualiza la
+//     caché del catálogo, se emite `daino:level-updated` (la vista abierta se
+//     repinta) y se avisa con un toast: el nivel está LISTO para que su autor
+//     elija la dificultad y lo publique.
+//   - Elegir dificultad (`changeDifficulty`) y publicar (`confirmPublish`) son
+//     inmediatos: el servidor ya generó el chart de cada dificultad al analizar.
 //   - Recargar la página a mitad de un análisis no lo pierde: al iniciar sesión
 //     se piden "Míos" y se retoma el seguimiento de los pendientes.
 //   - Un aviso no interrumpe una partida: si llega jugando, espera a que se
@@ -13,11 +16,13 @@
 import { request as apiRequest } from '../api/client.js';
 import { createAnalysisWatcher } from '../api/analysisWatcher.js';
 import { getLevels, invalidateLevels, markLevelsStale, patchCachedLevel } from '../api/levelsCache.js';
+import { createLocalBests } from '../storage/localBests.js';
+import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { failureView } from './publishModel.js';
 import { showToast } from './toast.js';
 
 /**
- * Evento en window cuando termina la publicación de un nivel:
+ * Evento en window cuando termina el análisis de un nivel que se publica:
  * `detail: { levelId, outcome, level: object|null, status: object|null }`.
  */
 export const LEVEL_UPDATED_EVENT = 'daino:level-updated';
@@ -30,6 +35,8 @@ const announced = new Set();
 /** @type {Array<{ message: string, severity: 'info' | 'error' }>} */
 const pendingToasts = [];
 
+const localBests = createLocalBests();
+
 const watcher = createAnalysisWatcher({
     fetchStatus: (id) => apiRequest('GET', `/api/levels/${id}/analysis`),
     fetchLevel: (id) => apiRequest('GET', `/api/levels/${id}`),
@@ -38,7 +45,7 @@ const watcher = createAnalysisWatcher({
 });
 
 /**
- * Sigue la publicación de un nivel (idempotente).
+ * Sigue el análisis de un nivel que se publica (idempotente).
  * @param {{ id: number, title?: string }} level
  */
 export function trackPublish(level) {
@@ -46,42 +53,72 @@ export function trackPublish(level) {
 }
 
 /**
- * Retoma el seguimiento de los niveles de una lista que siguen pendientes de
- * publicar o aplicando otra dificultad (Ola 5).
+ * Retoma el seguimiento de los niveles de una lista que siguen analizándose.
  * @param {object[]} levels
  */
 export function trackPending(levels) {
     for (const level of levels) {
-        if (level?.is_mine !== true) continue;
-        if (level.pending_public === true) {
-            trackPublish(level);
-        } else if (level.analysis?.purpose === 'rechart' && (level.analysis.status === 'queued' || level.analysis.status === 'running')) {
-            watcher.track(level.id, { title: level.title, reason: 'difficulty' });
-        }
+        if (level?.is_mine === true && level.pending_public === true) trackPublish(level);
     }
 }
 
 /**
- * Cambia la dificultad de un nivel propio (Ola 5).
+ * Elige la dificultad de un nivel propio listo para publicar. Inmediato.
  *
- * @param {{ id: number, title?: string }} level
+ * @param {{ id: number }} level
  * @param {'auto' | number} difficulty
- * @returns {Promise<{ ok: true, level: object, applying: boolean } | { ok: false, message: string }>}
+ * @returns {Promise<{ ok: true, level: object } | { ok: false, message: string }>}
  */
 export async function changeDifficulty(level, difficulty) {
     const res = await apiRequest('POST', `/api/levels/${level.id}/difficulty`, { body: { difficulty } });
     if (res.ok && res.data?.level) {
-        const fresh = { ...res.data.level, analysis: res.data.analysis ?? res.data.level.analysis ?? null };
+        const fresh = res.data.level;
         patchCachedLevel(fresh);
-        const applying = res.status === 202;
-        // Publicándose: ese mismo seguimiento lo recoge. Ya público: se sigue el re-chart.
-        if (applying && fresh.pending_public !== true) watcher.track(level.id, { title: level.title, reason: 'difficulty' });
-        return { ok: true, level: fresh, applying };
+        // El servidor borró la marca de prueba (era de otro chart): la local también.
+        localBests.forget(level.id);
+        return { ok: true, level: fresh };
     }
     const message = res.data?.message
         ?? res.data?.fields?.difficulty
         ?? `No se pudo cambiar la dificultad (error ${res.status}).`;
     return { ok: false, message };
+}
+
+/**
+ * Publica un nivel propio listo, con la dificultad elegida. Inmediato.
+ *
+ * @param {{ id: number }} level
+ * @returns {Promise<{ ok: true, level: object } | { ok: false, message: string }>}
+ */
+export async function confirmPublish(level) {
+    const res = await apiRequest('POST', `/api/levels/${level.id}/visibility`, { body: { is_public: true } });
+    if (res.ok && res.data?.is_public === true) {
+        patchCachedLevel(res.data);
+        invalidateLevels('public');
+        markLevelsStale();
+        return { ok: true, level: res.data };
+    }
+    const message = res.status === 409 && res.data?.error === 'duplicate_title'
+        ? 'Ya tienes un nivel público con ese título.'
+        : (res.data?.message ?? `No se pudo publicar (error ${res.status}).`);
+    return { ok: false, message };
+}
+
+/**
+ * Renuncia a publicar un nivel listo (o retira uno publicado): vuelve a ser
+ * privado y su audio se borra del servidor.
+ *
+ * @param {{ id: number }} level
+ * @returns {Promise<{ ok: true, level: object } | { ok: false, message: string }>}
+ */
+export async function withdrawPublish(level) {
+    const res = await apiRequest('POST', `/api/levels/${level.id}/visibility`, { body: { is_public: false } });
+    if (res.ok && res.data?.id === level.id) {
+        patchCachedLevel({ ...res.data, analysis: null });
+        invalidateLevels('public');
+        return { ok: true, level: res.data };
+    }
+    return { ok: false, message: res.data?.message ?? `No se pudo cancelar la publicación (error ${res.status}).` };
 }
 
 /**
@@ -103,7 +140,7 @@ export async function retryAnalysis(level) {
     const res = await apiRequest('POST', `/api/levels/${level.id}/analysis`);
     if (res.ok) {
         // El nivel vuelve a estar pendiente: la caché lo refleja ya, sin esperar.
-        patchCachedLevel({ id: level.id, pending_public: true, analysis: res.data?.analysis ?? null });
+        patchCachedLevel({ id: level.id, pending_public: true, publish_ready: false, analysis: res.data?.analysis ?? null });
         trackPublish(level);
         return { ok: true };
     }
@@ -114,30 +151,30 @@ export async function retryAnalysis(level) {
     return { ok: false, message: res.data?.message ?? `No se pudo reintentar (error ${res.status}).` };
 }
 
-function handleSettled({ levelId, outcome, level, status, title, reason }) {
+function handleSettled({ levelId, outcome, level, status, title }) {
     if (level !== null) {
         patchCachedLevel(level);
     } else if (status !== null) {
         // Sin el nivel completo (fallo de red puntual): al menos que la caché no
         // lo siga dando por pendiente, o una vista volvería a seguirlo.
-        patchCachedLevel({ id: levelId, is_public: status.is_public, pending_public: false, analysis: status.analysis });
+        patchCachedLevel({
+            id: levelId, is_public: status.is_public, pending_public: false,
+            publish_ready: status.publish_ready === true, analysis: status.analysis,
+        });
     }
-    if (outcome === 'published') invalidateLevels('community');
+    if (outcome === 'published') invalidateLevels('public');
     markLevelsStale();
-    window.dispatchEvent(new CustomEvent(LEVEL_UPDATED_EVENT, { detail: { levelId, outcome, level, status, reason } }));
+    window.dispatchEvent(new CustomEvent(LEVEL_UPDATED_EVENT, { detail: { levelId, outcome, level, status } }));
 
     const jobKey = `${levelId}:${status?.analysis?.created_at ?? ''}:${outcome}`;
     if (announced.has(jobKey)) return;
     announced.add(jobKey);
     const name = title ? `«${title}»` : 'Tu nivel';
-    if (reason === 'difficulty') {
-        // Ola 5: aplicar otra dificultad a un nivel ya publicado.
-        if (outcome === 'published') notify(`${name}: dificultad aplicada. El nivel ya se juega con ella.`, 'info');
-        else if (outcome === 'failed') notify(`No se pudo aplicar la dificultad de ${name}. Sigue con la anterior; inténtalo de nuevo.`, 'error');
-        return;
-    }
-    if (outcome === 'published') notify(`${name} ya está publicado. Aparece en «De la comunidad».`, 'info');
-    else if (outcome === 'failed') {
+    if (outcome === 'ready') {
+        notify(`${name} está analizado: elige su dificultad en «Míos» y publícalo.`, 'info');
+    } else if (outcome === 'published') {
+        notify(`${name} ya está publicado${level?.difficulty ? ` en ${DIFFICULTY_NAMES[level.difficulty]}` : ''}.`, 'info');
+    } else if (outcome === 'failed') {
         const { retryable } = failureView(status?.analysis?.error?.code);
         notify(`No se pudo analizar ${name}. ${retryable ? 'Puedes reintentarlo desde «Míos».' : 'Revisa el archivo en «Míos».'}`, 'error');
     }

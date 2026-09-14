@@ -4,36 +4,37 @@
 // estrellas, qué acción está disponible, la marca combinada. La vista
 // (`catalog.js`) solo lo pinta. Así las reglas se prueban en Node y la vista no
 // acumula condiciones sueltas.
+//
+// Tras el playtest de la Ola 5: una sola vista con todos los niveles jugables
+// (oficiales y de la comunidad juntos) y "Míos" aparte, y pulsar una tarjeta
+// JUEGA. La ficha (ranking, publicar) se abre con su botón de detalles.
 
 import { mergeBest } from '../storage/localBests.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
-import { publishView } from './publishModel.js';
+import { publishView, PUBLISH_STATE } from './publishModel.js';
 
 // Los nombres viven con los perfiles del charter (Ola 5); se reexportan para
 // quien ya los importaba desde aquí.
 export { DIFFICULTY_NAMES };
 
-/** Qué puede hacer el jugador con un nivel desde el catálogo. */
+/** Qué pasa al pulsar un nivel en el catálogo. */
 export const PLAY_MODE = Object.freeze({
     /** Audio en el servidor: se juega directamente. */
     CATALOG: 'catalog',
     /** Nivel privado propio: el audio está en el equipo del jugador (D11). */
     NEEDS_FILE: 'needs-file',
-    /** Ni audio publicado ni es tuyo: no se puede jugar. */
+    /** Todavía no se puede jugar (analizándose) o no es tuyo ni público: se abre la ficha. */
     UNAVAILABLE: 'unavailable',
 });
 
-/** @typedef {'official' | 'community' | 'mine'} CatalogTab */
+/** @typedef {'public' | 'mine'} CatalogTab */
 
 /**
  * @param {boolean} authenticated
  * @returns {Array<{ id: CatalogTab, label: string }>}
  */
 export function tabsFor(authenticated) {
-    const tabs = [
-        { id: 'official', label: 'Oficiales' },
-        { id: 'community', label: 'De la comunidad' },
-    ];
+    const tabs = [{ id: 'public', label: 'Todos' }];
     if (authenticated) tabs.push({ id: 'mine', label: 'Míos' });
     return tabs;
 }
@@ -85,9 +86,21 @@ export function coverHue(level) {
  */
 export function playModeFor(level) {
     if (level.is_public === true && level.has_audio === true) return PLAY_MODE.CATALOG;
-    if (level.is_mine === true) return PLAY_MODE.NEEDS_FILE;
-    return PLAY_MODE.UNAVAILABLE;
+    if (level.is_mine !== true) return PLAY_MODE.UNAVAILABLE;
+    // Se está analizando: su chart va a cambiar. Se juega cuando esté listo.
+    if (level.pending_public === true) return PLAY_MODE.UNAVAILABLE;
+    // Audio subido (listo para publicar, o con el análisis fallido): su autor lo
+    // juega desde el servidor, sin volver a elegir el archivo.
+    if (level.has_audio === true) return PLAY_MODE.CATALOG;
+    return PLAY_MODE.NEEDS_FILE;
 }
+
+/** Texto de la acción principal de cada modo (tarjeta y ficha). */
+const PLAY_LABELS = Object.freeze({
+    [PLAY_MODE.CATALOG]: 'Jugar',
+    [PLAY_MODE.NEEDS_FILE]: 'Elegir MP3 y jugar',
+    [PLAY_MODE.UNAVAILABLE]: 'Ver detalles',
+});
 
 /**
  * @param {object} level  Fila de GET /api/levels.
@@ -105,22 +118,33 @@ export function cardView(level, localBest = null) {
     else if (level.author?.username) byline = `por ${level.author.username}`;
     else byline = '';
 
+    const title = level.title;
+    const difficulty = difficultyView(level.difficulty);
+    const duration = formatDuration(level.duration_ms ? level.duration_ms / 1000 : level.duration_sec);
+    let actionLabel;
+    if (playMode === PLAY_MODE.CATALOG) actionLabel = `Jugar «${title}»`;
+    else if (playMode === PLAY_MODE.NEEDS_FILE) actionLabel = `Elegir el MP3 de «${title}» y jugar`;
+    else actionLabel = `«${title}»: ${publish.state === PUBLISH_STATE.ANALYZING ? 'analizándose, ver progreso' : 'ver detalles'}`;
+
     return {
         id: level.id,
-        title: level.title,
+        title,
         byline,
         badge: level.is_official ? 'Oficial' : (level.is_mine ? publish.badge : null),
-        difficulty: difficultyView(level.difficulty),
+        difficulty,
         bpm: Number.isFinite(level.bpm) && level.bpm > 0 ? `${level.bpm} BPM` : null,
-        duration: formatDuration(level.duration_ms ? level.duration_ms / 1000 : level.duration_sec),
+        duration,
         best: best === null ? null : { points: formatPoints(best.points), percentage: `${best.percentage} %`, completed: best.percentage >= 100 },
-        players: level.players > 0 ? `${level.players} ${level.players === 1 ? 'jugador' : 'jugadores'}` : null,
+        // Solo en lo publicado: en un nivel privado el único jugador es su autor.
+        players: level.is_public === true && level.players > 0 ? `${level.players} ${level.players === 1 ? 'jugador' : 'jugadores'}` : null,
         hue: coverHue(level),
         playMode,
         canPublish: publish.canPublish,
         /** Ola 4: estado de publicación y del análisis del servidor. */
         publish,
-        playLabel: playMode === PLAY_MODE.NEEDS_FILE ? 'Elegir MP3 y jugar' : 'Jugar',
+        playLabel: PLAY_LABELS[playMode],
+        /** Lo que anuncia la tarjeta a un lector de pantalla: qué hace pulsarla. */
+        actionLabel: `${actionLabel}. ${difficulty.label}. ${duration}.`,
     };
 }
 
@@ -131,12 +155,8 @@ export function cardView(level, localBest = null) {
  * @returns {{ title: string, body: string, action: 'upload' | null }}
  */
 export function emptyView(tab) {
-    switch (tab) {
-        case 'official':
-            return { title: 'Aún no hay niveles oficiales', body: 'Mientras tanto, prueba con tu propia música.', action: 'upload' };
-        case 'community':
-            return { title: 'Nadie ha publicado todavía', body: 'Juega con tu canción y publícala desde "Míos" para estrenar esta sección.', action: 'upload' };
-        default:
-            return { title: 'Aún no tienes niveles', body: 'Cada canción que juegues con la sesión iniciada aparece aquí, lista para publicarla.', action: 'upload' };
+    if (tab === 'mine') {
+        return { title: 'Aún no tienes niveles', body: 'Cada canción que juegues con la sesión iniciada aparece aquí, lista para publicarla.', action: 'upload' };
     }
+    return { title: 'Aún no hay niveles', body: 'Mientras tanto, prueba con tu propia música.', action: 'upload' };
 }

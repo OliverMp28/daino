@@ -9,8 +9,16 @@
 // Doc 06 §4.1 queda modificado (doc 10, Ola 2): JUGAR abre ESTO. Jugar con
 // música propia es una acción aparte y explícita ("Subir mi canción").
 //
+// Tras el playtest de la Ola 5:
+//   - Una sola vista con todos los niveles jugables, oficiales y de la comunidad
+//     (la insignia "Oficial" o el autor los distinguen), y "Míos" aparte.
+//   - Pulsar una tarjeta JUEGA. La ficha (ranking, publicar, dificultad) se abre
+//     con el botón de detalles de la tarjeta: jugar no pasa por ella.
+//   - La dificultad solo se elige en un nivel propio listo para publicar.
+//
 // Arquitectura:
-//   - Qué se enseña lo decide `catalogModel.js` (puro, testeado en Node).
+//   - Qué se enseña lo decide `catalogModel.js` / `publishModel.js` (puros,
+//     testeados en Node).
 //   - Los datos vienen de `levelsCache.js` (memoria, stale-while-revalidate).
 //   - Jugar solo PIDE (`playRequests.js`); AppController carga y arranca.
 //   - Es un `<dialog>` en #modal-root: foco atrapado y Esc nativos, y el
@@ -18,18 +26,20 @@
 
 import { isAuthenticated, request as apiRequest, upload as apiUpload, getUser } from '../api/client.js';
 import {
-    getLevels, loadMoreLevels, peekLevels, invalidateLevels, patchCachedLevel,
+    getLevels, invalidateLevels, loadMoreLevels, peekLevels, patchCachedLevel,
 } from '../api/levelsCache.js';
 import { requestCatalogPlay, requestPrefetch } from './playRequests.js';
 import { pickFileViaInput, uploadMaxMb } from './upload.js';
 import { createLocalBests } from '../storage/localBests.js';
 import { renderAvatar } from './avatar.js';
 import { cardView, emptyView, tabsFor, PLAY_MODE, formatPoints } from './catalogModel.js';
+import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { createModal } from './modals.js';
 import { showToast } from './toast.js';
 import { analysisView, difficultyChoiceView, PUBLISH_STATE } from './publishModel.js';
 import {
-    LEVEL_UPDATED_EVENT, changeDifficulty, retryAnalysis, subscribeAnalysis, trackPending, trackPublish,
+    LEVEL_UPDATED_EVENT, changeDifficulty, confirmPublish, retryAnalysis, subscribeAnalysis, trackPending, trackPublish,
+    withdrawPublish,
 } from './publishTracker.js';
 
 const DIALOG_ID = 'modal-catalog';
@@ -41,14 +51,14 @@ const localBests = createLocalBests();
 const ui = {
     /** @type {HTMLDialogElement | null} */
     dialog: null,
-    /** @type {'official' | 'community' | 'mine'} */
-    tab: 'official',
+    /** @type {'public' | 'mine'} */
+    tab: 'public',
     /** @type {object | null} nivel abierto en la ficha */
     detail: null,
     /** Contador para descartar respuestas de una vista que ya no está. */
     renderSeq: 0,
-    /** Tarjeta que abrió la ficha, para devolverle el foco al volver. */
-    returnFocusId: null,
+    /** Botón que abrió la ficha (selector), para devolverle el foco al volver. */
+    returnFocus: null,
     /** Suscripciones al progreso del análisis de lo que hay pintado (Ola 4). */
     unsubscribers: [],
 };
@@ -64,17 +74,17 @@ function releaseSubscriptions() {
 /**
  * Abre el catálogo, en la rejilla o directamente en la ficha de un nivel.
  *
- * @param {{ tab?: 'official' | 'community' | 'mine', level?: object }} [opts]
+ * @param {{ tab?: 'public' | 'mine', level?: object }} [opts]
  */
 export function openCatalog(opts = {}) {
     const dialog = ensureDialog();
     const wanted = opts.tab ?? ui.tab;
-    ui.tab = tabsFor(isAuthenticated()).some((t) => t.id === wanted) ? wanted : 'official';
+    ui.tab = tabsFor(isAuthenticated()).some((t) => t.id === wanted) ? wanted : 'public';
     ui.detail = null;
     renderShell();
     if (!dialog.open) dialog.showModal();
     if (opts.level) {
-        ui.returnFocusId = String(opts.level.id);
+        ui.returnFocus = `.daino-card__open[data-level-id="${CSS.escape(String(opts.level.id))}"]`;
         openDetail(opts.level, null);
     } else {
         void renderGrid();
@@ -156,21 +166,25 @@ function ensureDialog() {
     // se cierra cambia las pestañas disponibles.
     const onAuthChange = () => {
         if (!dialog.open) return;
-        if (ui.tab === 'mine' && !isAuthenticated()) ui.tab = 'official';
+        if (ui.tab === 'mine' && !isAuthenticated()) ui.tab = 'public';
         renderShell();
         if (ui.detail === null) void renderGrid();
     };
     window.addEventListener('daino:auth:login', onAuthChange);
     window.addEventListener('daino:auth:logout', onAuthChange);
 
-    // Un nivel terminó de analizarse (publicado o fallido): la vista abierta se
-    // repinta con el nivel nuevo. La caché ya viene actualizada por el tracker.
+    // Un nivel terminó de analizarse (listo, publicado o fallido): la vista
+    // abierta se repinta con el nivel nuevo. La caché ya viene actualizada.
     window.addEventListener(LEVEL_UPDATED_EVENT, (ev) => {
         if (!dialog.open) return;
         const { levelId, level, status } = ev.detail;
         if (ui.detail !== null) {
             if (ui.detail.id !== levelId) return;
-            const fresh = level ?? { is_public: status?.is_public === true, analysis: status?.analysis ?? null };
+            const fresh = level ?? {
+                is_public: status?.is_public === true,
+                publish_ready: status?.publish_ready === true,
+                analysis: status?.analysis ?? null,
+            };
             openDetail({ ...ui.detail, ...fresh, pending_public: false }, null);
             return;
         }
@@ -189,22 +203,28 @@ function renderShell() {
     const title = el('h2', 'daino-catalog__title', 'Niveles');
     title.id = `${DIALOG_ID}-title`;
 
+    // Sin sesión hay una sola colección: sin pestañas que no llevan a ningún sitio.
+    const available = tabsFor(isAuthenticated());
     const tabs = el('div', 'daino-catalog__tabs');
-    tabs.setAttribute('role', 'tablist');
-    tabs.setAttribute('aria-label', 'Colecciones de niveles');
-    for (const tab of tabsFor(isAuthenticated())) {
-        const btn = button(tab.label, 'daino-catalog__tab');
-        btn.setAttribute('role', 'tab');
-        btn.dataset.tab = tab.id;
-        btn.setAttribute('aria-selected', String(tab.id === ui.tab));
-        btn.addEventListener('click', () => {
-            if (ui.tab === tab.id && ui.detail === null) return;
-            ui.tab = tab.id;
-            ui.detail = null;
-            for (const b of tabs.children) b.setAttribute('aria-selected', String(b.dataset.tab === tab.id));
-            void renderGrid();
-        });
-        tabs.appendChild(btn);
+    if (available.length > 1) {
+        tabs.setAttribute('role', 'tablist');
+        tabs.setAttribute('aria-label', 'Colecciones de niveles');
+        for (const tab of available) {
+            const btn = button(tab.label, 'daino-catalog__tab');
+            btn.setAttribute('role', 'tab');
+            btn.dataset.tab = tab.id;
+            btn.setAttribute('aria-selected', String(tab.id === ui.tab));
+            btn.addEventListener('click', () => {
+                if (ui.tab === tab.id && ui.detail === null) return;
+                ui.tab = tab.id;
+                ui.detail = null;
+                for (const b of tabs.children) b.setAttribute('aria-selected', String(b.dataset.tab === tab.id));
+                void renderGrid();
+            });
+            tabs.appendChild(btn);
+        }
+    } else {
+        tabs.hidden = true;
     }
 
     const actions = el('div', 'daino-catalog__header-actions');
@@ -219,7 +239,7 @@ function renderShell() {
 
     const main = el('main', 'daino-catalog__main');
     main.id = `${DIALOG_ID}-main`;
-    main.setAttribute('role', 'tabpanel');
+    if (available.length > 1) main.setAttribute('role', 'tabpanel');
 
     shell.append(header, main);
     dialog.appendChild(shell);
@@ -326,18 +346,23 @@ function paintGrid(main, tab, page) {
     main.scrollTop = scroll;
 }
 
+/**
+ * Una tarjeta son dos botones hermanos (nunca uno dentro de otro): la tarjeta
+ * entera, que JUEGA, y el de detalles, que abre la ficha.
+ */
 function renderCard(level) {
     const view = cardView(level, localBests.get(level.id));
     const li = el('li', 'daino-card');
     li.style.setProperty('--hue', String(view.hue));
+    li.dataset.mode = view.playMode;
 
-    const open = document.createElement('button');
-    open.type = 'button';
-    open.className = 'daino-card__open';
-    open.dataset.interactive = 'true';
-    open.dataset.levelId = String(level.id);
-    open.setAttribute('aria-label', `${view.title}. ${view.difficulty.label}. ${view.duration}.`);
-    open.addEventListener('click', () => openDetail(level, open));
+    const play = document.createElement('button');
+    play.type = 'button';
+    play.className = 'daino-card__open';
+    play.dataset.interactive = 'true';
+    play.dataset.levelId = String(level.id);
+    play.setAttribute('aria-label', view.actionLabel);
+    play.addEventListener('click', () => playFromCatalog(level, view.playMode, play));
 
     const cover = el('div', 'daino-card__cover');
     cover.appendChild(renderEq(level.id));
@@ -356,23 +381,49 @@ function renderCard(level) {
         }
     }
     cover.appendChild(renderStars(view.difficulty));
+    if (view.playMode !== PLAY_MODE.UNAVAILABLE) {
+        // Qué hace pulsar la tarjeta, sin leer nada: ▶ juega, ♪ pide tu MP3.
+        const glyph = el('span', 'daino-card__glyph', view.playMode === PLAY_MODE.NEEDS_FILE ? '♪' : '▶');
+        glyph.setAttribute('aria-hidden', 'true');
+        cover.appendChild(glyph);
+    }
 
     const body = el('div', 'daino-card__body');
     body.append(el('strong', 'daino-card__title', view.title));
     // Siempre presente (aunque vacía) para que todas las tarjetas alineen.
-    body.append(el('span', 'daino-card__byline', view.byline || ' '));
+    body.append(el('span', 'daino-card__byline', view.byline || ' '));
     const meta = el('span', 'daino-card__meta', [view.bpm, view.duration].filter(Boolean).join(' · '));
     body.append(meta);
 
     const foot = el('div', 'daino-card__foot');
-    foot.append(el('span', view.best ? 'daino-card__best' : 'daino-card__best is-empty',
-        view.best ? `Mejor: ${view.best.points} · ${view.best.percentage}` : 'Sin jugar'));
+    let footText = view.best ? `Mejor: ${view.best.points} · ${view.best.percentage}` : 'Sin jugar';
+    if (view.playMode === PLAY_MODE.NEEDS_FILE) footText = 'Juega con tu MP3';
+    foot.append(el('span', view.best && view.playMode !== PLAY_MODE.NEEDS_FILE ? 'daino-card__best' : 'daino-card__best is-empty', footText));
     if (view.players) foot.append(el('span', 'daino-card__players', view.players));
     body.append(foot);
 
-    open.append(cover, body);
-    li.appendChild(open);
+    play.append(cover, body);
+
+    const details = button('', 'daino-card__details');
+    details.dataset.levelId = String(level.id);
+    details.setAttribute('aria-label', `Detalles de «${view.title}»`);
+    details.title = 'Detalles y ranking';
+    details.appendChild(el('span', null, 'i'));
+    details.firstChild.setAttribute('aria-hidden', 'true');
+    details.addEventListener('click', () => openDetail(level, details));
+
+    li.append(play, details);
     return li;
+}
+
+/**
+ * Lo que hace pulsar un nivel. Dentro del clic: el audio se desbloquea con el
+ * gesto (playRequests) y el selector de archivos también lo necesita.
+ */
+function playFromCatalog(level, mode, fromButton) {
+    if (mode === PLAY_MODE.CATALOG) requestCatalogPlay(level);
+    else if (mode === PLAY_MODE.NEEDS_FILE) pickFileViaInput({ level });
+    else openDetail(level, fromButton);
 }
 
 /** Barras de "ecualizador" decorativas, estables por nivel (sin animación JS). */
@@ -404,11 +455,21 @@ function renderStars(difficulty) {
 
 // --------------------------- Ficha ---------------------------
 
-function openDetail(level, fromButton) {
+/**
+ * @param {object} level
+ * @param {HTMLElement | null} fromButton  Lo que la abrió (el foco vuelve ahí).
+ * @param {{ focus?: string }} [opts]  `focus`: selector a enfocar al pintarla.
+ */
+function openDetail(level, fromButton, opts = {}) {
     ui.detail = level;
-    if (fromButton) ui.returnFocusId = fromButton.dataset.levelId ?? null;
+    if (fromButton?.dataset.levelId) {
+        // Volver deja el foco en el MISMO botón (el de detalles o la tarjeta).
+        const kind = fromButton.classList.contains('daino-card__details') ? '.daino-card__details' : '.daino-card__open';
+        ui.returnFocus = `${kind}[data-level-id="${CSS.escape(fromButton.dataset.levelId)}"]`;
+    }
     const seq = ++ui.renderSeq;
     const view = cardView(level, localBests.get(level.id));
+    const publish = view.publish;
     const main = mainEl();
     main.innerHTML = '';
     main.scrollTop = 0;
@@ -436,7 +497,7 @@ function openDetail(level, fromButton) {
     addStat(stats, 'Dificultad', renderStars(view.difficulty), view.difficulty.name);
     if (view.bpm) addStat(stats, 'Tempo', view.bpm);
     addStat(stats, 'Duración', view.duration);
-    addStat(stats, 'Jugadores', level.players > 0 ? String(level.players) : '—');
+    if (level.is_public === true) addStat(stats, 'Jugadores', level.players > 0 ? String(level.players) : '—');
     info.appendChild(stats);
 
     const bestBox = el('p', view.best ? 'daino-detail__best' : 'daino-detail__best is-empty');
@@ -449,65 +510,93 @@ function openDetail(level, fromButton) {
     const status = el('p', 'daino-detail__status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
+    /** Botones que no se pueden pulsar mientras se aplica una dificultad. */
+    const guarded = [];
 
     if (view.playMode !== PLAY_MODE.UNAVAILABLE) {
         const play = button(view.playLabel, 'daino-btn daino-btn--primary daino-detail__play');
-        play.addEventListener('click', () => {
-            if (view.playMode === PLAY_MODE.CATALOG) {
-                requestCatalogPlay(level);
-            } else {
-                pickFileViaInput({ level });
-            }
-        });
+        play.addEventListener('click', () => playFromCatalog(level, view.playMode, play));
         actions.appendChild(play);
-        queueMicrotask(() => play.focus());
-    } else {
+        guarded.push(play);
+    } else if (publish.state !== PUBLISH_STATE.ANALYZING) {
         status.textContent = 'Este nivel no tiene audio publicado.';
     }
     if (view.playMode === PLAY_MODE.NEEDS_FILE) {
-        status.textContent = 'Es privado: su audio está en tu equipo. Elige el MP3 con el que lo creaste.';
+        status.textContent = 'Es privado: su audio está en tu equipo. Para jugarlo, elige el MP3 con el que lo creaste.';
     }
-    const failed = view.publish.state === PUBLISH_STATE.FAILED;
-    if (view.publish.canRetry) {
+
+    if (publish.canRetry) {
         const retry = button('Reintentar análisis', 'daino-btn');
         retry.addEventListener('click', () => { void retryLevelAnalysis(level, retry, status); });
         actions.appendChild(retry);
     }
-    if (view.canPublish) {
-        const publish = button(failed ? 'Publicar de nuevo' : 'Publicar', 'daino-btn');
-        publish.addEventListener('click', () => { void publishLevel(level, publish, status); });
-        actions.appendChild(publish);
+    if (publish.canPublish) {
+        const failed = publish.state === PUBLISH_STATE.FAILED;
+        const start = button(failed ? 'Publicar de nuevo…' : 'Publicar…', 'daino-btn');
+        start.addEventListener('click', () => { void publishLevel(level, start, status); });
+        actions.appendChild(start);
     }
+
+    let choice = null;
+    if (publish.canConfirm) {
+        const name = DIFFICULTY_NAMES[view.difficulty.value];
+        const confirm = button(`Publicar en ${name}`, 'daino-btn daino-detail__confirm');
+        confirm.addEventListener('click', () => { void confirmLevelPublish(level, confirm, status, guarded); });
+        actions.appendChild(confirm);
+        guarded.push(confirm);
+
+        const withdraw = button('No publicar', 'daino-detail__withdraw');
+        withdraw.title = 'Vuelve a ser privado y su audio se borra del servidor';
+        withdraw.addEventListener('click', () => { void withdrawLevel(level, withdraw, status); });
+        actions.appendChild(withdraw);
+        guarded.push(withdraw);
+
+        choice = renderDifficultyChoice(level, guarded, status);
+    }
+
+    // Orden de lectura: primero la dificultad (se elige antes de jugar o publicar).
+    if (choice !== null) info.appendChild(choice);
     info.append(actions, status);
-    const difficultyChoice = renderDifficultyChoice(level);
-    if (difficultyChoice !== null) info.appendChild(difficultyChoice);
-    if (view.publish.analysis !== null) {
-        info.appendChild(renderAnalysisPanel(level, view.publish));
+    if (publish.canPublish && publish.state === PUBLISH_STATE.PRIVATE) {
+        info.appendChild(el('p', 'daino-detail__hint',
+            'Publicar sube tu MP3 y lo analizamos a fondo. Después eliges su dificultad —solo las que admita la canción— y lo publicas.'));
+    }
+    if (publish.canConfirm) {
+        info.appendChild(el('p', 'daino-detail__hint',
+            'Pruébalo con Jugar si quieres. Una vez publicado, su dificultad queda fija para todos.'));
+    }
+    if (publish.analysis !== null) {
+        info.appendChild(renderAnalysisPanel(level, publish));
     }
 
     hero.append(cover, info);
+    detail.append(back, hero);
 
-    const rankingBox = el('section', 'daino-detail__ranking');
-    rankingBox.setAttribute('aria-labelledby', `${DIALOG_ID}-ranking`);
-    const rankingTitle = el('h4', null, 'Ranking del nivel');
-    rankingTitle.id = `${DIALOG_ID}-ranking`;
-    const rankingList = el('ol', 'daino-detail__ranking-list');
-    rankingList.setAttribute('aria-busy', 'true');
-    rankingList.appendChild(el('li', 'daino-detail__ranking-empty', 'Cargando…'));
-    rankingBox.append(rankingTitle, rankingList);
+    // El ranking solo existe para lo publicado: lo privado solo lo juega su autor.
+    if (level.is_public === true) {
+        const rankingBox = el('section', 'daino-detail__ranking');
+        rankingBox.setAttribute('aria-labelledby', `${DIALOG_ID}-ranking`);
+        const rankingTitle = el('h4', null, 'Ranking del nivel');
+        rankingTitle.id = `${DIALOG_ID}-ranking`;
+        const rankingList = el('ol', 'daino-detail__ranking-list');
+        rankingList.setAttribute('aria-busy', 'true');
+        rankingList.appendChild(el('li', 'daino-detail__ranking-empty', 'Cargando…'));
+        rankingBox.append(rankingTitle, rankingList);
+        detail.appendChild(rankingBox);
+        void loadLevelRanking(level, rankingList, seq);
+    }
 
-    detail.append(back, hero, rankingBox);
     main.appendChild(detail);
-
-    void loadLevelRanking(level, rankingList, seq);
+    queueMicrotask(() => {
+        const target = (opts.focus && detail.querySelector(opts.focus)) || detail.querySelector('.daino-detail__play, button:not(.daino-detail__back)');
+        target?.focus();
+    });
 }
 
 function closeDetail() {
     ui.detail = null;
     void renderGrid().then(() => {
-        const id = ui.returnFocusId;
-        if (id === null) return;
-        mainEl()?.querySelector(`[data-level-id="${CSS.escape(id)}"]`)?.focus();
+        if (ui.returnFocus !== null) mainEl()?.querySelector(ui.returnFocus)?.focus();
     });
 }
 
@@ -565,6 +654,9 @@ function rankingRow(entry, isMe) {
     return li;
 }
 
+// --------------------------- Publicar ---------------------------
+
+/** Paso 1: sube el MP3 del nivel privado para que el servidor lo analice. */
 async function publishLevel(level, btn, status) {
     // El nivel es privado: su MP3 está en el equipo del autor. El servidor
     // comprueba que el archivo es exactamente el del chart.
@@ -588,22 +680,20 @@ async function publishLevel(level, btn, status) {
     const res = await apiUpload(`/api/levels/${level.id}/upload`, fd);
 
     if (res.status === 202 && res.data?.id === level.id) {
-        // Ola 4: subido; el servidor lo analiza y lo publica al terminar. La
-        // ficha pasa a enseñar el progreso y el tracker sigue aunque se cierre.
+        // Subido; el servidor lo analiza. La ficha pasa a enseñar el progreso y
+        // el tracker sigue aunque se cierre: al terminar, se elige la dificultad.
         patchCachedLevel(res.data);
         trackPublish(res.data);
         if (ui.detail?.id === level.id) openDetail(res.data, null);
-        showToast('Subido. Analizamos la canción y se publicará sola al terminar.', 'info');
+        showToast('Subido. Lo estamos analizando: cuando termine, eliges su dificultad y lo publicas.', 'info');
         return;
     }
     if (res.ok && res.data?.id === level.id) {
         // Sin analizador en el servidor: publicado al instante con el chart local.
         patchCachedLevel(res.data);
-        invalidateLevels('community');
-        // La ficha se repinta ya como pública; el aviso va aparte para que el
-        // repintado no lo borre.
+        invalidateLevels('public');
         if (ui.detail?.id === level.id) openDetail(res.data, null);
-        showToast('¡Publicado! Ya aparece en «De la comunidad».', 'info');
+        showToast('¡Publicado! Ya aparece en el catálogo.', 'info');
         return;
     }
     btn.disabled = false;
@@ -612,6 +702,34 @@ async function publishLevel(level, btn, status) {
         : res.status === 413 ? 'Archivo demasiado grande.'
             : res.status === 422 ? (res.data?.fields?.file ?? 'El archivo no es válido.')
                 : `No se pudo publicar (error ${res.status}).`;
+}
+
+/** Paso 2: publica ya, con la dificultad elegida. */
+async function confirmLevelPublish(level, btn, status, guarded) {
+    for (const b of guarded) b.disabled = true;
+    status.textContent = 'Publicando…';
+    const res = await confirmPublish(level);
+    if (!res.ok) {
+        for (const b of guarded) b.disabled = false;
+        status.textContent = res.message;
+        return;
+    }
+    if (ui.detail?.id === level.id) openDetail({ ...level, ...res.level }, null);
+    const name = DIFFICULTY_NAMES[res.level.difficulty] ?? '';
+    showToast(`¡Publicado${name ? ` en ${name}` : ''}! Ya aparece en el catálogo.`, 'info');
+}
+
+async function withdrawLevel(level, btn, status) {
+    btn.disabled = true;
+    status.textContent = '';
+    const res = await withdrawPublish(level);
+    if (!res.ok) {
+        btn.disabled = false;
+        status.textContent = res.message;
+        return;
+    }
+    if (ui.detail?.id === level.id) openDetail({ ...level, ...res.level, analysis: null }, null);
+    showToast('No se publicará: vuelve a ser privado y su audio se ha borrado del servidor.', 'info');
 }
 
 async function retryLevelAnalysis(level, btn, status) {
@@ -624,31 +742,33 @@ async function retryLevelAnalysis(level, btn, status) {
         return;
     }
     if (ui.detail?.id === level.id) {
-        openDetail({ ...level, pending_public: true, analysis: { status: 'queued', attempts: 0, queue_position: null } }, null);
+        openDetail({ ...level, pending_public: true, publish_ready: false, analysis: { status: 'queued', attempts: 0, queue_position: null } }, null);
     }
 }
 
 /**
- * Selector de dificultad de un nivel propio (Ola 5). Qué opciones hay y cuándo
- * se puede tocar lo decide `difficultyChoiceView`; aquí solo se pinta y se
- * envía. Al terminar el re-chart, LEVEL_UPDATED_EVENT repinta la ficha entera.
+ * Selector de dificultad de un nivel propio listo para publicar. Qué opciones
+ * hay lo decide `difficultyChoiceView`; aquí solo se pinta y se envía. Aplicar
+ * una es inmediato (el servidor ya tiene el chart de cada una), pero mientras
+ * dura la petición nada que dependa del chart se puede pulsar.
  *
  * @param {object} level
+ * @param {HTMLButtonElement[]} guarded  Jugar / Publicar / No publicar.
+ * @param {HTMLElement} status
  * @returns {HTMLElement | null}
  */
-function renderDifficultyChoice(level) {
+function renderDifficultyChoice(level, guarded, status) {
     const view = difficultyChoiceView(level);
     if (view === null) return null;
 
     const box = el('fieldset', 'daino-difficulty');
-    box.dataset.busy = String(view.busy);
-    const legend = el('legend', 'daino-difficulty__legend', 'Dificultad del nivel');
+    const legend = el('legend', 'daino-difficulty__legend', 'Dificultad al publicar');
     const group = el('div', 'daino-difficulty__options');
     group.setAttribute('role', 'radiogroup');
-    group.setAttribute('aria-label', 'Dificultad del nivel');
-    const note = el('p', 'daino-difficulty__note', view.note);
-    note.setAttribute('role', 'status');
-    note.setAttribute('aria-live', 'polite');
+    group.setAttribute('aria-label', 'Dificultad al publicar');
+    const note = el('p', 'daino-difficulty__note', view.resetsBest
+        ? `${view.note} Cambiarla borra tu marca de prueba.`
+        : view.note);
 
     for (const option of view.options) {
         const selected = option.value === view.current;
@@ -657,9 +777,8 @@ function renderDifficultyChoice(level) {
         b.setAttribute('aria-checked', String(selected));
         b.dataset.value = String(option.value);
         b.append(el('span', 'daino-difficulty__label', option.label), el('span', 'daino-difficulty__hint', option.hint));
-        b.disabled = view.locked || view.busy;
         b.addEventListener('click', () => {
-            if (!selected) void applyDifficulty(level, option.value, box, note);
+            if (b.getAttribute('aria-checked') !== 'true') void applyDifficulty(level, option.value, box, guarded, status);
         });
         group.appendChild(b);
     }
@@ -667,21 +786,38 @@ function renderDifficultyChoice(level) {
     return box;
 }
 
-async function applyDifficulty(level, value, box, note) {
-    const buttons = [...box.querySelectorAll('button')];
-    for (const b of buttons) b.disabled = true;
+async function applyDifficulty(level, value, box, guarded, status) {
+    const options = [...box.querySelectorAll('.daino-difficulty__option')];
+    const previous = options.find((b) => b.getAttribute('aria-checked') === 'true') ?? null;
+    // La elección se ve YA; jugar o publicar esperan a que el servidor la aplique.
+    for (const b of options) {
+        b.setAttribute('aria-checked', String(b.dataset.value === String(value)));
+        b.disabled = true;
+    }
+    for (const b of guarded) b.disabled = true;
+    box.setAttribute('aria-busy', 'true');
     box.dataset.busy = 'true';
-    note.textContent = 'Aplicando la dificultad…';
+    status.textContent = '';
 
     const res = await changeDifficulty(level, value);
     if (!res.ok) {
+        for (const b of options) {
+            b.setAttribute('aria-checked', String(b === previous));
+            b.disabled = false;
+        }
+        for (const b of guarded) b.disabled = false;
+        box.removeAttribute('aria-busy');
         box.dataset.busy = 'false';
-        note.textContent = res.message;
-        for (const b of buttons) b.disabled = false;
+        status.textContent = res.message;
         return;
     }
-    if (ui.detail?.id === level.id) openDetail({ ...level, ...res.level }, null);
-    if (!res.applying) showToast('Dificultad guardada: se aplicará cuando publiques el nivel.', 'info');
+    if (ui.detail?.id === level.id) {
+        // Ficha con el nivel nuevo (estrellas, "Publicar en…", marca), con el
+        // foco donde estaba: en la opción elegida.
+        openDetail({ ...level, ...res.level, my_best: res.level.my_best ?? null }, null, {
+            focus: `.daino-difficulty__option[data-value="${CSS.escape(String(value))}"]`,
+        });
+    }
 }
 
 /**
@@ -729,12 +865,12 @@ function renderAnalysisPanel(level, publish) {
         }
         note.textContent = view.tone === 'error'
             ? ''
-            : 'Se publicará solo al terminar. Puedes cerrar esto y seguir jugando: te avisaremos.';
+            : 'Cuando termine, eliges su dificultad y lo publicas. Puedes cerrar esto y seguir jugando: te avisaremos.';
     };
 
     paint(publish.analysis);
     if (publish.state === PUBLISH_STATE.ANALYZING) {
-        // Solo estados en curso: el desenlace (publicado o fallido) lo pinta la
+        // Solo estados en curso: el desenlace (listo o fallido) lo pinta la
         // ficha entera al recibir LEVEL_UPDATED_EVENT, con sus acciones nuevas.
         ui.unsubscribers.push(subscribeAnalysis(level.id, (s) => {
             const view = analysisView(s.analysis);

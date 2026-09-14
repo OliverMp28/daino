@@ -1,6 +1,7 @@
 // Ola 4 — publicar con análisis en servidor, desde el cliente: qué enseña la UI
 // (publishModel) y cómo se sigue el análisis (analysisWatcher) con un reloj
-// falso, sin red ni DOM.
+// falso, sin red ni DOM. Tras el playtest de la Ola 5, publicar son dos pasos:
+// analizar (el nivel queda listo) y confirmar con la dificultad elegida.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,9 +19,12 @@ const mine = (extra = {}) => ({
 
 // --------------------------- Modelo ---------------------------
 
-test('estado de publicación: privado, analizando, fallido y público', () => {
+test('estado de publicación: privado, analizando, listo, fallido y público', () => {
     assert.equal(publishStateFor(mine()), PUBLISH_STATE.PRIVATE);
     assert.equal(publishStateFor(mine({ pending_public: true, has_audio: true })), PUBLISH_STATE.ANALYZING);
+    assert.equal(publishStateFor(mine({ has_audio: true, publish_ready: true })), PUBLISH_STATE.READY);
+    assert.equal(publishStateFor(mine({ has_audio: true, publish_ready: true, pending_public: true })), PUBLISH_STATE.ANALYZING,
+        'reanalizándose: su chart va a cambiar, todavía no se elige nada');
     assert.equal(publishStateFor(mine({ has_audio: true, analysis: { status: 'failed' } })), PUBLISH_STATE.FAILED);
     assert.equal(publishStateFor(mine({ is_public: true, has_audio: true, analysis: { status: 'failed' } })), PUBLISH_STATE.PUBLIC,
         'un reanálisis fallido no despublica');
@@ -84,6 +88,12 @@ test('vista de publicación: qué se puede hacer en cada estado', () => {
     assert.equal(publishView(mine({ is_public: true })).canPublish, false);
     assert.equal(publishView(mine({ is_mine: false })).canPublish, false, 'lo ajeno nunca se publica');
     assert.equal(publishView(mine({ is_official: true })).canPublish, false);
+
+    const ready = publishView(mine({ has_audio: true, publish_ready: true }));
+    assert.deepEqual([ready.badge, ready.canPublish, ready.canConfirm], ['Listo para publicar', false, true],
+        'analizado: no se vuelve a subir, se confirma con la dificultad elegida');
+    assert.equal(publishView(mine({ has_audio: true, publish_ready: true, is_mine: false })).canConfirm, false);
+    assert.equal(publishView(mine({ is_public: true })).canConfirm, false);
 });
 
 test('la tarjeta refleja la publicación en curso', () => {
@@ -94,73 +104,49 @@ test('la tarjeta refleja la publicación en curso', () => {
     assert.equal(cardView({ ...mine({ is_public: true }), is_official: true }).badge, 'Oficial');
 });
 
-test('desenlace de una publicación según /analysis', () => {
+test('desenlace de un análisis para publicar según /analysis', () => {
     assert.equal(publishOutcome({ is_public: false, pending_public: true, analysis: { status: 'running' } }), null);
     assert.equal(publishOutcome({ is_public: false, pending_public: true, analysis: { status: 'queued', attempts: 1 } }), null);
-    assert.equal(publishOutcome({ is_public: true, pending_public: false, analysis: { status: 'done' } }), 'published');
+    assert.equal(publishOutcome({ is_public: false, pending_public: false, publish_ready: true, analysis: { status: 'done' } }), 'ready',
+        'analizado: NO se publica solo, espera a que su autor elija la dificultad');
+    assert.equal(publishOutcome({ is_public: true, pending_public: false, analysis: { status: 'done' } }), 'published',
+        'sin analizador en el servidor se publica al instante');
+    assert.equal(publishOutcome({ is_public: true, pending_public: false, analysis: { status: 'running', purpose: 'reanalyze' } }), null);
     assert.equal(publishOutcome({ is_public: false, pending_public: false, analysis: { status: 'failed' } }), 'failed');
     assert.equal(publishOutcome({ is_public: false, pending_public: false, analysis: { status: 'cancelled' } }), 'cancelled');
 });
 
-test('Ola 5: aplicar otra dificultad a un nivel publicado termina cuando termina su re-chart', () => {
-    const pub = (analysis) => ({ is_public: true, pending_public: false, analysis });
-    assert.equal(publishOutcome(pub({ status: 'queued', purpose: 'rechart' })), null, 'en cola: sigue');
-    assert.equal(publishOutcome(pub({ status: 'running', purpose: 'rechart' })), null, 'charteando: sigue');
-    assert.equal(publishOutcome(pub({ status: 'done', purpose: 'rechart' })), 'published');
-    assert.equal(publishOutcome(pub({ status: 'failed', purpose: 'rechart' })), 'failed', 'sigue publicado, pero la dificultad no se aplicó');
-    assert.equal(publishOutcome(pub({ status: 'failed', purpose: 'reanalyze' })), 'published', 'un reanálisis de fondo fallido no es asunto del autor');
-});
+test('selector de dificultad: solo en un nivel propio listo para publicar, y solo lo que la canción admite', () => {
+    const choice = (requested, options) => ({ requested, options });
+    const ready = (extra = {}) => mine({ has_audio: true, publish_ready: true, difficulty: 3, ...extra });
 
-test('Ola 5: selector de dificultad — solo lo que la canción admite, bloqueado o aplicándose', () => {
-    // Sin análisis del servidor no hay techo: no se ofrece nada.
-    assert.equal(difficultyChoiceView(mine({ difficulty_choice: { requested: 'auto', options: [], locked: false } })), null);
-    assert.equal(difficultyChoiceView(mine({ difficulty_choice: null })), null, 'a otros jugadores no les llega');
+    // Publicado: una sola dificultad para siempre. Sin analizar: no se sabe qué admite.
+    assert.equal(difficultyChoiceView(mine({ is_public: true, has_audio: true, difficulty_choice: choice('auto', [1, 2, 3]) })), null,
+        'un nivel publicado nunca ofrece cambiarla');
+    assert.equal(difficultyChoiceView(mine({ difficulty_choice: choice('auto', [1, 2, 3]) })), null, 'privado sin analizar: nada');
+    assert.equal(difficultyChoiceView(mine({ pending_public: true, has_audio: true, publish_ready: true, difficulty_choice: choice('auto', [1, 2]) })), null,
+        'analizándose: todavía no');
+    assert.equal(difficultyChoiceView(ready({ difficulty_choice: null })), null, 'a otros jugadores no les llega');
+    assert.equal(difficultyChoiceView(ready({ difficulty_choice: choice('auto', []) })), null);
 
-    const v = difficultyChoiceView(mine({ is_public: true, has_audio: true, difficulty: 3, difficulty_choice: { requested: 'auto', options: [1, 2, 3, 4], locked: false } }));
+    const v = difficultyChoiceView(ready({ difficulty_choice: choice('auto', [1, 2, 3, 4]) }));
     assert.deepEqual(v.options.map((o) => o.value), ['auto', 1, 2, 3, 4], 'nunca por encima del techo');
     assert.deepEqual(v.options.map((o) => o.label), ['Automática', 'Relajado', 'Fácil', 'Normal', 'Difícil']);
     assert.equal(v.options[0].hint, 'Normal', 'Automática dice cuál es');
     assert.equal(v.current, 'auto');
-    assert.deepEqual([v.locked, v.busy], [false, false]);
     assert.match(v.note, /hasta Difícil/);
+    assert.equal(v.resetsBest, false);
 
-    const soft = difficultyChoiceView(mine({ is_public: true, difficulty_choice: { requested: 2, options: [1, 2], locked: false } }));
-    assert.equal(soft.options[0].hint, 'Fácil', 'con techo 2, Automática es Fácil');
-    assert.equal(soft.current, 2);
+    const calm = difficultyChoiceView(ready({ difficulty_choice: choice(2, [1, 2]) }));
+    assert.equal(calm.options[0].hint, 'Fácil', 'una canción tranquila (techo 2): Automática es Fácil y no hay más');
+    assert.equal(calm.current, 2);
 
-    const locked = difficultyChoiceView(mine({ is_public: true, difficulty_choice: { requested: 4, options: [1, 2, 3, 4, 5], locked: true } }));
-    assert.equal(locked.locked, true);
-    assert.match(locked.note, /Otros jugadores/);
+    assert.match(difficultyChoiceView(ready({ difficulty_choice: choice(5, [1, 2, 3, 4, 5]) })).note, /todas/);
+    assert.equal(difficultyChoiceView(ready({ my_best: { points: 10, percentage: 3 }, difficulty_choice: choice(3, [1, 2, 3]) })).resetsBest, true,
+        'con marca de prueba, se avisa de que cambiarla la borra');
 
-    const applying = difficultyChoiceView(mine({ is_public: true, analysis: { status: 'running', purpose: 'rechart' }, difficulty_choice: { requested: 5, options: [1, 2, 3, 4, 5], locked: false } }));
-    assert.equal(applying.busy, true);
-    assert.match(applying.note, /Aplicando/);
-
-    const stale = difficultyChoiceView(mine({ is_public: true, difficulty_choice: { requested: 5, options: [1, 2, 3], locked: false } }));
+    const stale = difficultyChoiceView(ready({ difficulty_choice: choice(5, [1, 2, 3]) }));
     assert.equal(stale.current, 'auto', 'una pedida por encima del techo actual se enseña como Automática');
-});
-
-test('Ola 5: el seguimiento de un cambio de dificultad avisa con su motivo', async () => {
-    const clock = fakeClock();
-    const script = statusScript([
-        ok({ level_id: 5, is_public: true, pending_public: false, analysis: { status: 'queued', purpose: 'rechart' } }),
-        ok({ level_id: 5, is_public: true, pending_public: false, analysis: { status: 'done', purpose: 'rechart', created_at: 't2' } }),
-    ]);
-    const settled = [];
-    const watcher = createAnalysisWatcher({
-        fetchStatus: script.fetchStatus,
-        fetchLevel: async () => ok({ id: 5, title: 'Mi tema', is_public: true, difficulty: 5 }),
-        schedule: clock.schedule, cancel: clock.cancel,
-        onSettled: (e) => settled.push(e),
-    });
-    watcher.track(5, { title: 'Mi tema', reason: 'difficulty' });
-    // Volver a pedir seguimiento como publicación no cambia el motivo del que ya está en marcha.
-    watcher.track(5, { title: 'Mi tema', reason: 'publish' });
-    await flush();
-    assert.equal(settled.length, 0, 'un nivel público con re-chart en cola no ha terminado');
-    await clock.next();
-    assert.equal(settled.length, 1);
-    assert.deepEqual([settled[0].outcome, settled[0].reason, settled[0].level.difficulty], ['published', 'difficulty', 5]);
 });
 
 // --------------------------- Seguimiento ---------------------------
@@ -210,19 +196,19 @@ function statusScript(steps) {
 const ok = (data) => ({ ok: true, status: 200, data });
 const pending = (analysis) => ok({ level_id: 5, is_public: false, pending_public: true, analysis });
 
-test('sigue la publicación: cola → análisis → publicado, a ritmo adaptado, y se detiene solo', async () => {
+test('sigue la publicación: cola → análisis → listo para publicar, a ritmo adaptado, y se detiene solo', async () => {
     const clock = fakeClock();
     const script = statusScript([
         pending({ status: 'queued', attempts: 0, queue_position: 1 }),
         pending({ status: 'running', stage: 'beats', progress: 0.2 }),
         pending({ status: 'running', stage: 'charting', progress: 0.92 }),
-        ok({ level_id: 5, is_public: true, pending_public: false, analysis: { status: 'done', created_at: 't1' } }),
+        ok({ level_id: 5, is_public: false, pending_public: false, publish_ready: true, analysis: { status: 'done', created_at: 't1' } }),
     ]);
     const settled = [];
     const seen = [];
     const watcher = createAnalysisWatcher({
         fetchStatus: script.fetchStatus,
-        fetchLevel: async () => ok({ id: 5, title: 'Mi tema', is_public: true }),
+        fetchLevel: async () => ok({ id: 5, title: 'Mi tema', is_public: false, publish_ready: true }),
         schedule: clock.schedule, cancel: clock.cancel,
         onSettled: (e) => settled.push(e),
     });
@@ -239,8 +225,8 @@ test('sigue la publicación: cola → análisis → publicado, a ritmo adaptado,
     await clock.next();
 
     assert.equal(settled.length, 1);
-    assert.equal(settled[0].outcome, 'published');
-    assert.equal(settled[0].level.is_public, true);
+    assert.equal(settled[0].outcome, 'ready');
+    assert.deepEqual([settled[0].level.is_public, settled[0].level.publish_ready], [false, true]);
     assert.equal(settled[0].title, 'Mi tema');
     assert.deepEqual(seen, ['queued', 'running', 'running', 'done']);
     assert.deepEqual(clock.pending(), [], 'terminado: no queda nada programado');

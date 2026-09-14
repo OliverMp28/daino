@@ -28,10 +28,13 @@ use RuntimeException;
  */
 final class Level
 {
-    /** Columnas de metadata. Nunca incluir `chart_json` ni `analysis_json` aquí. */
+    /**
+     * Columnas de metadata. Nunca incluir `chart_json`, `chart_variants_json` ni
+     * `analysis_json` aquí: de las variantes solo interesa si existen.
+     */
     private const LIST_COLUMNS = 'id, user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
         difficulty, difficulty_requested, file_path, audio_sha256, generator_seed, is_public, pending_public, chart_status, chart_version,
-        chart_hash, difficulty_ceiling, is_official, official_slug, created_at, updated_at';
+        chart_hash, difficulty_ceiling, (chart_variants_json IS NOT NULL) AS has_variants, is_official, official_slug, created_at, updated_at';
 
     /** Pestañas públicas del catálogo. */
     public const SCOPE_OFFICIAL  = 'official';
@@ -43,11 +46,19 @@ final class Level
      * más difícil: un jugador nuevo encuentra primero lo más asequible. Los de
      * la comunidad, lo más reciente primero. Las dos primeras usan
      * `idx_levels_catalog (is_official, is_public, created_at)`.
+     *
+     * `public` es la vista única del catálogo (tras el playtest de la Ola 5):
+     * oficiales y comunidad juntos, primero los oficiales en su orden y después
+     * lo más reciente de la comunidad. Separarlos en pestañas obligaba a ir y
+     * venir para, al final, jugar lo que hubiera.
      */
     private const SCOPE_SQL = [
         self::SCOPE_OFFICIAL  => ['is_official = TRUE AND is_public = TRUE', 'difficulty ASC, title ASC, id ASC'],
         self::SCOPE_COMMUNITY => ['is_official = FALSE AND is_public = TRUE', 'created_at DESC, id DESC'],
-        self::SCOPE_PUBLIC    => ['is_public = TRUE', 'created_at DESC, id DESC'],
+        self::SCOPE_PUBLIC    => [
+            'is_public = TRUE',
+            'is_official DESC, IF(is_official, difficulty, 0) ASC, IF(is_official, title, \'\') ASC, created_at DESC, id DESC',
+        ],
     ];
 
     public function __construct(
@@ -72,6 +83,8 @@ final class Level
         public ?int $chartVersion,
         public ?string $chartHash,
         public ?int $difficultyCeiling,
+        /** Tiene los charts de cada dificultad que admite, a la espera de que su autor elija una. */
+        public bool $hasVariants,
         public bool $isOfficial,
         public readonly ?string $officialSlug,
         public readonly string $createdAt,
@@ -82,6 +95,80 @@ final class Level
     public function hasChart(): bool
     {
         return $this->chartStatus === 'ready' && $this->chartVersion !== null;
+    }
+
+    /**
+     * Analizado por el servidor y pendiente de que su autor elija la dificultad
+     * y confirme la publicación.
+     */
+    public function publishReady(): bool
+    {
+        return $this->hasVariants && !$this->isPublic && !$this->pendingPublic;
+    }
+
+    /**
+     * Charts de cada dificultad preparados por el servidor, decodificados
+     * (`auto`, `1`, …, techo). null si el nivel no tiene.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function chartVariants(): ?array
+    {
+        $stmt = Database::getInstance()->prepare('SELECT chart_variants_json FROM levels WHERE id = :id');
+        $stmt->execute(['id' => $this->id]);
+        $json = $stmt->fetchColumn();
+        if (!is_string($json)) {
+            return null;
+        }
+        $decoded = json_decode($json, true);
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * Fija como chart del nivel una de sus variantes (ya validada y re-codificada)
+     * y la dificultad que el autor pidió. No toca las variantes: puede volver a
+     * cambiar hasta que confirme la publicación.
+     *
+     * @param array{json: string, charterVersion: int, speedPxS: float} $chart
+     */
+    public function applyVariant(array $chart, int $difficulty, ?int $requested): void
+    {
+        $hash = hash('sha256', $chart['json']);
+        Database::getInstance()->prepare(
+            "UPDATE levels
+             SET chart_json = :chart_json, chart_hash = :chart_hash, chart_version = :chart_version,
+                 chart_status = 'ready', difficulty = :difficulty, difficulty_requested = :requested,
+                 game_speed = :game_speed
+             WHERE id = :id",
+        )->execute([
+            'chart_json'    => $chart['json'],
+            'chart_hash'    => $hash,
+            'chart_version' => $chart['charterVersion'],
+            'difficulty'    => $difficulty,
+            'requested'     => $requested,
+            'game_speed'    => (int) round($chart['speedPxS']),
+            'id'            => $this->id,
+        ]);
+        $this->chartHash = $hash;
+        $this->chartVersion = $chart['charterVersion'];
+        $this->chartStatus = 'ready';
+        $this->difficulty = $difficulty;
+        $this->difficultyRequested = $requested;
+        $this->gameSpeed = (int) round($chart['speedPxS']);
+    }
+
+    /**
+     * Confirma la publicación de un nivel listo: público con el chart elegido y
+     * sin variantes (un nivel publicado tiene una sola dificultad; la BD lo exige).
+     */
+    public function confirmPublic(): void
+    {
+        Database::getInstance()->prepare(
+            'UPDATE levels SET is_public = TRUE, pending_public = FALSE, chart_variants_json = NULL WHERE id = :id AND file_path IS NOT NULL',
+        )->execute(['id' => $this->id]);
+        $this->isPublic = true;
+        $this->pendingPublic = false;
+        $this->hasVariants = false;
     }
 
     public static function findById(int $id): ?self
@@ -428,17 +515,6 @@ final class Level
         }
     }
 
-    /**
-     * Guarda la dificultad que pide el autor (Ola 5). null = Automática. No
-     * toca el chart: lo regenera el worker (PublishService::changeDifficulty).
-     */
-    public function setDifficultyRequested(?int $difficulty): void
-    {
-        Database::getInstance()->prepare('UPDATE levels SET difficulty_requested = :d WHERE id = :id')
-            ->execute(['d' => $difficulty, 'id' => $this->id]);
-        $this->difficultyRequested = $difficulty;
-    }
-
     public function delete(): void
     {
         $stmt = Database::getInstance()->prepare('DELETE FROM levels WHERE id = :id');
@@ -471,6 +547,7 @@ final class Level
             chartVersion:      $row['chart_version'] === null ? null : (int) $row['chart_version'],
             chartHash:         $row['chart_hash'] === null ? null : (string) $row['chart_hash'],
             difficultyCeiling: $row['difficulty_ceiling'] === null ? null : (int) $row['difficulty_ceiling'],
+            hasVariants:       (bool) ($row['has_variants'] ?? false),
             isOfficial:        (bool) $row['is_official'],
             officialSlug:      $row['official_slug'] === null ? null : (string) $row['official_slug'],
             createdAt:         (string) $row['created_at'],

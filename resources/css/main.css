@@ -292,12 +292,19 @@ dialog.daino-modal .modal-footer {
     transition: background 150ms, border-color 150ms, transform 80ms;
 }
 
-.daino-btn:hover {
+.daino-btn:hover:not(:disabled) {
     background: color-mix(in oklch, var(--color-daino-bg-lifted) 80%, transparent);
     border-color: color-mix(in oklch, var(--color-daino-fg) 32%, transparent);
 }
 
-.daino-btn:active { transform: translateY(1px); }
+.daino-btn:active:not(:disabled) { transform: translateY(1px); }
+
+/* Un botón que todavía no se puede usar tiene que VERSE así (p. ej. Jugar
+   mientras se aplica una dificultad): antes seguía pareciendo pulsable. */
+.daino-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
 
 .daino-btn--primary {
     background: var(--color-daino-beat);
@@ -305,7 +312,7 @@ dialog.daino-modal .modal-footer {
     color: #ffffff;
 }
 
-.daino-btn--primary:hover {
+.daino-btn--primary:hover:not(:disabled) {
     background: color-mix(in oklch, var(--color-daino-beat) 88%, white);
 }
 
@@ -329,12 +336,24 @@ dialog.daino-modal .modal-footer {
     align-items: center;
     justify-items: center;
     padding: 4rem 2rem;
-    transition: opacity 280ms ease-out, transform 280ms ease-out;
+    visibility: visible;
+    transition: opacity 280ms ease-out, transform 280ms ease-out, visibility 0s linear 0s;
 }
 
+/* Oculto = fuera de juego del todo, no solo transparente. `#menu-root
+   [data-interactive]` reactiva los clics de los botones (arriba), así que un
+   menú con opacidad 0 seguía capturando clics y toques en pleno juego. Aquí:
+   sin eventos (regla más específica que esa), `visibility: hidden` al acabar
+   el fundido y, en JS, `inert` (menu.js). */
 .daino-menu[data-visible="false"] {
     opacity: 0;
     transform: translateY(-12px);
+    visibility: hidden;
+    transition: opacity 280ms ease-out, transform 280ms ease-out, visibility 0s linear 280ms;
+}
+
+#menu-root .daino-menu[data-visible="false"],
+#menu-root .daino-menu[data-visible="false"] [data-interactive="true"] {
     pointer-events: none;
 }
 
@@ -785,6 +804,8 @@ dialog.daino-modal .modal-footer {
 body:not([data-app-state="MENU"]) #auth-anchor {
     opacity: 0;
     pointer-events: none;
+    visibility: hidden;
+    transition: opacity 200ms ease-out, visibility 0s linear 200ms;
 }
 
 .daino-auth-chip {
@@ -979,6 +1000,10 @@ dialog.daino-catalog::backdrop {
     border: 1px solid color-mix(in oklch, var(--color-daino-fg) 8%, transparent);
 }
 
+/* Sin sesión hay una sola colección: sin pestañas (el atributo `hidden` solo
+   no basta contra el `display: flex` de arriba). */
+.daino-catalog__tabs[hidden] { display: none; }
+
 .daino-catalog__tab {
     padding: 0.45rem 1rem;
     border: none;
@@ -1060,16 +1085,24 @@ dialog.daino-catalog::backdrop {
 .daino-catalog__state h3 { margin: 0; font-size: 1.15rem; color: var(--color-daino-fg); }
 .daino-catalog__state p { margin: 0; max-width: 42ch; line-height: 1.5; }
 
-:is(.daino-catalog__tab, .daino-catalog__close, .daino-card__open, .daino-detail__back):focus-visible {
+:is(.daino-catalog__tab, .daino-catalog__close, .daino-card__open, .daino-card__details, .daino-detail__back):focus-visible {
     outline: 2px solid var(--color-daino-high);
     outline-offset: 2px;
 }
 
-/* ----- Tarjeta ----- */
+/* ----- Tarjeta -----
+   Dos botones hermanos: la tarjeta entera JUEGA y el pequeño de la esquina abre
+   la ficha. Se eleva el <li> (no el botón) para que los dos se muevan juntos. */
 
 .daino-card {
     --hue: 280;
     position: relative;
+    transition: transform 160ms ease-out;
+}
+
+.daino-card:not(.daino-card--skeleton):hover,
+.daino-card:focus-within {
+    transform: translateY(-3px);
 }
 
 .daino-card__open {
@@ -1086,13 +1119,75 @@ dialog.daino-catalog::backdrop {
     text-align: left;
     cursor: pointer;
     overflow: hidden;
-    transition: transform 160ms ease-out, border-color 160ms, box-shadow 160ms;
+    transition: border-color 160ms, box-shadow 160ms;
 }
 
-.daino-card__open:hover {
-    transform: translateY(-3px);
+.daino-card:hover .daino-card__open,
+.daino-card__open:focus-visible {
     border-color: oklch(0.72 0.17 var(--hue) / 0.7);
     box-shadow: 0 10px 30px -12px oklch(0.6 0.2 var(--hue) / 0.7);
+}
+
+/* ▶ (o ♪ si pide tu MP3): qué hace pulsar la tarjeta, sin tener que leerlo. */
+.daino-card__glyph {
+    position: absolute;
+    left: 50%;
+    top: 44%;
+    width: 3.2rem;
+    height: 3.2rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 40%, transparent);
+    background: color-mix(in oklch, #05050a 55%, transparent);
+    backdrop-filter: blur(4px);
+    color: #ffffff;
+    font-size: 1.2rem;
+    line-height: 1;
+    text-indent: 0.12em;             /* centrado óptico del triángulo */
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+    transition: opacity 150ms ease-out, transform 150ms ease-out;
+    pointer-events: none;
+}
+
+.daino-card:hover .daino-card__glyph,
+.daino-card__open:focus-visible .daino-card__glyph {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+}
+
+@media (hover: none) {
+    /* En táctil no hay "pasar el ratón": el gesto se ve siempre. */
+    .daino-card__glyph { opacity: 0.85; transform: translate(-50%, -50%); }
+}
+
+.daino-card__details {
+    position: absolute;
+    right: 0.55rem;
+    bottom: 0.6rem;
+    width: 1.85rem;
+    height: 1.85rem;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 24%, transparent);
+    background: color-mix(in oklch, var(--color-daino-bg-deep) 85%, transparent);
+    color: color-mix(in oklch, var(--color-daino-fg) 80%, transparent);
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 0.95rem;
+    font-style: italic;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 150ms, border-color 150ms, color 150ms;
+}
+
+.daino-card__details:hover {
+    color: var(--color-daino-fg);
+    border-color: oklch(0.72 0.17 var(--hue) / 0.85);
+    background: color-mix(in oklch, var(--color-daino-bg-lifted) 90%, transparent);
 }
 
 .daino-card__cover {
@@ -1200,6 +1295,7 @@ dialog.daino-catalog::backdrop {
     gap: 0.5rem;
     margin-top: 0.45rem;
     padding-top: 0.5rem;
+    padding-right: 2.2rem;           /* sitio para el botón de detalles */
     border-top: 1px solid color-mix(in oklch, var(--color-daino-fg) 8%, transparent);
     font-size: 0.78rem;
     font-variant-numeric: tabular-nums;
@@ -1208,6 +1304,13 @@ dialog.daino-catalog::backdrop {
 .daino-card__best { color: var(--color-daino-high); font-weight: 600; }
 .daino-card__best.is-empty { color: color-mix(in oklch, var(--color-daino-fg) 45%, transparent); font-weight: 400; }
 .daino-card__players { color: color-mix(in oklch, var(--color-daino-fg) 55%, transparent); }
+
+@media (hover: none) {
+    /* En táctil, el botón de detalles con tamaño de dedo: pulsarlo no debe
+       acabar jugando por error. (Aquí, después de sus reglas base.) */
+    .daino-card__details { width: 2.5rem; height: 2.5rem; right: 0.4rem; bottom: 0.4rem; }
+    .daino-card__foot { padding-right: 2.9rem; }
+}
 
 /* Esqueleto: mismo tamaño que una tarjeta real, sin salto al llegar datos. */
 .daino-card--skeleton {
@@ -1346,6 +1449,36 @@ dialog.daino-catalog::backdrop {
     color: color-mix(in oklch, var(--color-daino-fg) 65%, transparent);
 }
 
+.daino-detail__hint {
+    margin: 0;
+    max-width: 54ch;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: color-mix(in oklch, var(--color-daino-fg) 58%, transparent);
+}
+
+.daino-detail__confirm {
+    border-color: color-mix(in oklch, var(--color-daino-high) 70%, transparent);
+    color: var(--color-daino-high);
+    font-weight: 700;
+}
+
+.daino-detail__withdraw {
+    align-self: center;
+    padding: 0.4rem 0.35rem;
+    border: none;
+    background: transparent;
+    color: color-mix(in oklch, var(--color-daino-fg) 58%, transparent);
+    font: inherit;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.daino-detail__withdraw:hover:not(:disabled) { color: var(--color-daino-fg); }
+.daino-detail__withdraw:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* ----- Dificultad elegida por el autor (Ola 5) ----- */
 
 .daino-difficulty {
@@ -1425,8 +1558,24 @@ dialog.daino-catalog::backdrop {
     color: color-mix(in oklch, var(--color-daino-fg) 65%, transparent);
 }
 
-.daino-difficulty[data-busy="true"] .daino-difficulty__note {
-    color: var(--color-daino-high);
+/* Aplicándose (unas décimas): la elegida ya se ve marcada y el resto no se
+   apaga (sería un parpadeo); solo deja de poder pulsarse. */
+.daino-difficulty[data-busy="true"] .daino-difficulty__option:disabled {
+    opacity: 1;
+    cursor: progress;
+}
+
+.daino-difficulty[data-busy="true"] .daino-difficulty__option[aria-checked="true"] {
+    animation: daino-choice-pulse 700ms ease-in-out infinite alternate;
+}
+
+@keyframes daino-choice-pulse {
+    from { box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-daino-high) 0%, transparent); }
+    to   { box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-daino-high) 35%, transparent); }
+}
+
+.daino-card__badge[data-state="ready"] {
+    color: oklch(0.86 0.16 85);
 }
 
 /* ----- Análisis en servidor (Ola 4): progreso al publicar ----- */
@@ -1670,9 +1819,13 @@ body[data-drag="active"] .daino-upload__drop {
 @media (prefers-reduced-motion: reduce) {
     dialog.daino-catalog,
     dialog.daino-catalog[open],
-    .daino-card__open { transition: none; }
+    .daino-card,
+    .daino-card__open,
+    .daino-card__glyph { transition: none; }
 
-    .daino-card__open:hover { transform: none; }
+    .daino-card:not(.daino-card--skeleton):hover,
+    .daino-card:focus-within { transform: none; }
+    .daino-difficulty[data-busy="true"] .daino-difficulty__option[aria-checked="true"] { animation: none; }
     .daino-card--skeleton .daino-card__cover,
     .daino-card--skeleton .daino-card__body { animation: none; }
     dialog.daino-catalog::backdrop { animation: none; }
