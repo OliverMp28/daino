@@ -15,8 +15,15 @@
 //     el body muestra el degradado CSS y el canvas pinta la escena quieta.
 //
 // API para el resto del módulo: attachAudio/detachAudio, getLayers, getTicker,
-// setWorldSpeed (scroll del scenery), setBeatPulse (uniform uBpmPulse del
-// shader — GameSession lo calcula del BPM detectado + audioTime).
+// getView (vista del mundo), setWorldSpeed (scroll del scenery), setBeatPulse
+// (uniform uBpmPulse del shader — GameSession lo calcula del BPM detectado +
+// audioTime), setSpeedFx (líneas de velocidad).
+//
+// Tamaños de pantalla (Sep 2026): scenery, líneas de velocidad, juego y motas
+// cuelgan de `worldRoot`, escalado por la vista del mundo (systems/worldView.js):
+// todo lo de dentro trabaja en unidades de mundo, y cualquier pantalla apaisada
+// enseña casi el mismo mundo. El fondo (shader) y el hudLayer (destellos a
+// pantalla completa) siguen en píxeles de pantalla.
 
 import {
     Application,
@@ -29,8 +36,13 @@ import { createAudioFilter, FFT_BINS } from './shaders/audioFilter.js';
 import { computeBands } from './audio/features.js';
 import { createParticleLayer } from './entities/ParticleLayer.js';
 import { createScenery } from './entities/Scenery.js';
-import { GROUND_OFFSET_PX, SCENERY, DT_CAP_S } from './config.js';
+import { createSpeedLines } from './entities/SpeedLines.js';
+import { SCENERY, DT_CAP_S, WORLD_VIEW, WORLD_VIEW_PORTRAIT_MENU } from './config.js';
 import { resolveBudget, MAX_FILTER_DPR, TIER_ORDER } from './RenderProfile.js';
+import { computeWorldView, sameView } from './systems/worldView.js';
+
+/** Evento con la vista nueva cuando cambia (resize, rotación, zoom). */
+export const VIEW_CHANGE_EVENT = 'daino:viewchange';
 
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const DEBUG_MODE = (() => {
@@ -46,6 +58,7 @@ let audio = null;          // AudioEngine atachado (o null)
 let audioFilter = null;    // resultado de createAudioFilter()
 let bgSprite = null;
 let scenery = null;        // resultado de createScenery()
+let speedLines = null;     // líneas de velocidad (null con reduced motion)
 let isPaused = false;
 let timeAccum = 0;         // segundos desde init — siempre avanza salvo pausa
 let worldSpeed = SCENERY.menuSpeed;  // px/s del scroll del scenery
@@ -61,10 +74,20 @@ let modalOpen = false;           // hay un <dialog open>: presupuesto de PAUSED
 // Layers expuestos a module-scope para que `getApi().getLayers()` pueda
 // devolver referencias estables sin filtrar internals.
 let bgLayer = null;
+let worldRoot = null;      // escala de la vista: todo lo de dentro, en unidades de mundo
 let sceneryLayer = null;
 let gameLayer = null;
 let particleLayer = null;
 let hudLayer = null;
+/** @type {import('./systems/worldView.js').WorldView | null} */
+let view = null;
+/** Recalcula la vista y la aplica si cambió (lo monta startEngine). */
+let refitView = () => {};
+
+/** Reglas de la vista: las de partida, salvo el menú en una pantalla vertical. */
+function viewRules() {
+    return profileName === 'MENU' && window.innerHeight > window.innerWidth ? WORLD_VIEW_PORTRAIT_MENU : WORLD_VIEW;
+}
 
 /**
  * Inicializa Pixi y monta el escenario. Idempotente — segunda llamada es no-op.
@@ -91,20 +114,27 @@ export async function startEngine(mountTarget = document.body) {
     // Dimensionado con window.innerWidth/Height (no app.screen) porque tras
     // `await app.init({ resizeTo: window })` el internal resize de Pixi puede
     // no haber corrido todavía — app.screen reporta defaults (800x600).
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    view = computeWorldView({ width: window.innerWidth, height: window.innerHeight, dpr: app.renderer.resolution }, viewRules());
 
     // Layers — contenedores apilados, mismo orden que doc 06 §3 + scenery.
     bgLayer = new Container({ label: 'bg' });
-    scenery = createScenery({ width: vw, height: vh });
+    worldRoot = new Container({ label: 'world' });
+    worldRoot.scale.set(view.scale);
+    scenery = createScenery({ width: view.width, height: view.height });
     sceneryLayer = scenery.container;
     gameLayer = new Container({ label: 'game' });
     particleLayer = createParticleLayer(
-        { width: vw, height: vh },
+        { width: view.width, height: view.height },
         { reducedMotion: REDUCED_MOTION },
     );
     hudLayer = new Container({ label: 'hud' });
-    app.stage.addChild(bgLayer, sceneryLayer, gameLayer, particleLayer, hudLayer);
+    // Líneas de velocidad entre el scenery y el juego: aire por delante de las
+    // montañas y por detrás de Dino y obstáculos.
+    if (!REDUCED_MOTION) speedLines = createSpeedLines({ width: view.width, height: view.height, groundY: view.groundY });
+    worldRoot.addChild(sceneryLayer);
+    if (speedLines) worldRoot.addChild(speedLines.container);
+    worldRoot.addChild(gameLayer, particleLayer);
+    app.stage.addChild(bgLayer, worldRoot, hudLayer);
 
     // Si el user pidió reducir movimiento, no montamos el filter — el body
     // muestra el degradado CSS estático que ya define main.css. El canvas
@@ -121,22 +151,39 @@ export async function startEngine(mountTarget = document.body) {
         bgLayer.addChild(bgSprite);
     }
 
+    let applied = null;
     const fitViewport = () => {
-        const w = window.innerWidth;
-        const h = window.innerHeight;
+        const next = computeWorldView({ width: window.innerWidth, height: window.innerHeight, dpr: app.renderer.resolution }, viewRules());
+        if (sameView(applied, next)) return;
+        applied = next;
+        view = next;
+        const { screenWidth: w, screenHeight: h } = next;
         if (bgSprite) {
             bgSprite.width = w;
             bgSprite.height = h;
         }
-        // uHorizon en uv [0,1] (v=0 arriba): la línea del suelo pixel-art.
         if (audioFilter) {
-            audioFilter.setUniforms({ horizon: (h - GROUND_OFFSET_PX) / h });
+            // uHorizon en uv [0,1] (v=0 arriba): la línea del suelo del mundo.
+            // uFrame y uCell: el sol es un círculo y las estrellas son celdas del
+            // arte en cualquier formato (antes se estiraban con la pantalla).
+            audioFilter.setUniforms({ horizon: next.screenGroundY / h, frame: [w, h], cell: next.cellPx });
         }
-        scenery.resize(w, h);
-        particleLayer.resize(w, h);
+        worldRoot.scale.set(next.scale);
+        scenery.resize(next.width, next.height);
+        particleLayer.resize(next.width, next.height);
+        speedLines?.resize(next.width, next.height, next.groundY);
+        // La vista también la usa el CSS: el HUD y los paneles pueden alinearse
+        // con el suelo del mundo sin preguntar al engine.
+        document.documentElement.style.setProperty('--daino-ground-offset', `${(h - next.screenGroundY).toFixed(1)}px`);
+        window.dispatchEvent(new CustomEvent(VIEW_CHANGE_EVENT, { detail: next }));
     };
     fitViewport();
+    refitView = fitViewport;
+    // Tras `resize` también en orientationchange y visualViewport: algunos
+    // móviles informan el tamaño nuevo un frame después de girar.
     window.addEventListener('resize', fitViewport);
+    window.addEventListener('orientationchange', () => requestAnimationFrame(fitViewport));
+    window.visualViewport?.addEventListener('resize', fitViewport);
 
     // Presupuesto inicial (MENU). Se aplica DESPUÉS de crear el filtro y la
     // capa de partículas: `applyBudget` toca ambos.
@@ -220,6 +267,7 @@ function applyBudget() {
     if (particleLayer?.setActiveRatio) {
         particleLayer.setActiveRatio(budget.particleRatio);
     }
+    speedLines?.setActiveRatio(budget.particleRatio);
 }
 
 /**
@@ -232,6 +280,8 @@ export function setRenderProfile(name) {
     if (name === profileName) return;
     profileName = name;
     applyBudget();
+    // El menú en vertical usa otra vista (ver WORLD_VIEW_PORTRAIT_MENU).
+    refitView();
 }
 
 /**
@@ -319,6 +369,7 @@ function tick(ticker) {
     // (LOADING, PAUSED, modal abierto).
     if (!REDUCED_MOTION && budget.sceneryAnimated) {
         scenery.tick(dt, worldSpeed);
+        speedLines?.tick(dt, worldSpeed);
     }
 
     if (audioFilter) {
@@ -368,6 +419,7 @@ export function detachAudio() {
     musicIntensity = 0;
     if (audioFilter) audioFilter.setMode('idle');
     if (scenery) scenery.setPulse(0, 0);
+    speedLines?.setLevel(0);
 }
 
 /**
@@ -422,6 +474,19 @@ export function setMusicState(s) {
     if (audioFilter) audioFilter.setUniforms(s);
 }
 
+/**
+ * Velocidad que se VE (afinado de velocidad): intensidad [0,1] de las líneas
+ * de velocidad y, en un acelerón, su ráfaga. GameSession lo empuja desde
+ * `systems/speedCues.js`. Sin efecto con reduced motion.
+ *
+ * @param {{ level?: number, burst?: boolean }} s
+ */
+export function setSpeedFx(s) {
+    if (!speedLines) return;
+    if (s.level !== undefined) speedLines.setLevel(s.level);
+    if (s.burst) speedLines.burst();
+}
+
 function getApi() {
     return {
         app,
@@ -430,6 +495,7 @@ function getApi() {
         setWorldSpeed,
         setBeatPulse,
         setMusicState,
+        setSpeedFx,
         setRenderPaused,
         setRenderProfile,
         setQualityTier,
@@ -437,10 +503,14 @@ function getApi() {
         setAmbientDinoVisible,
         setAmbientDinoSkin,
         getCanvas: () => app?.canvas ?? null,
+        // Vista del mundo vigente (se sustituye, no se muta, al cambiar):
+        // tamaño visible y suelo en unidades de mundo, escala y suelo en px.
+        getView: () => view,
         // GameSession monta Dino/Obstacle en gameLayer, bursts también ahí.
         // Devolvemos refs vivas — no copiamos para evitar el foot-gun de
-        // "monté en una copia y nada se ve".
-        getLayers: () => ({ bgLayer, sceneryLayer, gameLayer, particleLayer, hudLayer }),
+        // "monté en una copia y nada se ve". scenery, game y particles están en
+        // unidades de mundo; bg y hud, en píxeles de pantalla.
+        getLayers: () => ({ bgLayer, worldRoot, sceneryLayer, gameLayer, particleLayer, hudLayer }),
         // Passthrough del ticker. La GameSession registra su tick aquí; no
         // creamos un rAF propio (un solo loop, ya pausa con audio:pause).
         getTicker: () => app?.ticker ?? null,

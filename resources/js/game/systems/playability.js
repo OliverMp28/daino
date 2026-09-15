@@ -12,6 +12,13 @@
 // adelantándose y retrasándose `toleranceS`, incluido el caso peor de dos
 // acciones seguidas (una tarde y la siguiente pronto, que acorta el hueco).
 //
+// Y dos maneras de jugar (afinado de velocidad, Sep 2026): quien pulsa con el
+// OÍDO, en el golpe, y quien pulsa con la VISTA, cuando el obstáculo "está a la
+// distancia de siempre". Con velocidad constante son lo mismo. Justo después de
+// un cambio de velocidad no: la vista tarda en recalibrar y pulsa tarde (o
+// pronto, si el mundo frena). `readerOffsetS` mide ese error con la velocidad
+// del nivel y el validador exige que las dos maneras de jugar superen el chart.
+//
 // Sin Pixi, sin DOM, sin audio: corre en Node (tests) y en el navegador
 // (el charter lo usa para reparar charts antes de devolverlos).
 
@@ -53,6 +60,15 @@ const DUCK_HOLD_MARGIN_PX = 60;
  * con ±80 ms. Con ±40 ms, dos saltos seguidos necesitan 0.68 s (medido).
  */
 export const DEFAULT_TOLERANCE_S = 0.04;
+
+/**
+ * Cuánto tarda la vista en recalibrar la velocidad del mundo: el jugador que
+ * se guía por la vista estima la velocidad como la media de los últimos
+ * READER_ADAPT_S segundos. Del orden de lo que tarda una persona en corregir un
+ * movimiento de intercepción cuando el objetivo cambia de velocidad
+ * (150-300 ms); se toma el extremo largo.
+ */
+export const READER_ADAPT_S = 0.3;
 
 /**
  * @typedef {Object} SimObstacle
@@ -197,18 +213,68 @@ export function simulateRun(obstacles, speed, opts = {}) {
 }
 
 /**
- * ¿Es justo el chart? Lo supera un jugador perfecto Y uno que se desvía
- * `toleranceS` en cualquier dirección.
+ * Error de la pulsación de quien juega con la VISTA (segundos; positivo =
+ * tarde) ante una acción en `t` cuyo obstáculo cruza al Dino `leadS` después.
  *
- * Tres pasadas bastan. Los dos patrones alternos adelantan cada obstáculo en
- * una pasada y lo retrasan en la otra, y a la vez acortan y alargan cada par de
- * acciones consecutivas (una tarde y la siguiente pronto es el peor caso real
- * del hueco mínimo). Adelantar o retrasar TODO a la vez no añade cobertura:
- * deja los huecos iguales y cada obstáculo ya se prueba desplazado.
+ * Ese jugador pulsa cuando "distancia que falta / velocidad que percibe" llega
+ * al adelanto de siempre. Con velocidad constante acierta exactamente (error
+ * 0). Si el mundo acaba de acelerar, percibe una velocidad menor que la real,
+ * cree que el obstáculo tarda más en llegar y pulsa tarde; si acaba de frenar,
+ * pronto. El error empieza ANTES del cambio: un obstáculo se coloca con la
+ * distancia que el mundo va a recorrer, así que el que cruza poco después de
+ * un acelerón ya se ve más lejos de lo normal mientras el mundo aún no ha
+ * acelerado. Medido con el charter de la Ola 5, que aceleraba en el primer
+ * tiempo de cada drop: la acción del drop salía 41-58 ms tarde en los oficiales.
+ *
+ * Velocidad percibida = media real de los últimos `adaptS` segundos, que sale
+ * exacta del perfil: (D(τ) − D(τ − adaptS)) / adaptS.
+ *
+ * @param {import('./speedProfile.js').SpeedProfile} profile
+ * @param {number} t       Instante de acción del chart.
+ * @param {number} leadS   Adelanto del kind (`physics.actionLeadS`).
+ * @param {number} [adaptS=READER_ADAPT_S]
+ * @returns {number}
+ */
+export function readerOffsetS(profile, t, leadS, adaptS = READER_ADAPT_S) {
+    if (profile.constant) return 0;
+    const cross = t + leadS;
+    const crossD = profile.distanceAt(cross);
+    // f(τ) = distancia que falta − adelanto × velocidad percibida. Decrece con
+    // τ en todo el rango de perfiles del juego (cambios de ±50 %), así que su
+    // raíz, el instante en que ese jugador pulsa, se encuentra por bisección.
+    const f = (tau) => {
+        const d = profile.distanceAt(tau);
+        return crossD - d - leadS * (d - profile.distanceAt(tau - adaptS)) / adaptS;
+    };
+    let lo = t - READER_SEARCH_S;
+    let hi = cross;
+    if (f(lo) <= 0) return -READER_SEARCH_S;
+    for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        if (f(mid) > 0) lo = mid;
+        else hi = mid;
+    }
+    return (lo + hi) / 2 - t;
+}
+
+/** Margen de búsqueda de la pulsación de `readerOffsetS` alrededor del instante del chart. */
+const READER_SEARCH_S = 1;
+
+/**
+ * ¿Es justo el chart? Lo supera un jugador perfecto Y uno que se desvía
+ * `toleranceS` en cualquier dirección, tanto si se guía por el oído (pulsa en
+ * el golpe) como por la vista (con el error de `readerOffsetS` sumado).
+ *
+ * Tres pasadas por manera de jugar bastan. Los dos patrones alternos adelantan
+ * cada obstáculo en una pasada y lo retrasan en la otra, y a la vez acortan y
+ * alargan cada par de acciones consecutivas (una tarde y la siguiente pronto es
+ * el peor caso real del hueco mínimo). Adelantar o retrasar TODO a la vez no
+ * añade cobertura: deja los huecos iguales y cada obstáculo ya se prueba
+ * desplazado. Con velocidad constante las dos maneras coinciden y se juega una.
  *
  * @param {SimObstacle[]} obstacles
  * @param {number | import('./speedProfile.js').SpeedProfile} speed
- * @param {{ toleranceS?: number, dt?: number }} [opts]
+ * @param {{ toleranceS?: number, dt?: number, adaptS?: number }} [opts]
  * @returns {{ ok: true } | { ok: false, index: number, t: number, pattern: string }}
  */
 export function validatePlayability(obstacles, speed, opts = {}) {
@@ -219,7 +285,16 @@ export function validatePlayability(obstacles, speed, opts = {}) {
         ['tarde-pronto', (i) => (i % 2 === 0 ? tol : -tol)],
         ['pronto-tarde', (i) => (i % 2 === 0 ? -tol : tol)],
     ];
-    for (const [name, pressOffset] of patterns) {
+    const runs = [...patterns];
+    if (!profile.constant) {
+        const adaptS = opts.adaptS ?? READER_ADAPT_S;
+        const reader = obstacles.map((o) => readerOffsetS(profile, o.t, o.cross - o.t, adaptS));
+        // Solo si la vista se equivoca en algún obstáculo añade algo jugarlo así.
+        if (reader.some((e) => Math.abs(e) > 1e-4)) {
+            for (const [name, offset] of patterns) runs.push([`vista-${name}`, (i) => reader[i] + offset(i)]);
+        }
+    }
+    for (const [name, pressOffset] of runs) {
         const r = simulateRun(obstacles, profile, { dt: opts.dt, pressOffset });
         if (!r.ok) return { ok: false, index: r.index, t: r.t, pattern: name };
     }

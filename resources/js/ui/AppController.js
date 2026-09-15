@@ -7,17 +7,26 @@
 //   LOADING    Preparando la partida: audio (caché o red), chart (caché, red o
 //              generado aquí). Hint visible con la fase y su progreso real.
 //   PLAYING    Partida en curso. Menú oculto, HUD visible.
-//   PAUSED     Pausa explícita. PLAYING ↔ PAUSED.
-//   GAME_OVER  Efímero — entra y sale solo a MENU (con toast del score).
+//   PAUSED     Pausa explícita (Esc o el botón del HUD). Panel de pausa.
+//   RESULTS    La partida terminó (choque o victoria). Panel de resultados
+//              sobre la escena: reintentar, niveles o menú.
+//   GAME_OVER  Efímero: la transición de salida (a otra partida o al menú).
 //
 // Eventos consumidos:
 //   - 'daino:play-request'  Alguien pidió jugar (ui/playRequests.js) → LOADING.
 //   - 'daino:prefetch-request'  Se abrió la ficha de un nivel: precarga (Ola 2).
-//   - 'daino:gamestate'     GameSession terminó (win/collision/stopped) → MENU.
+//   - 'daino:gamestate'     GameSession terminó (win/collision) → RESULTS.
 //
 // Ola 3: la preparación de la partida la hace `levelLoader`, que decide qué
 // sale de la caché, qué se descarga y qué se analiza. Aquí solo se traduce eso
 // a estados y mensajes, y se decide qué persistir en el servidor.
+//
+// Reintentos (Sep 2026): antes, al chocar se volvía al menú con un aviso y
+// reintentar costaba JUGAR + buscar la canción + esperar la carga. Ahora el
+// nivel cargado se guarda en `run` mientras se juega: reintentar solo crea otra
+// GameSession con el mismo audio decodificado y el mismo chart (un fundido de
+// 0.36 s, sin red ni análisis). "Niveles" vuelve al catálogo con ese nivel a la
+// vista. Un reintento desde la pausa, igual que salir, no guarda progreso.
 //
 // El AppController es el único dueño de `activeSession`.
 
@@ -32,23 +41,30 @@ import { getAudioEngine } from '../game/audio/sharedEngine.js';
 import { ANALYSIS_SAMPLE_RATE } from '../game/audio/AudioEngine.js';
 import { createLevelCache } from '../storage/levelCache.js';
 import { sha256Hex } from '../storage/hash.js';
-import { createLocalBests } from '../storage/localBests.js';
+import { createLocalBests, mergeBest } from '../storage/localBests.js';
 import * as menu from './menu.js';
 import { fadeOverlay } from './transitions.js';
-import { closeAllModals, openSettingsModal, openPauseModal } from './modals.js';
+import { closeAllModals, openSettingsModal } from './modals.js';
 import { openCatalog } from './catalog.js';
 import { PLAY_REQUEST_EVENT, PREFETCH_REQUEST_EVENT } from './playRequests.js';
 import { showToast } from './toast.js';
 import { Input } from '../game/systems/input.js';
+import { SCENERY } from '../game/config.js';
 import { fetchBinary, getUser, request as apiRequest } from '../api/client.js';
 import { invalidateLevels } from '../api/levelsCache.js';
-import { getSkin, getQuality } from './settings.js';
+import {
+    getSkin, getQuality, getVolume, setVolume, getAutoRetry, setAutoRetry, countRunAndShouldHint,
+} from './settings.js';
+import { openRunPanel, closeRunPanel } from './runPanel.js';
+import { RUN_ACTION, runPanelView, createAttemptCounter } from './runPanelModel.js';
+import { isTouchPortrait, shouldSuggestRotation, waitForLandscape } from './orientation.js';
 
 const STATE = Object.freeze({
     MENU: 'MENU',
     LOADING: 'LOADING',
     PLAYING: 'PLAYING',
     PAUSED: 'PAUSED',
+    RESULTS: 'RESULTS',
     GAME_OVER: 'GAME_OVER',
 });
 
@@ -59,16 +75,30 @@ let lastAudioEngine = null;   // AudioEngine de la partida en curso (Settings lo
 let onPlayRequest = null;
 let onGameState = null;
 let onPause = null;
+let onViewportChange = null;
 let loader = null;
 let onPrefetch = null;
 const localBests = createLocalBests();
+const attempts = createAttemptCounter();
 
 /**
- * Id del nivel del catálogo que se está jugando (null en una canción local sin
- * guardar). Al terminar, la marca se recuerda en el navegador para enseñarla en
- * la tarjeta aunque no haya sesión (Ola 2).
+ * La partida vigente y lo necesario para reintentarla sin volver a cargar.
+ *
+ * @type {{
+ *   key: string,
+ *   loaded: object,
+ *   levelId: number | null,          progreso en el servidor (solo con sesión)
+ *   catalogLevelId: number | null,   nivel del catálogo (marca local y "Niveles")
+ *   catalogTab: 'public' | 'mine',
+ *   best: { points: number, percentage: number } | null,   marca antes del intento en curso
+ *   attempt: number,
+ *   sections: Array<object>,
+ * } | null}
  */
-let playingLevelId = null;
+let run = null;
+
+/** Destino pedido desde la pausa cuando la partida ya estaba superada (se cierra como victoria antes). */
+let pendingExit = null;
 
 /**
  * Número de la petición de partida vigente. Si llega otra mientras la
@@ -131,9 +161,17 @@ export function start(cfg) {
     };
     window.addEventListener(PREFETCH_REQUEST_EVENT, onPrefetch);
 
-    // ESC durante partida → pausa explícita.
+    // ESC (o el botón de pausa del HUD) durante partida → pausa explícita.
     onPause = () => handlePauseRequested();
     Input.on('pause', onPause);
+
+    // Girar el móvil a vertical en plena partida la pausa: la escena se queda
+    // diminuta y los toques caerían donde no toca. El panel sugiere volver a
+    // girarlo.
+    onViewportChange = () => {
+        if (state === STATE.PLAYING && shouldSuggestRotation()) handlePauseRequested();
+    };
+    window.addEventListener('resize', onViewportChange);
 
     // Calidad gráfica persistida (Ola 1). 'auto' deja que el engine degrade
     // solo si mide frames lentos sostenidos durante la partida.
@@ -155,10 +193,14 @@ export function dispose() {
     if (onGameState) window.removeEventListener('daino:gamestate', onGameState);
     if (onPrefetch) window.removeEventListener(PREFETCH_REQUEST_EVENT, onPrefetch);
     if (onPause) Input.off('pause', onPause);
+    if (onViewportChange) window.removeEventListener('resize', onViewportChange);
     onPlayRequest = null;
     onGameState = null;
     onPrefetch = null;
     onPause = null;
+    onViewportChange = null;
+    closeRunPanel();
+    run = null;
     if (activeSession) {
         try { activeSession.stop(); } catch { /* ignore */ }
         activeSession = null;
@@ -296,8 +338,30 @@ async function handlePlayRequest(request) {
     }
     if (seq !== playRequestSeq) return;
 
-    const audioEngine = getAudioEngine();
-    lastAudioEngine = audioEngine;
+    // Móvil en vertical: antes de empezar, sugerir girarlo (la canción no
+    // arranca hasta que se gira o se elige jugar así).
+    if (shouldSuggestRotation()) {
+        hideHint();
+        const choice = await waitForLandscape();
+        if (seq !== playRequestSeq) return;
+        if (choice === 'cancel') {
+            menu.setVisible(true);
+            setState(STATE.MENU);
+            if (request.level) openCatalog({ tab: catalogTabFor(request.level), focusLevelId: request.level.id });
+            return;
+        }
+    }
+
+    run = {
+        key: loaded.levelId !== null ? `level:${loaded.levelId}` : `audio:${loaded.sha256}`,
+        loaded,
+        levelId,
+        catalogLevelId: loaded.levelId,
+        catalogTab: catalogTabFor(request.level),
+        best: loaded.levelId !== null ? mergeBest(request.level?.my_best, localBests.get(loaded.levelId)) : null,
+        attempt: 0,
+        sections: loaded.chart.events.filter((e) => e.type === 'section'),
+    };
 
     await fadeOverlay({
         totalMs: 600,
@@ -305,26 +369,43 @@ async function handlePlayRequest(request) {
             if (seq !== playRequestSeq) return;
             hideHint();
             closeAllModals();
-
-            // El shader lee el FFT del audio activo; se desconecta al volver al menú.
-            engineApi.attachAudio(audioEngine);
-
-            // La sesión arranca ella misma la reproducción cuando termina de
-            // montarse: es la única dueña del reloj de la partida.
-            activeSession = new GameSession({
-                engine: engineApi,
-                audioEngine,
-                audioBuffer: loaded.audioBuffer,
-                chart: loaded.chart,
-                title: loaded.title,
-                levelId,
-                skinId: getSkin(),
-            });
-            activeSession.start();
-            playingLevelId = loaded.levelId;
-            setState(STATE.PLAYING);
+            startAttempt();
         },
     });
+}
+
+/** Pestaña del catálogo donde vive un nivel (un nivel propio sin publicar, en «Míos»). */
+function catalogTabFor(level) {
+    return level?.is_mine === true && level.is_public !== true ? 'mine' : 'public';
+}
+
+/**
+ * Arranca un intento de la partida vigente (`run`): el primero o un reintento.
+ * No carga nada: audio decodificado y chart ya están en `run.loaded`.
+ */
+function startAttempt() {
+    const audioEngine = getAudioEngine();
+    lastAudioEngine = audioEngine;
+
+    // El shader lee el FFT del audio activo; se desconecta al volver al menú.
+    engineApi.attachAudio(audioEngine);
+
+    run.attempt = attempts.next(run.key);
+    // La sesión arranca ella misma la reproducción cuando termina de
+    // montarse: es la única dueña del reloj de la partida.
+    activeSession = new GameSession({
+        engine: engineApi,
+        audioEngine,
+        audioBuffer: run.loaded.audioBuffer,
+        chart: run.loaded.chart,
+        title: run.loaded.title,
+        levelId: run.levelId,
+        skinId: getSkin(),
+        attempt: run.attempt,
+        showControls: countRunAndShouldHint(),
+    });
+    activeSession.start();
+    setState(STATE.PLAYING);
 }
 
 /**
@@ -381,7 +462,7 @@ function stageText(stage, progress) {
 function handlePauseRequested() {
     // Solo aplica durante PLAYING.
     if (state !== STATE.PLAYING) return;
-    if (!lastAudioEngine) return;
+    if (!lastAudioEngine || activeSession === null || run === null) return;
 
     setState(STATE.PAUSED);
 
@@ -389,50 +470,149 @@ function handlePauseRequested() {
     // GameSession congela su tick y el reloj de la canción no avanza.
     void lastAudioEngine.ctx?.suspend?.();
 
-    openPauseModal({
-        onResume: () => {
-            if (state !== STATE.PAUSED) return;
-            void lastAudioEngine.ctx?.resume?.();
-            setState(STATE.PLAYING);
-        },
-        onExit: () => {
-            // Ola 5: si ya no quedaba ningún obstáculo ("¡Superado!") y solo
-            // faltaba que la canción terminase, salir no pierde el nivel: se da
-            // por ganado. `finishCleared` emite daino:gamestate (win) y
-            // handleGameState hace la transición como en cualquier victoria.
-            if (state === STATE.PAUSED && activeSession?.finishCleared?.()) return;
-
-            // GAME_OVER ANTES de transitionToMenu: el stop() del midpoint
-            // dispara `_end('stopped')` → daino:gamestate, y el guard de
-            // handleGameState lo ignora en vez de lanzar otra transición.
-            setState(STATE.GAME_OVER);
-            const score = activeSession?._score ?? 0;
-            try {
-                if (lastAudioEngine?.source) lastAudioEngine.source.stop();
-            } catch { /* idempotente */ }
-            void transitionToMenu(score, 'stopped');
-        },
+    const durationSec = activeSession._durationSec;
+    const reachedSec = Math.min(durationSec, Math.max(0, lastAudioEngine.getSongTime()));
+    openRunPanel(runPanelView({
+        mode: 'pause',
+        percentage: durationSec > 0 ? (reachedSec / durationSec) * 100 : 0,
+        points: activeSession._score,
+        reachedSec,
+        durationSec,
+        attempt: run.attempt,
+        previousBest: run.best,
+        title: run.loaded.title,
+        sections: run.sections,
+        rotate: isTouchPortrait(),
+    }), {
+        onAction: handleRunAction,
+        volume: { value: getVolume(), onInput: (v) => setVolume(v, lastAudioEngine) },
     });
 }
 
 function handleGameState(ev) {
-    const { kind, score, percentage } = ev.detail ?? {};
+    const detail = ev.detail ?? {};
+    const { kind } = detail;
     if (kind !== 'win' && kind !== 'collision' && kind !== 'stopped') return;
 
-    // Guard de re-entry: solo si veníamos de PLAYING o PAUSED.
+    // Guard de re-entry: solo si veníamos de PLAYING o PAUSED. Toda salida
+    // voluntaria (reintentar, niveles, menú) cambia de estado ANTES de parar la
+    // sesión, así que su `_end('stopped')` se ignora aquí.
     if (state !== STATE.PLAYING && state !== STATE.PAUSED) return;
-
-    // 'stopped' (salir desde la pausa) no es un intento real, igual que en el
-    // servidor. Anónimo o no, la marca se recuerda para la tarjeta del nivel.
-    if (playingLevelId !== null && kind !== 'stopped') {
-        localBests.record(playingLevelId, { points: score ?? 0, percentage: percentage ?? 0 });
+    if (kind === 'stopped' || run === null) {
+        void leaveTo('menu');
+        return;
     }
 
-    setState(STATE.GAME_OVER);
-    void transitionToMenu(score, kind);
+    // La marca antes de esta partida (para "¡Nuevo récord!") y la nueva. Anónimo
+    // o no, la del catálogo se recuerda en el navegador para su tarjeta.
+    const points = detail.score ?? 0;
+    const percentage = detail.percentage ?? 0;
+    const previous = run.best;
+    if (run.catalogLevelId !== null) localBests.record(run.catalogLevelId, { points, percentage });
+    run.best = mergeBest(previous, { points, percentage });
+
+    // Salir desde la pausa con el nivel ya superado: se cerró como victoria y
+    // ahora se va adonde se pidió.
+    if (pendingExit !== null) {
+        const destination = pendingExit;
+        pendingExit = null;
+        void leaveTo(destination);
+        return;
+    }
+
+    if (kind === 'collision' && getAutoRetry()) {
+        void retry();
+        return;
+    }
+
+    setState(STATE.RESULTS);
+    openRunPanel(runPanelView({
+        mode: 'results',
+        kind,
+        percentage,
+        points,
+        reachedSec: detail.reachedSec ?? 0,
+        durationSec: detail.durationSec ?? 0,
+        attempt: run.attempt,
+        previousBest: previous,
+        title: run.loaded.title,
+        sections: run.sections,
+    }), {
+        onAction: handleRunAction,
+        autoRetry: { checked: getAutoRetry(), onChange: setAutoRetry },
+    });
 }
 
-async function transitionToMenu(score, kind) {
+/** @param {string} action  RUN_ACTION */
+function handleRunAction(action) {
+    switch (action) {
+        case RUN_ACTION.RESUME:
+            if (state !== STATE.PAUSED) return;
+            void lastAudioEngine?.ctx?.resume?.();
+            setState(STATE.PLAYING);
+            return;
+        case RUN_ACTION.RETRY: void retry(); return;
+        case RUN_ACTION.LEVELS: void leaveTo('levels'); return;
+        case RUN_ACTION.MENU: void leaveTo('menu'); return;
+        default: return;
+    }
+}
+
+/**
+ * Otro intento del mismo nivel, sin cargar nada. Desde resultados, desde la
+ * pausa (no guarda progreso, como salir) o al chocar con el reintento
+ * automático activado.
+ */
+async function retry() {
+    if (run === null || activeSession === null) return;
+    if (state !== STATE.RESULTS && state !== STATE.PAUSED && state !== STATE.PLAYING) return;
+
+    // GAME_OVER antes de parar: el `_end('stopped')` de la sesión se ignora.
+    setState(STATE.GAME_OVER);
+    closeRunPanel();
+    await fadeOverlay({
+        totalMs: 360,
+        onMidpoint: () => {
+            // Desde la pausa el AudioContext está suspendido. Reanudarlo dentro
+            // del gesto (tecla o clic en Reintentar).
+            if (lastAudioEngine?.ctx?.state === 'suspended') void lastAudioEngine.ctx.resume();
+            if (activeSession) {
+                try { activeSession.stop(); } catch { /* ya parado */ }
+                activeSession = null;
+            }
+            if (run !== null) startAttempt();
+        },
+    });
+}
+
+/**
+ * Deja la partida: al menú o al catálogo con el nivel jugado a la vista.
+ * @param {'menu' | 'levels'} destination
+ */
+async function leaveTo(destination) {
+    // Ola 5: si ya no quedaba ningún obstáculo ("¡Superado!") y solo faltaba
+    // que la canción terminase, salir no pierde el nivel: se cierra como
+    // victoria (handleGameState guarda la marca y vuelve aquí).
+    if (state === STATE.PAUSED && pendingExit === null && activeSession?.cleared) {
+        pendingExit = destination;
+        if (activeSession.finishCleared()) return;
+        pendingExit = null;
+    }
+
+    const catalogOpts = run !== null && run.catalogLevelId !== null
+        ? { tab: run.catalogTab, focusLevelId: run.catalogLevelId }
+        : { tab: run?.catalogTab };
+
+    setState(STATE.GAME_OVER);
+    closeRunPanel();
+    await transitionToMenu(() => {
+        // Bajo el negro del fundido: el catálogo aparece ya abierto al aclarar.
+        if (destination === 'levels') openCatalog(catalogOpts);
+    });
+}
+
+/** @param {() => void} [onMenu]  Se llama ya en MENU, antes de aclarar el fundido. */
+async function transitionToMenu(onMenu) {
     await fadeOverlay({
         totalMs: 600,
         onMidpoint: () => {
@@ -447,10 +627,11 @@ async function transitionToMenu(score, kind) {
                 activeSession = null;
             }
 
-            // Shader a modo idle.
+            // Shader a modo idle y el mundo al paso del menú.
             engineApi.detachAudio();
+            engineApi.setWorldSpeed?.(SCENERY.menuSpeed);
             lastAudioEngine = null;
-            playingLevelId = null;
+            run = null;
 
             closeAllModals();
             menu.setVisible(true);
@@ -458,14 +639,9 @@ async function transitionToMenu(score, kind) {
             // setState dentro del negro del fundido: el chip de auth arranca
             // su transición oculto y no hace "pop" al aparecer.
             setState(STATE.MENU);
+            onMenu?.();
         },
     });
-
-    if (kind === 'win') {
-        showToast(`¡Nivel completado! Puntuación ${score}`, 'info');
-    } else if (kind === 'collision') {
-        showToast(`Puntuación ${score} — pulsa JUGAR para intentarlo otra vez`, 'info');
-    }
 }
 
 // --------------------------- Helpers ---------------------------

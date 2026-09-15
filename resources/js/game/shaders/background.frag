@@ -51,6 +51,8 @@ uniform float uHigh;
 uniform float uBpmPulse;
 uniform float uDebugMode;   // 0=normal, 1=fft crudo, 2=uv coords, 3=uniforms
 uniform float uHorizon;
+uniform vec2  uFrame;       // tamaño del frame en px CSS
+uniform float uCell;        // px CSS por celda del arte (vista del mundo)
 uniform float uIntensity;
 uniform float uProgress;
 uniform float uClimax;
@@ -125,10 +127,19 @@ void main(void) {
     // ---------- Estrellas ----------
     // Grid-hash barato. Titilan con uTime; los agudos las excitan en partida.
     // Salen más cuanto más de noche.
+    // Tamaños de pantalla (Sep 2026): antes la rejilla era de 220 × 130 celdas
+    // sobre la pantalla, así que una estrella medía lo que una celda (17 px en
+    // un 4K, rectangular en un móvil vertical). Ahora la rejilla es cuadrada, del
+    // alto de la pantalla, y cada estrella es UNA celda del arte en su centro:
+    // el mismo cielo en cualquier formato, a juego con el pixel art.
+    vec2 px = uv * uFrame;
+    float starCell = max(uCell * 1.25, uFrame.y / 130.0);
     if (uv.y < uHorizon - 0.02) {
-        vec2 cell = floor(uv * vec2(220.0, 130.0));
+        vec2 cell = floor(px / starCell);
+        vec2 inCell = abs(px - (cell + 0.5) * starCell);
+        float pix = step(max(inCell.x, inCell.y), uCell * 0.5 + 0.5);
         float n = hash21(cell);
-        float star = smoothstep(0.9972 - 0.0012 * dusk, 1.0, n);
+        float star = smoothstep(0.9972 - 0.0012 * dusk, 1.0, n) * pix;
         float tw = 0.55 + 0.45 * sin(uTime * (1.5 + 3.0 * fract(n * 7.31)) + n * 41.0);
         col += vec3(0.85, 0.92, 1.0) * star * tw * (0.35 + high * 0.9) * (1.0 + 0.9 * dusk);
     }
@@ -138,17 +149,25 @@ void main(void) {
     // Late con el beat en partida; en idle respira lento con uTime. Baja hacia
     // el horizonte con la canción y crece un poco (los soles al ponerse
     // parecen más grandes); lo que queda bajo el horizonte no se pinta.
+    //
+    // Tamaños de pantalla (Sep 2026): antes la distancia se medía en uv, que se
+    // estira con la pantalla, y el sol era un óvalo ancho en 16:9 y una píldora
+    // en un móvil vertical. Ahora se mide en px y en unidades de `sunUnit` (el
+    // alto de la pantalla, sin pasar de 0.62 del ancho): siempre es un círculo.
     vec2 sunPos = vec2(0.76, uHorizon - 0.30 + 0.27 * dusk);
     float breathe = 0.5 + 0.5 * sin(uTime * 0.6);
-    float sunR = 0.095 + 0.02 * dusk + pulse * (0.012 + 0.012 * intensity) + (1.0 - reactive) * breathe * 0.005;
-    float d = distance(uv, sunPos);
+    float sunR = 0.105 + 0.022 * dusk + pulse * (0.013 + 0.013 * intensity) + (1.0 - reactive) * breathe * 0.0055;
+    float sunUnit = min(uFrame.y, uFrame.x * 0.62);
+    vec2 toSun = (uv - sunPos) * uFrame / sunUnit;
+    float d = length(toSun);
+    float sunRy = sunR * sunUnit / uFrame.y;   // radio del sol en uv verticales (rendijas y degradado)
     // OJO: smoothstep exige edge0 < edge1 (edges invertidos = undefined en
     // GLSL — en ANGLE/D3D devuelve 0 y el disco desaparece). Invertimos con 1-.
     float disc = (1.0 - smoothstep(sunR - 0.008, sunR, d)) * (1.0 - step(uHorizon, uv.y));
     // Rendijas: solo por debajo del centro del sol, más densas hacia abajo.
     float below = step(sunPos.y, uv.y);
-    float slit = 1.0 - below * smoothstep(0.32, 0.5, abs(fract((uv.y - sunPos.y) * 70.0) - 0.5));
-    vec3 sunCol = mix(COLOR_HIGH, COLOR_BEAT, smoothstep(sunPos.y - sunR, sunPos.y + sunR, uv.y));
+    float slit = 1.0 - below * smoothstep(0.32, 0.5, abs(fract((uv.y - sunPos.y) / sunRy * 6.6) - 0.5));
+    vec3 sunCol = mix(COLOR_HIGH, COLOR_BEAT, smoothstep(sunPos.y - sunRy, sunPos.y + sunRy, uv.y));
     col = mix(col, sunCol, disc * slit * 0.9);
     // Halo del sol — en partida lo hinchan los graves, la intensidad y los drops.
     col += COLOR_BEAT * exp(-d * 9.0) * (0.10 + 0.05 * breathe + bass * 0.22 + pulse * (0.06 + 0.10 * intensity) + 0.12 * dusk + 0.25 * flash);

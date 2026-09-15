@@ -9,8 +9,9 @@
 //   - Determinismo: mismo análisis + misma seed + misma dificultad ⇒ mismo chart.
 //   - Rejilla: toda acción cae en un pulso o un contratiempo de la canción.
 //   - Dinámica: la densidad sigue al arco (reposo < calma < groove < empuje < clímax).
-//   - Estructura: un clímax en la segunda mitad, el mundo acelera en los tramos
-//     que empujan y nunca por debajo de la base, drops con respiración antes.
+//   - Estructura: un clímax en la segunda mitad, el mundo acelera hacia él y
+//     nunca por debajo de la base, drops con respiración antes (el plan de
+//     velocidad en detalle: speed-plan.test.mjs).
 //   - Dificultad: más difícil ⇒ más acciones; cada chart se supera con la
 //     tolerancia de su dificultad; nunca por encima del techo de la canción.
 //   - Progresión: las mecánicas se estrenan en su momento del arco.
@@ -23,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildChart, CHARTER_RULES, gameplayTempo, unlockSchedule } from '../../resources/js/game/levels/charter.js';
+import { SPEED_RULES } from '../../resources/js/game/levels/speedPlan.js';
 import { normalizeChart, seedFromSha256, CHART_FORMAT_VERSION } from '../../resources/js/game/levels/chartFormat.js';
 import { buildMusicModel } from '../../resources/js/game/levels/musicModel.js';
 import { buildSongArc } from '../../resources/js/game/levels/songArc.js';
@@ -141,7 +143,7 @@ test('estructura: un único clímax, en la segunda mitad, el tramo más denso y 
         for (let t = 0; t < chart.audio.durationSec; t += 0.5) {
             const v = speed.speedAt(t);
             assert.ok(v >= base - 1e-9 && v <= climaxSpeed + 1e-9, `velocidad ${v} en t=${t}: nunca por debajo de la base ni por encima del clímax`);
-            assert.ok(v <= CHARTER_RULES.maxSpeedPxS + 1e-9);
+            assert.ok(v <= SPEED_RULES.maxSpeedPxS + 1e-9);
         }
     }
 });
@@ -160,12 +162,19 @@ test('regresión: una canción que arranca ya empujando empieza a esa velocidad,
     });
     const arc = buildSongArc(buildMusicModel(analysis));
     assert.equal(arc.segments[0].level, 3, `niveles ${arc.segments.map((s) => s.level)}`);
-    const { chart } = buildChart(analysis, { seed: 1, difficulty: 4 });
+    const { chart, report } = buildChart(analysis, { seed: 1, difficulty: 4 });
     assert.ok(chart.world.speedChanges.every((c) => c.t > 0), `cambios: ${JSON.stringify(chart.world.speedChanges)}`);
     const tempoOnly = buildChart({ ...analysis, sections: [] }, { seed: 1, difficulty: 4 });
     assert.ok(chart.world.speedPxS > tempoOnly.chart.world.speedPxS - 1e-9, 'la base ya es la del tramo que empuja');
-    const verse = analysis.sections[1];
-    assert.ok(chart.world.speedChanges.some((c) => Math.abs(c.t - verse.startSec) < 0.01 && c.speedPxS < chart.world.speedPxS), `baja al entrar en la estrofa: ${JSON.stringify(chart.world)}`);
+    // Afinado de velocidad: hasta que termina el clímax el mundo no frena. Antes
+    // bajaba al entrar en la estrofa; ahora la estrofa se juega igual de rápido,
+    // menos densa.
+    const speed = speedProfileOf(chart);
+    let prev = speed.speedAt(0);
+    for (let t = 0; t < report.climax.t1; t += 0.25) {
+        assert.ok(speed.speedAt(t) >= prev - 1e-9, `frena en t=${t}: ${JSON.stringify(chart.world)}`);
+        prev = speed.speedAt(t);
+    }
 });
 
 test('drops y lifts: momentos en el primer tiempo; antes del drop, el último beat respira', () => {

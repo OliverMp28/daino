@@ -17,22 +17,25 @@
 //   musicModel   compases, pulsos y contratiempos, color de cada golpe
 //   songArc      tramos, niveles de intensidad, clímax, subidas y drops
 //   difficulty   cuánto se llena cada nivel, con qué margen, qué se desbloquea
+//   speedPlan    marchas hacia el clímax y en qué pulsación acelera el mundo
 //   patterns     compás a compás: dónde va cada acción y cuál, con memoria de
 //                frases (un riff que vuelve es un patrón que vuelve)
-//   aquí         velocidad por tramos, silencios demasiado largos, tipo de
-//                obstáculo, validación jugando y eventos para el runtime
+//   aquí         silencios demasiado largos, tipo de obstáculo, validación
+//                jugando y eventos para el runtime
 //
 // La progresión hacia el final no es "más rápido cada N segundos": sale de la
 // canción. Las mecánicas se estrenan en momentos del arco (agacharse en el
 // primer groove, cactus anchos y síncopas al empezar a empujar, combinaciones
 // rápidas en el clímax), el mismo material suena más intenso cada vez que
-// vuelve, el mundo acelera en los tramos que empujan y el clímax es lo más
-// denso y lo más rápido antes de soltar en la outro.
+// vuelve, el mundo sube de marcha en compases que abren tramo o frase sin
+// volver a frenar hasta el clímax, y el clímax es lo más denso y lo más rápido
+// antes de soltar en la outro.
 
 import { OBSTACLE_KIND, speedFromBpm } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
-import { toSimObstacles, validatePlayability, timingWindowS } from '../systems/playability.js';
+import { toSimObstacles, validatePlayability, timingWindowS, readerOffsetS } from '../systems/playability.js';
 import { createSpeedProfile } from '../systems/speedProfile.js';
+import { SPEED_RULES, planSpeed } from './speedPlan.js';
 import { Seeded } from './Seed.js';
 import {
     CHART_FORMAT_VERSION,
@@ -73,17 +76,7 @@ export const CHARTER_RULES = Object.freeze({
      */
     speedTempoMin: 90,
     speedTempoMax: 200,
-    /**
-     * Aceleración del mundo por nivel del arco (reposo, calma, groove, empuje,
-     * clímax), multiplicada por `speedAmp` de la dificultad. Solo acelera: a
-     * menos velocidad el margen de cada salto se ESTRECHA (hallazgo de la Ola 2),
-     * así que frenar por debajo de la base volvería la calma más difícil.
-     */
-    levelSpeedBoost: Object.freeze([0, 0, 0, 0.08, 0.16]),
-    /** Techo de velocidad: a más, un móvil apaisado ve el obstáculo < 1 s. */
-    maxSpeedPxS: 690,
-    /** Un tramo más corto que esto no cambia la velocidad (salvo el clímax). */
-    minSpeedSegmentS: 8,
+    // La aceleración del mundo vive en speedPlan.js (SPEED_RULES).
     /** Un cactus de acento solo si su margen de error supera N veces la tolerancia. */
     accentWindowFactor: 2.4,
     /** Techo de reparaciones del validador (defensa ante bucles). */
@@ -116,6 +109,8 @@ export function gameplayTempo(bpm) {
  * @property {number} segments
  * @property {{ t0: number, t1: number } | null} climax
  * @property {number} speedChanges
+ * @property {number[]} gears         Primer tiempo de cada marcha (la última, el clímax).
+ * @property {number} topSpeedPxS     Velocidad máxima del nivel.
  */
 
 /**
@@ -139,8 +134,11 @@ export function buildChart(analysis, opts = {}) {
     const arc = buildSongArc(model);
 
     const tempoSpeed = speedFromBpm(gameplayTempo(model.bpm));
-    const { base: baseSpeed, changes: speedChanges } = planSpeed(arc, model, profile, tempoSpeed);
+    const plan = planSpeed({ arc, model, profile, tempoSpeed, tStart: CHARTER_RULES.firstActionMinS });
+    const baseSpeed = plan.base;
+    const speedChanges = plan.changes;
     const speed = createSpeedProfile(baseSpeed, speedChanges);
+    const readerOk = readerCheck(speed);
 
     const unlockTimes = unlockSchedule(arc, profile);
     const unlocked = (mechanic, t) => t >= unlockTimes[mechanic];
@@ -149,7 +147,7 @@ export function buildChart(analysis, opts = {}) {
     const tMin = CHARTER_RULES.firstActionMinS;
     const tMax = model.durationSec - CHARTER_RULES.tailRestS - maxLead;
 
-    const ctx = { model, arc, profile, speed, unlocked, tMin, tMax, prng };
+    const ctx = { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, prng };
     let actions = [];
     let fillers = 0;
     let repaired = 0;
@@ -198,6 +196,8 @@ export function buildChart(analysis, opts = {}) {
             segments: arc.segments.length,
             climax: climax === null ? null : { t0: round3(climax.t0), t1: round3(climax.t1) },
             speedChanges: speedChanges.length,
+            gears: plan.gears,
+            topSpeedPxS: speed.maxSpeed,
         },
     };
 }
@@ -208,36 +208,22 @@ const EVENT_ORDER = Object.freeze({ section: 0, fx: 1, obstacle: 2 });
 // --------------------------- Velocidad ---------------------------
 
 /**
- * @returns {{ base: number, changes: Array<{ t: number, speedPxS: number, rampS: number }> }}
- *          `base`: velocidad con la que arranca el nivel. Si la canción empieza
- *          ya en un tramo que empuja, es la de ese tramo (no un "cambio" en el 0).
+ * ¿Se puede colocar una acción de este tipo en `t` sin engañar a quien juega
+ * con la vista? Con velocidad constante, siempre. Alrededor de un cambio de
+ * velocidad, solo si el error de su pulsación (playability.readerOffsetS) cabe
+ * en `SPEED_RULES.readerBudgetS` con el adelanto de cada kind de ese tipo: un
+ * kind futuro con adelanto propio queda cubierto sin tocar nada.
+ *
+ * @param {import('../systems/speedProfile.js').SpeedProfile} speed
+ * @returns {(t: number, type: 'jump'|'duck') => boolean}
  */
-function planSpeed(arc, model, profile, tempoSpeed) {
-    const changes = [];
-    const speedOf = (seg) => {
-        const boost = CHARTER_RULES.levelSpeedBoost[seg.level] * profile.speedAmp;
-        return Math.round(Math.min(CHARTER_RULES.maxSpeedPxS, Math.max(tempoSpeed, tempoSpeed * (1 + boost))));
-    };
-    const first = arc.segments[0];
-    const base = first !== undefined && first.t1 - first.t0 >= CHARTER_RULES.minSpeedSegmentS ? speedOf(first) : tempoSpeed;
-    let current = base;
-    for (const seg of arc.segments) {
-        if (seg.index === 0) continue;
-        const target = speedOf(seg);
-        if (Math.abs(target - current) < 2) continue;
-        // Un tramo corto no cambia la velocidad salvo que sea el clímax: un
-        // portal cada pocos segundos marea en vez de marcar un momento. En
-        // segundos y no en compases: medido con compases (mínimo 6), el puente de
-        // Running With the Wolves (5 compases, 14.6 s a 82 BPM) se jugaba entero a
-        // la velocidad del estribillo.
-        if (seg.t1 - seg.t0 < CHARTER_RULES.minSpeedSegmentS && !seg.climax) continue;
-        // Subir, de golpe en el primer tiempo (el portal ES el drop); bajar,
-        // en dos beats (soltar sin frenazo).
-        const rampS = target > current ? 0 : round3(2 * model.beatPeriodS);
-        changes.push({ t: round3(seg.t0), speedPxS: target, rampS });
-        current = target;
-    }
-    return { base, changes };
+function readerCheck(speed) {
+    if (speed.constant) return () => true;
+    const leadsOf = (type) => [...new Set(Object.values(OBSTACLE_KIND)
+        .filter((def) => (type === 'duck') === (def.role === 'duck'))
+        .map(actionLeadS))];
+    const leads = { jump: leadsOf('jump'), duck: leadsOf('duck') };
+    return (t, type) => leads[type].every((lead) => Math.abs(readerOffsetS(speed, t, lead)) <= SPEED_RULES.readerBudgetS);
 }
 
 // --------------------------- Desbloqueo de mecánicas ---------------------------
@@ -280,7 +266,7 @@ export function unlockSchedule(arc, profile) {
 // --------------------------- Acciones ---------------------------
 
 function chartActions(ctx) {
-    const { model, arc, profile, speed, unlocked, tMin, tMax } = ctx;
+    const { model, arc, profile, speed, readerOk, unlocked, tMin, tMax } = ctx;
     const memory = createPhraseMemory();
     const threshold = duckThreshold(model);
     const placed = [];
@@ -339,6 +325,7 @@ function chartActions(ctx) {
             target,
             placed,
             speedAt: speed.speedAt,
+            readerOk,
             profile,
             unlocked,
             tMin,
@@ -369,7 +356,7 @@ function chartActions(ctx) {
  * música calla de verdad (un break en silencio), el nivel también calla.
  */
 function fillLongRests(actions, ctx) {
-    const { model, profile, speed, tMin, tMax, unlocked } = ctx;
+    const { model, profile, speed, readerOk, tMin, tMax, unlocked } = ctx;
     const out = actions.slice();
     for (let guard = 0; guard < 1000; guard++) {
         let inserted = false;
@@ -387,7 +374,7 @@ function fillLongRests(actions, ctx) {
             for (const bar of model.bars) {
                 if (bar.t1 < from || bar.t0 > to) continue;
                 for (const slot of bar.slots) {
-                    if (!slot.onBeat || slot.t < tMin || slot.t > tMax) continue;
+                    if (!slot.onBeat || slot.t < tMin || slot.t > tMax || !readerOk(slot.t, 'jump')) continue;
                     if (a !== null && slot.t - a.t < pairGap(a.type, 'jump', speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1) continue;
                     if (b !== null && b.t - slot.t < pairGap('jump', b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1) continue;
                     if (a === null && slot.t < from) continue;

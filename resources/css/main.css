@@ -25,6 +25,20 @@
 
 :root {
     color-scheme: dark;
+    /* Márgenes seguros (notch, barra de gestos). `viewport-fit=cover` en el layout. */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/* Tamaños de pantalla (Sep 2026): la UI está en rem y el rem crece con la
+ * pantalla. 16 px hasta 1080 de alto (medido en su equivalente 16:9, para que
+ * una ultrapanorámica no lo infle), 20 px en 1440p y 28 px en 4K. Antes todo
+ * medía lo mismo en un portátil que en un 4K, donde menú, catálogo y HUD eran
+ * sellos en una esquina. El mundo del juego escala aparte (worldView.js). */
+html {
+    font-size: clamp(16px, calc(min(56.25vw, 100vh) * 0.0111 + 4px), 30px);
 }
 
 html,
@@ -44,10 +58,10 @@ body {
 #app {
     position: fixed;
     inset: 0;
-    width: 100vw;
-    height: 100vh;
-    /* El canvas Pixi se inserta dentro y ocupa todo el wrapper. Cualquier
-       overlay DOM (#hint, futuro HUD del Bloque 6) vive aparte como sibling. */
+    /* Sin 100vw/100vh: en móviles `100vh` incluye la barra del navegador y el
+       canvas quedaba más alto que lo visible (el suelo, debajo de la barra).
+       El canvas Pixi se inserta dentro y ocupa todo el wrapper. Cualquier
+       overlay DOM (#hint, HUD) vive aparte como sibling. */
 }
 
 #app > canvas {
@@ -122,8 +136,6 @@ body[data-drag="active"]::after {
 #hud-root {
     position: fixed;
     inset: 0;
-    width: 100vw;
-    height: 100vh;
     pointer-events: none;
     overflow: hidden;
 }
@@ -165,9 +177,10 @@ dialog.daino-modal {
     right: 0;
     bottom: 0;
     left: auto;
-    width: min(440px, 100vw);
+    width: min(27.5rem, 100vw);
     height: 100vh;
-    max-height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
     transform: translateX(100%);
     transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
     overflow: hidden;
@@ -184,12 +197,18 @@ dialog.daino-modal--center {
     left: 50%;
     right: auto;
     bottom: auto;
-    width: min(440px, 90vw);
+    width: min(27.5rem, calc(100vw - 2rem));
     height: auto;
-    max-height: 80vh;
+    max-height: calc(100dvh - 2rem);
     transform: translate(-50%, -50%) scale(0.95);
     border-radius: 0.85rem;
     overflow: hidden;
+}
+
+/* Centrado y más alto que la pantalla (móvil apaisado): el cuerpo se desplaza,
+   cabecera y botones quedan siempre a la vista. */
+dialog.daino-modal--center .modal-shell {
+    max-height: calc(100dvh - 2rem);
 }
 
 dialog.daino-modal--center[open] {
@@ -231,7 +250,7 @@ dialog.daino-modal .modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1.25rem 1.5rem;
+    padding: max(1.25rem, var(--safe-top)) max(1.5rem, var(--safe-right)) 1.25rem 1.5rem;
     border-bottom: 1px solid color-mix(in oklch, var(--color-daino-fg) 8%, transparent);
 }
 
@@ -266,8 +285,19 @@ dialog.daino-modal .modal-body {
     line-height: 1.5;
 }
 
+dialog.daino-modal--center .modal-header {
+    padding: 1.25rem 1.5rem;
+}
+
+@media (max-height: 480px) {
+    dialog.daino-modal .modal-header,
+    dialog.daino-modal--center .modal-header { padding-top: max(0.75rem, var(--safe-top)); padding-bottom: 0.75rem; }
+    dialog.daino-modal--center .modal-header { padding-top: 0.75rem; }
+    dialog.daino-modal .modal-body { padding: 1rem 1.25rem; }
+}
+
 dialog.daino-modal .modal-footer {
-    padding: 1rem 1.5rem;
+    padding: 1rem 1.5rem max(1rem, var(--safe-bottom));
     border-top: 1px solid color-mix(in oklch, var(--color-daino-fg) 8%, transparent);
     display: flex;
     gap: 0.5rem;
@@ -335,7 +365,7 @@ dialog.daino-modal .modal-footer {
     grid-template-rows: 1fr;
     align-items: center;
     justify-items: center;
-    padding: 4rem 2rem;
+    padding: max(4rem, calc(var(--safe-top) + 3.5rem)) max(2rem, var(--safe-right)) max(2rem, var(--safe-bottom)) max(2rem, var(--safe-left));
     visibility: visible;
     transition: opacity 280ms ease-out, transform 280ms ease-out, visibility 0s linear 0s;
 }
@@ -362,13 +392,15 @@ dialog.daino-modal .modal-footer {
     flex-direction: column;
     align-items: center;
     gap: 1.25rem;
-    max-width: 560px;
+    max-width: 35rem;
     width: 100%;
 }
 
 .daino-menu__title {
     margin: 0;
-    font-size: clamp(3.5rem, 9vw, 6.5rem);
+    /* También por alto: en un móvil apaisado 9vw eran 76 px de título y los
+       botones de abajo quedaban fuera de la pantalla. */
+    font-size: clamp(2.4rem, min(9vw, 15vh), 6.5rem);
     font-weight: 700;
     letter-spacing: 0.08em;
     line-height: 0.95;
@@ -390,7 +422,7 @@ dialog.daino-modal .modal-footer {
     flex-direction: column;
     gap: 0.6rem;
     width: 100%;
-    max-width: 360px;
+    max-width: 22.5rem;
 }
 
 .daino-menu__action {
@@ -476,6 +508,28 @@ dialog.daino-modal .modal-footer {
     font-size: 0.82rem;
 }
 
+/* Pantallas bajas (móvil apaisado, portátil con la ventana a media altura):
+   todo el menú cabe sin desplazarse. Medido en 844 × 390 y 667 × 375. */
+@media (max-height: 560px) {
+    .daino-menu {
+        padding-top: max(1rem, var(--safe-top));
+        padding-bottom: max(0.75rem, var(--safe-bottom));
+    }
+    .daino-menu__main { gap: 0.45rem; }
+    .daino-menu__actions { margin-top: 0.35rem; gap: 0.4rem; }
+    .daino-menu__action { padding: 0.55rem 1rem; }
+    .daino-menu__action--primary { padding: 0.7rem 1rem; font-size: 1.05rem; }
+    .daino-menu__action--upload { margin-top: 0; }
+    .daino-menu__action-hint { margin-top: 0.05rem; }
+    .daino-menu__secondary { margin-top: 0.2rem; gap: 0.4rem; }
+    .daino-menu__secondary .daino-menu__action { padding: 0.5rem 0.4rem; }
+}
+
+@media (max-height: 340px) {
+    .daino-menu__subtitle { display: none; }
+    .daino-menu__action-hint { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .daino-menu {
         transition: none;
@@ -501,11 +555,116 @@ dialog.daino-modal .modal-footer {
     top: 0;
     left: 0;
     right: 0;
-    padding: 1rem 5rem 1rem 1.25rem;        /* deja hueco al chip auth */
+    /* A la derecha, el hueco del botón de pausa (y los márgenes seguros). */
+    padding: max(1rem, var(--safe-top)) calc(4.75rem + var(--safe-right)) 1rem max(1.25rem, var(--safe-left));
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     gap: 1.5rem;
     align-items: start;
+}
+
+/* Pausa: el único modo de pausar en táctil. Dos barras dibujadas con CSS
+   (nítidas a cualquier escala) y área de dedo de 2.75rem (44 px a 16 px). */
+.daino-hud__pause {
+    position: absolute;
+    top: max(0.75rem, var(--safe-top));
+    right: max(0.9rem, var(--safe-right));
+    width: 2.75rem;
+    height: 2.75rem;
+    display: grid;
+    grid-auto-flow: column;
+    place-content: center;
+    gap: 0.3rem;
+    padding: 0;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 16%, transparent);
+    border-radius: 0.7rem;
+    background: color-mix(in oklch, var(--color-daino-bg-deep) 55%, transparent);
+    backdrop-filter: blur(6px);
+    color: var(--color-daino-fg);
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 150ms, background 150ms;
+}
+
+.daino-hud__pause:hover { opacity: 1; background: color-mix(in oklch, var(--color-daino-bg-lifted) 75%, transparent); }
+.daino-hud__pause:focus-visible { outline: 2px solid var(--color-daino-high); outline-offset: 2px; }
+
+.daino-hud__pause > i {
+    width: 0.3rem;
+    height: 1rem;
+    border-radius: 2px;
+    background: currentColor;
+}
+
+/* Solo mientras se juega: en pausa y en resultados manda el panel. */
+body:not([data-app-state="PLAYING"]) .daino-hud__pause {
+    visibility: hidden;
+}
+
+/* Controles de las primeras partidas. En táctil, cada mitad de la pantalla
+   dice lo que hace; con teclado, una fila de teclas. Nunca bloquea toques. */
+.daino-hud__controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 34%;
+    display: flex;
+    justify-content: center;
+    gap: 1.25rem;
+    padding: 0 max(1rem, var(--safe-right)) 0 max(1rem, var(--safe-left));
+    opacity: 0;
+    transform: translateY(0.4rem);
+    transition: opacity 320ms ease-out, transform 320ms ease-out;
+    pointer-events: none;
+}
+
+.daino-hud__controls[data-shown="true"] {
+    opacity: 1;
+    transform: none;
+}
+
+.daino-hud__controls-side {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.8rem;
+    border-radius: 0.6rem;
+    background: color-mix(in oklch, #05050a 55%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 12%, transparent);
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+    text-shadow: none;
+}
+
+.daino-hud__controls-side.is-pause { opacity: 0.7; }
+
+.daino-hud__controls[data-input="touch"] {
+    justify-content: space-between;
+    top: 40%;
+}
+
+.daino-hud__controls[data-input="touch"] .daino-hud__controls-side {
+    width: calc(50% - 1.5rem);
+    justify-content: center;
+    padding: 0.9rem 0.8rem;
+    border-style: dashed;
+}
+
+kbd,
+.daino-hud__controls-side kbd {
+    display: inline-block;
+    min-width: 1.6em;
+    padding: 0.1em 0.45em;
+    border-radius: 0.35em;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 30%, transparent);
+    border-bottom-width: 2px;
+    background: color-mix(in oklch, var(--color-daino-fg) 8%, transparent);
+    font-family: inherit;
+    font-size: 0.8em;
+    font-weight: 600;
+    line-height: 1.4;
+    text-align: center;
 }
 
 .daino-hud__score {
@@ -534,7 +693,7 @@ dialog.daino-modal .modal-footer {
     flex-direction: column;
     gap: 0.4rem;
     align-items: center;
-    width: min(360px, 100%);
+    width: min(22.5rem, 100%);
     text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
 }
 
@@ -547,7 +706,7 @@ dialog.daino-modal .modal-footer {
 
 .daino-hud__progress-bar {
     width: 100%;
-    height: 6px;
+    height: 0.375rem;
     border-radius: 999px;
     background: color-mix(in oklch, var(--color-daino-fg) 14%, transparent);
     overflow: hidden;
@@ -570,25 +729,6 @@ dialog.daino-modal .modal-footer {
     white-space: nowrap;
     max-width: 100%;
     text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
-}
-
-.daino-hud__message {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: clamp(2rem, 5vw, 3.5rem);
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-shadow: 0 4px 32px rgba(0, 0, 0, 0.7);
-    text-align: center;
-    opacity: 0;
-    transition: opacity 200ms ease-out;
-    text-transform: uppercase;
-}
-
-.daino-hud__message[data-shown="true"] {
-    opacity: 1;
 }
 
 /* Ola 5 — el HUD sigue la estructura de la canción.
@@ -614,6 +754,114 @@ dialog.daino-modal .modal-footer {
     to   { filter: brightness(1.45); }
 }
 
+/* Afinado de velocidad — lo que viene se ve venir.
+ * Mapa: la barra de progreso lleva debajo la forma de la canción (cada tramo
+ * más claro cuanto más intenso, el clímax en rosa) y una marca en cada
+ * acelerón. Lo jugado lo tapa el relleno.
+ * Marchas: chevrones junto al tiempo, uno por escalón de velocidad sobre la de
+ * arranque; el que viene parpadea al pulso los compases previos a su acelerón. */
+.daino-hud__timer-row {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.daino-hud__gear {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+    height: 0.875rem;
+    padding-right: 0.2rem;
+}
+
+/* Chevrón: dos bordes de un cuadrado girado 45°, del color de `color`. */
+.daino-hud__chev {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-top: 0.1875rem solid currentColor;
+    border-right: 0.1875rem solid currentColor;
+    transform: rotate(45deg);
+    color: color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
+    transition: color 180ms ease-out, filter 180ms ease-out;
+}
+
+.daino-hud__chev[data-on="true"] {
+    color: var(--color-daino-high);
+    filter: drop-shadow(0 0 4px color-mix(in oklch, var(--color-daino-high) 85%, transparent));
+}
+
+.daino-hud__gear[data-gear="4"] .daino-hud__chev[data-on="true"] {
+    color: var(--color-daino-beat);
+    filter: drop-shadow(0 0 5px color-mix(in oklch, var(--color-daino-beat) 90%, transparent));
+}
+
+.daino-hud__chev[data-next="true"] {
+    color: color-mix(in oklch, var(--color-daino-high) 75%, transparent);
+    transition: none;
+}
+
+.daino-hud__gear[data-bump="true"] {
+    animation: daino-gear-bump 480ms ease-out;
+}
+
+@keyframes daino-gear-bump {
+    0%   { transform: scale(1.6); filter: brightness(2.2); }
+    100% { transform: scale(1);   filter: brightness(1); }
+}
+
+.daino-hud__progress-bar {
+    position: relative;
+}
+
+/* Con mapa, la barra necesita anchura propia: en la columna `auto` del HUD
+ * medía lo que el texto del tiempo (~100 px) y los tramos no se distinguían. */
+.daino-hud__progress-bar[data-road="true"] {
+    width: clamp(11.25rem, 24vw, 22.5rem);
+    height: 0.5rem;
+    background: color-mix(in oklch, var(--color-daino-fg) 6%, transparent);
+}
+
+.daino-hud__road {
+    position: absolute;
+    inset: 0;
+}
+
+.daino-hud__road-seg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--color-daino-fg);
+    opacity: 0.1;
+}
+
+.daino-hud__road-seg[data-level="0"] { opacity: 0.05; }
+.daino-hud__road-seg[data-level="1"] { opacity: 0.1; }
+.daino-hud__road-seg[data-level="2"] { opacity: 0.17; }
+.daino-hud__road-seg[data-level="3"] { opacity: 0.28; }
+
+.daino-hud__road-seg[data-climax="true"] {
+    background: var(--color-daino-beat);
+    opacity: 0.6;
+}
+
+.daino-hud__road-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    z-index: 2;
+    background: var(--color-daino-high);
+    opacity: 0.95;
+}
+
+.daino-hud__progress-bar[data-road="true"] .daino-hud__progress-fg {
+    position: relative;
+    z-index: 1;
+    opacity: 0.92;
+}
+
 .daino-hud__banner {
     position: absolute;
     top: 24%;
@@ -635,6 +883,12 @@ dialog.daino-modal .modal-footer {
     transform: translate(-50%, 0) scale(1);
 }
 
+/* Con el panel de resultados abierto, el rótulo repetiría lo que dice el panel. */
+body[data-app-state="RESULTS"] .daino-hud__banner,
+body[data-app-state="PAUSED"] .daino-hud__banner {
+    opacity: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .daino-hud[data-phase="climax"] .daino-hud__progress-fg {
         animation: none;
@@ -642,11 +896,14 @@ dialog.daino-modal .modal-footer {
     .daino-hud__banner {
         transition: none;
     }
+    .daino-hud__gear[data-bump="true"] {
+        animation: none;
+    }
 }
 
 @media (max-width: 640px) {
     .daino-hud__top {
-        padding: 0.75rem 4rem 0.75rem 0.85rem;
+        padding: max(0.75rem, var(--safe-top)) calc(4rem + var(--safe-right)) 0.75rem max(0.85rem, var(--safe-left));
         grid-template-columns: 1fr 1fr;     /* score y timer; song se oculta */
     }
 
@@ -657,6 +914,26 @@ dialog.daino-modal .modal-footer {
     .daino-hud__progress {
         align-items: flex-end;
     }
+
+    .daino-hud__progress-bar[data-road="true"] {
+        width: clamp(7.5rem, 38vw, 13.75rem);
+    }
+}
+
+/* Móvil apaisado: el HUD roba lo menos posible del poco alto que hay. */
+@media (max-height: 480px) {
+    .daino-hud__top {
+        padding-top: max(0.5rem, var(--safe-top));
+        padding-bottom: 0.5rem;
+        gap: 1rem;
+    }
+    .daino-hud__label { font-size: 0.6rem; }
+    .daino-hud__value { font-size: 1.25rem; }
+    .daino-hud__timer { font-size: 0.85rem; }
+    .daino-hud__song { font-size: 0.75rem; }
+    .daino-hud__progress { gap: 0.3rem; }
+    .daino-hud__pause { top: max(0.45rem, var(--safe-top)); width: 2.5rem; height: 2.5rem; }
+    .daino-hud__controls { top: 30%; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -715,10 +992,14 @@ dialog.daino-modal .modal-footer {
     cursor: pointer;
 }
 
-/* El slider: estilo cross-browser ligero. Pista + thumb. */
+/* El slider: estilo cross-browser ligero. Pista + thumb. Debajo de su etiqueta
+   y su valor (antes compartía la fila 1 con el valor y lo tapaba, y la
+   etiqueta caía debajo). */
+.daino-settings__row:has(> input[type="range"]) .daino-settings__label { grid-row: 1 / 2; }
+
 .daino-settings__row input[type="range"] {
     grid-column: 1 / -1;
-    grid-row: 1 / 2;
+    grid-row: 2 / 3;
     width: 100%;
     -webkit-appearance: none;
     appearance: none;
@@ -728,13 +1009,13 @@ dialog.daino-modal .modal-footer {
 }
 
 .daino-settings__row input[type="range"]::-webkit-slider-runnable-track {
-    height: 4px;
+    height: 0.25rem;
     border-radius: 999px;
     background: color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
 }
 
 .daino-settings__row input[type="range"]::-moz-range-track {
-    height: 4px;
+    height: 0.25rem;
     border-radius: 999px;
     background: color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
 }
@@ -742,18 +1023,18 @@ dialog.daino-modal .modal-footer {
 .daino-settings__row input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 1rem;
+    height: 1rem;
     border-radius: 50%;
     background: var(--color-daino-beat);
     border: none;
-    margin-top: -6px;
+    margin-top: -0.375rem;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
 
 .daino-settings__row input[type="range"]::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
+    width: 1rem;
+    height: 1rem;
     border-radius: 50%;
     background: var(--color-daino-beat);
     border: none;
@@ -791,8 +1072,8 @@ dialog.daino-modal .modal-footer {
 
 #auth-anchor {
     position: fixed;
-    top: 1rem;
-    right: 1rem;
+    top: max(1rem, var(--safe-top));
+    right: max(1rem, var(--safe-right));
     z-index: 41;            /* sobre HUD (40), debajo de modales (50) */
     pointer-events: auto;
     transition: opacity 200ms ease-out;
@@ -850,8 +1131,9 @@ body:not([data-app-state="MENU"]) #auth-anchor {
     position: fixed;
     inset: auto;                /* anula el centrado por defecto de [popover] */
     margin: 0;
-    bottom: 1.5rem;
+    bottom: max(1.5rem, calc(var(--safe-bottom) + 0.75rem));
     left: 50%;
+    max-width: calc(100vw - 2rem);
     transform: translateX(-50%);
     background: rgba(15, 5, 15, 0.92);
     color: var(--color-daino-fg);
@@ -931,10 +1213,13 @@ dialog.daino-catalog {
     margin: auto;
     padding: 0;
     border: none;
-    width: min(1180px, calc(100vw - 2rem));
-    height: min(820px, calc(100vh - 2rem));
+    /* En rem: en un 4K el catálogo crece con el resto de la UI (antes, 1180 px
+       fijos: una tarjeta de visita en mitad de 3840). */
+    width: min(74rem, calc(100vw - 2rem));
+    height: min(52rem, calc(100vh - 2rem));
+    height: min(52rem, calc(100dvh - 2rem));
     max-width: 100vw;
-    max-height: 100vh;
+    max-height: 100dvh;
     border-radius: 1rem;
     background: transparent;
     color: var(--color-daino-fg);
@@ -1026,6 +1311,10 @@ dialog.daino-catalog::backdrop {
 }
 
 .daino-catalog__header-actions {
+    /* Columna fija: sin sesión no hay pestañas y, sin esto, el botón de cerrar
+       caía en la columna central junto al título en vez de en la esquina. */
+    grid-column: 3;
+    justify-self: end;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -1062,8 +1351,14 @@ dialog.daino-catalog::backdrop {
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(14.5rem, 1fr));
     gap: 1rem;
+}
+
+/* El nivel que acabas de jugar, al volver con "Niveles". */
+.daino-card[data-recent="true"] .daino-card__open {
+    border-color: oklch(0.72 0.17 var(--hue) / 0.85);
+    box-shadow: 0 0 0 2px oklch(0.72 0.17 var(--hue) / 0.45), 0 10px 30px -12px oklch(0.6 0.2 var(--hue) / 0.7);
 }
 
 .daino-catalog__more {
@@ -1301,7 +1596,14 @@ dialog.daino-catalog::backdrop {
     font-variant-numeric: tabular-nums;
 }
 
-.daino-card__best { color: var(--color-daino-high); font-weight: 600; }
+.daino-card__best {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;     /* en tarjetas estrechas partía "100 %" en dos líneas */
+    color: var(--color-daino-high);
+    font-weight: 600;
+}
 .daino-card__best.is-empty { color: color-mix(in oklch, var(--color-daino-fg) 45%, transparent); font-weight: 400; }
 .daino-card__players { color: color-mix(in oklch, var(--color-daino-fg) 55%, transparent); }
 
@@ -1785,22 +2087,58 @@ body[data-drag="active"] .daino-upload__drop {
 .daino-upload__drop strong { font-size: 1.05rem; }
 .daino-upload__drop-hint { font-size: 0.8rem; opacity: 0.7; }
 
+/* Móvil apaisado: el botón de elegir cabe sin desplazarse hasta él. */
+@media (max-height: 480px) {
+    .daino-upload { gap: 0.6rem; }
+    .daino-upload__points { gap: 0.2rem; font-size: 0.85rem; }
+    .daino-upload__drop { flex-direction: row; justify-content: center; gap: 0.6rem; padding: 0.7rem 1rem; }
+    .daino-upload__drop-hint { display: none; }
+}
+
 /* ----- Responsive ----- */
 
-@media (max-width: 760px) {
+/* Pantalla completa en móvil (vertical o apaisado): cada px cuenta, y el
+   contenido respeta notch y barra de gestos. */
+@media (max-width: 760px), (max-height: 560px) {
     dialog.daino-catalog {
         width: 100vw;
         height: 100vh;
+        height: 100dvh;
         border-radius: 0;
     }
 
     .daino-catalog__shell { border-radius: 0; border: none; }
 
     .daino-catalog__header {
+        padding: max(0.6rem, var(--safe-top)) max(0.9rem, var(--safe-right)) 0.6rem max(0.9rem, var(--safe-left));
+    }
+
+    .daino-catalog__main {
+        padding: 0.9rem max(0.9rem, var(--safe-right)) max(0.9rem, var(--safe-bottom)) max(0.9rem, var(--safe-left));
+    }
+}
+
+/* Poco alto (móvil apaisado): cabecera en una línea y portadas más bajas, para
+   ver al menos una fila entera de tarjetas. */
+@media (max-height: 560px) {
+    .daino-catalog__title { font-size: 1.1rem; }
+    .daino-catalog__tab { padding: 0.35rem 0.8rem; font-size: 0.85rem; }
+    .daino-catalog__grid { grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: 0.7rem; }
+    .daino-card__cover { aspect-ratio: 2 / 1; }
+    .daino-card__body { padding: 0.55rem 0.75rem 0.6rem; }
+    .daino-card__title { font-size: 0.95rem; }
+    .daino-card__glyph { width: 2.6rem; height: 2.6rem; }
+    .daino-detail { gap: 0.8rem; }
+    .daino-detail__hero { grid-template-columns: minmax(10rem, 0.7fr) 1.3fr; gap: 1rem; }
+}
+
+@media (max-width: 760px) {
+    .daino-catalog__header {
         grid-template-columns: 1fr auto;
         gap: 0.6rem;
-        padding: 0.75rem 0.9rem;
     }
+
+    .daino-catalog__header-actions { grid-column: 2; }
 
     .daino-catalog__tabs {
         grid-column: 1 / -1;
@@ -1810,8 +2148,7 @@ body[data-drag="active"] .daino-upload__drop {
     }
 
     .daino-catalog__upload { font-size: 0.8rem; padding: 0.45rem 0.7rem; }
-    .daino-catalog__main { padding: 0.9rem; }
-    .daino-catalog__grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.7rem; }
+    .daino-catalog__grid { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 0.7rem; }
     .daino-detail__hero { grid-template-columns: 1fr; }
     .daino-detail__stats { grid-template-columns: repeat(2, auto); }
 }
@@ -1929,4 +2266,451 @@ body[data-drag="active"] .daino-upload__drop {
 .daino-ranking__detail {
     font-size: 0.75rem;
     color: color-mix(in oklch, var(--color-daino-fg) 55%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Panel de partida — pausa y resultados (reintentos, Sep 2026).
+ *
+ * Tarjeta centrada sobre la escena congelada (el Dino caído junto al obstáculo,
+ * o trotando tras superar el nivel). Jerarquía de un vistazo: el porcentaje es
+ * lo más grande, REINTENTAR es el único botón de color y ocupa todo el ancho,
+ * y Niveles / Menú quedan debajo, en pequeño. En rem: crece en pantallas
+ * grandes; en un móvil apaisado se reordena a dos columnas para no desbordar.
+ * ------------------------------------------------------------------------- */
+
+dialog.daino-run {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    padding: 0;
+    border: none;
+    width: min(28rem, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1.5rem);
+    background: transparent;
+    color: var(--color-daino-fg);
+    overflow: visible;
+    opacity: 0;
+    transform: translateY(0.75rem) scale(0.97);
+    transition: opacity 180ms ease-out, transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+dialog.daino-run[open] {
+    opacity: 1;
+    transform: none;
+}
+
+@starting-style {
+    dialog.daino-run[open] {
+        opacity: 0;
+        transform: translateY(0.75rem) scale(0.97);
+    }
+}
+
+dialog.daino-run::backdrop {
+    background: color-mix(in oklch, #05050a 45%, transparent);
+    backdrop-filter: blur(2px) saturate(0.85);
+    animation: backdrop-in 220ms ease-out;
+}
+
+/* Tras chocar, la escena se ve más: es la foto de dónde caíste. */
+dialog.daino-run[data-mode="results"]::backdrop {
+    background: color-mix(in oklch, #05050a 30%, transparent);
+    backdrop-filter: saturate(0.7);
+}
+
+.daino-run__card {
+    --accent: var(--color-daino-high);
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    max-height: calc(100dvh - 1.5rem);
+    overflow-y: auto;
+    padding: 1.4rem 1.5rem 1.25rem;
+    border-radius: 1.1rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 14%, transparent);
+    background:
+        radial-gradient(120% 70% at 50% 0%, color-mix(in oklch, var(--accent) 16%, transparent), transparent 65%),
+        linear-gradient(180deg,
+            color-mix(in oklch, var(--color-daino-bg-lifted) 92%, transparent),
+            color-mix(in oklch, var(--color-daino-bg-deep) 96%, transparent));
+    box-shadow: 0 1.5rem 4rem -1.5rem rgb(0 0 0 / 0.8);
+    text-align: center;
+}
+
+dialog.daino-run[data-tone="fail"] .daino-run__card { --accent: var(--color-daino-beat); }
+dialog.daino-run[data-tone="record"] .daino-run__card { --accent: oklch(0.86 0.16 85); }
+dialog.daino-run[data-tone="win"] .daino-run__card { --accent: var(--color-daino-high); }
+
+.daino-run__head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+}
+
+.daino-run__title {
+    margin: 0;
+    max-width: 100%;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: color-mix(in oklch, var(--color-daino-fg) 60%, transparent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.daino-run__heading {
+    margin: 0.2rem 0 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+dialog.daino-run[data-mode="pause"] .daino-run__heading { font-size: 1.5rem; letter-spacing: 0.12em; }
+dialog.daino-run[data-tone="record"] .daino-run__heading,
+dialog.daino-run[data-tone="win"] .daino-run__heading { color: var(--accent); }
+
+.daino-run__pct {
+    margin: 0;
+    font-size: clamp(2.8rem, 12vh, 4.2rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 1.5rem color-mix(in oklch, var(--accent) 45%, transparent);
+    animation: daino-run-pop 420ms cubic-bezier(0.22, 1.4, 0.36, 1) both;
+}
+
+@keyframes daino-run-pop {
+    from { transform: scale(0.7); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+}
+
+/* Barra: la canción entera con sus tramos (el clímax en rosa), lo alcanzado
+   rellenado y una marca en tu mejor intento. */
+.daino-run__bar {
+    position: relative;
+    height: 0.8rem;
+    margin: 0.5rem 0 0.2rem;
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--color-daino-fg) 8%, transparent);
+    overflow: visible;
+}
+
+.daino-run__road {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    overflow: hidden;
+}
+
+.daino-run__seg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--color-daino-fg);
+    opacity: 0.08;
+}
+
+.daino-run__seg[data-level="2"] { opacity: 0.14; }
+.daino-run__seg[data-level="3"] { opacity: 0.22; }
+.daino-run__seg[data-climax="true"] { background: var(--color-daino-beat); opacity: 0.45; }
+
+.daino-run__fill {
+    --fill: 0;
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(90deg, color-mix(in oklch, var(--accent) 70%, white), var(--accent));
+    box-shadow: 0 0 0.9rem color-mix(in oklch, var(--accent) 55%, transparent);
+    transform-origin: left center;
+    transform: scaleX(var(--fill));
+    animation: daino-run-fill 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes daino-run-fill {
+    from { transform: scaleX(0); }
+}
+
+.daino-run__best {
+    position: absolute;
+    top: -0.3rem;
+    bottom: -0.3rem;
+    width: 0.2rem;
+    margin-left: -0.1rem;
+    border-radius: 2px;
+    background: oklch(0.86 0.16 85);
+    box-shadow: 0 0 0.4rem oklch(0.86 0.16 85 / 0.8);
+}
+
+.daino-run__best > span {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translate(-50%, 0.2rem);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: oklch(0.86 0.16 85);
+    white-space: nowrap;
+}
+
+.daino-run__note {
+    margin: 0.35rem 0 0;
+    font-size: 0.92rem;
+    color: color-mix(in oklch, var(--color-daino-fg) 80%, transparent);
+}
+
+.daino-run__note[hidden] { display: none; }
+
+.daino-run__stats {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem 1.75rem;
+    flex-wrap: wrap;
+    margin: 0;
+}
+
+.daino-run__stat dt {
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: color-mix(in oklch, var(--color-daino-fg) 50%, transparent);
+}
+
+.daino-run__stat dd {
+    margin: 0.1rem 0 0;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.daino-run__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 0.2rem;
+}
+
+.daino-run__primary,
+.daino-run__secondary-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    min-height: 2.75rem;
+    border-radius: 0.75rem;
+    font: inherit;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 150ms, border-color 150ms, transform 80ms, filter 150ms;
+}
+
+.daino-run__primary {
+    position: relative;
+    width: 100%;
+    padding: 0.85rem 1.2rem;
+    border: 1px solid var(--color-daino-beat);
+    background: var(--color-daino-beat);
+    color: #fff;
+    font-size: 1.15rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    box-shadow: 0 0.6rem 1.8rem -0.8rem color-mix(in oklch, var(--color-daino-beat) 90%, transparent);
+}
+
+.daino-run__primary:hover { filter: brightness(1.08); }
+
+/* Flex con salto de línea: en un móvil vertical tres botones con icono no
+   caben en fila (antes, barra de desplazamiento horizontal dentro del panel). */
+.daino-run__secondary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.daino-run__secondary-btn {
+    flex: 1 1 6.5rem;
+    min-width: 0;
+    padding: 0.55rem 0.6rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 16%, transparent);
+    background: color-mix(in oklch, var(--color-daino-bg-deep) 60%, transparent);
+    color: var(--color-daino-fg);
+    font-size: 0.9rem;
+}
+
+.daino-run__secondary-btn:hover {
+    background: color-mix(in oklch, var(--color-daino-bg-lifted) 90%, transparent);
+    border-color: color-mix(in oklch, var(--color-daino-fg) 32%, transparent);
+}
+
+.daino-run__primary:active,
+.daino-run__secondary-btn:active { transform: translateY(1px); }
+
+.daino-run__primary:focus-visible,
+.daino-run__secondary-btn:focus-visible {
+    outline: 2px solid var(--color-daino-high);
+    outline-offset: 3px;
+}
+
+.daino-run__icon {
+    width: 1.2em;
+    height: 1.2em;
+    flex: none;
+}
+
+.daino-run__key {
+    margin-left: 0.2rem;
+    font-size: 0.7em;
+    opacity: 0.85;
+    letter-spacing: 0.02em;
+    text-transform: none;
+}
+
+.daino-run__primary .daino-run__key {
+    border-color: rgb(255 255 255 / 0.5);
+    background: rgb(255 255 255 / 0.14);
+}
+
+/* Recién abierto no acepta toques (quien choca suele seguir pulsando). */
+dialog.daino-run[data-armed="false"] :is(button, input) {
+    pointer-events: none;
+}
+
+.daino-run__foot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid color-mix(in oklch, var(--color-daino-fg) 8%, transparent);
+}
+
+.daino-run__switch,
+.daino-run__volume {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.85rem;
+    color: color-mix(in oklch, var(--color-daino-fg) 75%, transparent);
+    cursor: pointer;
+}
+
+.daino-run__switch input {
+    width: 1.05rem;
+    height: 1.05rem;
+    accent-color: var(--color-daino-beat);
+}
+
+.daino-run__volume { width: 100%; }
+.daino-run__volume > span { min-width: 4.5rem; text-align: left; }
+
+.daino-run__volume input {
+    flex: 1;
+    accent-color: var(--color-daino-beat);
+}
+
+/* Sin teclado físico, las teclas no dicen nada. */
+@media (pointer: coarse) {
+    .daino-run__key { display: none; }
+}
+
+/* Móvil apaisado: dos columnas (marca a la izquierda, acciones a la derecha)
+   para que todo quepa en 360-420 px de alto sin desplazarse. */
+@media (max-height: 520px) and (min-width: 560px) {
+    dialog.daino-run { width: min(44rem, calc(100vw - 2rem)); }
+
+    .daino-run__card {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        grid-template-areas:
+            "head    actions"
+            "bar     actions"
+            "note    actions"
+            "stats   actions"
+            "foot    foot";
+        column-gap: 1.5rem;
+        row-gap: 0.45rem;
+        padding: 1rem 1.25rem 0.9rem;
+        align-items: center;
+    }
+
+    .daino-run__head { grid-area: head; }
+    .daino-run__bar { grid-area: bar; }
+    .daino-run__note { grid-area: note; margin: 0.2rem 0 0; font-size: 0.85rem; }
+    .daino-run__stats { grid-area: stats; gap: 0.3rem 1.2rem; }
+    .daino-run__actions { grid-area: actions; align-self: center; }
+    .daino-run__foot { grid-area: foot; flex-direction: row; justify-content: center; padding-top: 0.5rem; }
+    .daino-run__secondary { flex-direction: column; flex-wrap: nowrap; }
+    .daino-run__secondary-btn { flex: none; }
+    .daino-run__pct { font-size: 3rem; }
+    dialog.daino-run[data-mode="pause"] .daino-run__heading { font-size: 1.25rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    dialog.daino-run,
+    dialog.daino-run[open] { transition: none; transform: none; }
+    dialog.daino-run::backdrop { animation: none; }
+    .daino-run__pct,
+    .daino-run__fill { animation: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * "Gira el móvil" (tamaños de pantalla, Sep 2026). Antes de empezar una partida
+ * en un móvil vertical. No bloquea: se puede jugar en vertical igualmente.
+ * ------------------------------------------------------------------------- */
+
+dialog.daino-rotate {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    width: min(22rem, calc(100vw - 2rem));
+    height: fit-content;
+    padding: 1.6rem 1.4rem 1.3rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 14%, transparent);
+    border-radius: 1.1rem;
+    background: linear-gradient(180deg, var(--color-daino-bg-lifted), var(--color-daino-bg-deep));
+    color: var(--color-daino-fg);
+    text-align: center;
+}
+
+dialog.daino-rotate::backdrop {
+    background: color-mix(in oklch, #05050a 70%, transparent);
+    backdrop-filter: blur(3px);
+}
+
+dialog.daino-rotate h2 { margin: 1rem 0 0.4rem; font-size: 1.3rem; }
+dialog.daino-rotate p { margin: 0 0 1.2rem; line-height: 1.45; color: color-mix(in oklch, var(--color-daino-fg) 78%, transparent); }
+
+.daino-rotate__phone {
+    width: 2.6rem;
+    height: 4.2rem;
+    margin: 0.4rem auto 0;
+    border: 3px solid var(--color-daino-high);
+    border-radius: 0.55rem;
+    box-shadow: inset 0 -0.45rem 0 -0.3rem var(--color-daino-high);
+    animation: daino-rotate-phone 2.2s ease-in-out infinite;
+}
+
+@keyframes daino-rotate-phone {
+    0%, 20%   { transform: rotate(0); }
+    50%, 80%  { transform: rotate(-90deg); }
+    100%      { transform: rotate(0); }
+}
+
+.daino-rotate__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.daino-rotate__actions .daino-btn { min-height: 2.75rem; }
+.daino-rotate__cancel { border-color: transparent; background: transparent; opacity: 0.75; }
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-rotate__phone { animation: none; transform: rotate(-90deg); }
 }

@@ -17,6 +17,15 @@ const AMBIENT_RUN_PERIOD_S = 0.3;
 /** Color del filo de luz del suelo: el cian de la paleta (COLOR_HIGH del shader). */
 const GROUND_GLOW_COLOR = 0x8fe0ff;
 
+/** [0,1) estable para (índice, semilla). */
+function hash01(i, seed) {
+    let x = (Math.imul(i + 1, 2654435761) ^ Math.imul(seed, 1597334677)) >>> 0;
+    x ^= x >>> 15;
+    x = Math.imul(x, 2246822519) >>> 0;
+    x ^= x >>> 13;
+    return x / 4294967296;
+}
+
 /**
  * @param {{ width: number, height: number }} viewport
  * @returns {{
@@ -39,14 +48,17 @@ export function createScenery(viewport) {
     const mountainsFar = new Graphics();
     const mountainsNear = new Graphics();
 
-    function buildRidge(gfx, { baseRise, jag, color, step }) {
+    function buildRidge(gfx, { baseRise, jag, color, step, seed }) {
         gfx.clear();
         const period = Math.max(W, 640);
         const n = Math.ceil(period / step);
         // Cresta cerrada: heights[n] == heights[0] para que el tile sea seamless.
+        // Alturas por índice con hash (no Math.random): al redimensionar (en un
+        // móvil, cada vez que se esconde la barra del navegador) la cordillera
+        // conserva su forma en vez de cambiar de golpe.
         const heights = [];
         for (let i = 0; i < n; i++) {
-            heights.push(baseRise + Math.random() * jag);
+            heights.push(baseRise + hash01(i, seed) * jag);
         }
         for (let copy = 0; copy < 2; copy++) {
             const x0 = copy * period;
@@ -63,12 +75,13 @@ export function createScenery(viewport) {
     }
 
     function buildMountains() {
-        buildRidge(mountainsFar, { baseRise: 40, jag: 90, color: 0x14172e, step: 96 });
-        buildRidge(mountainsNear, { baseRise: 20, jag: 60, color: 0x0e1024, step: 64 });
+        buildRidge(mountainsFar, { baseRise: 40, jag: 90, color: 0x14172e, step: 96, seed: 17 });
+        buildRidge(mountainsNear, { baseRise: 20, jag: 60, color: 0x0e1024, step: 64, seed: 91 });
         mountainsFar.y = groundY + 4;   // +4: la falda queda bajo la línea del suelo
         mountainsNear.y = groundY + 4;
-        mountainsFar.x = 0;
-        mountainsNear.x = 0;
+        // El scroll se conserva (dentro del periodo nuevo): redimensionar no hace saltar el paisaje.
+        mountainsFar.x %= mountainsFar._period;
+        mountainsNear.x %= mountainsNear._period;
     }
 
     // ---------- Nubes ----------

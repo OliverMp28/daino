@@ -61,6 +61,10 @@ const ui = {
     returnFocus: null,
     /** Suscripciones al progreso del análisis de lo que hay pintado (Ola 4). */
     unsubscribers: [],
+    /** Nivel cuya tarjeta debe recibir el foco en cuanto se pinte. */
+    focusLevelId: null,
+    /** Nivel recién jugado: su tarjeta se resalta mientras el catálogo siga abierto. */
+    recentLevelId: null,
 };
 
 /** Suelta las suscripciones de la vista anterior antes de pintar otra. */
@@ -74,13 +78,17 @@ function releaseSubscriptions() {
 /**
  * Abre el catálogo, en la rejilla o directamente en la ficha de un nivel.
  *
- * @param {{ tab?: 'public' | 'mine', level?: object }} [opts]
+ * @param {{ tab?: 'public' | 'mine', level?: object, focusLevelId?: number | null }} [opts]
+ *        `focusLevelId`: tarjeta que recibe el foco y se trae a la vista (al
+ *        volver de una partida con "Niveles", el nivel que se acaba de jugar).
  */
 export function openCatalog(opts = {}) {
     const dialog = ensureDialog();
     const wanted = opts.tab ?? ui.tab;
     ui.tab = tabsFor(isAuthenticated()).some((t) => t.id === wanted) ? wanted : 'public';
     ui.detail = null;
+    ui.focusLevelId = opts.focusLevelId ?? null;
+    ui.recentLevelId = opts.focusLevelId ?? null;
     renderShell();
     if (!dialog.open) dialog.showModal();
     if (opts.level) {
@@ -302,6 +310,10 @@ function paintError(main, message, retry) {
 function paintGrid(main, tab, page) {
     main.removeAttribute('aria-busy');
     const scroll = main.scrollTop;
+    const active = document.activeElement;
+    const focusedId = active instanceof HTMLElement && main.contains(active) && active.matches('.daino-card__open')
+        ? active.dataset.levelId
+        : null;
     main.innerHTML = '';
     releaseSubscriptions();
     // Pendientes de una sesión anterior (recarga a mitad de análisis): se retoman.
@@ -344,6 +356,24 @@ function paintGrid(main, tab, page) {
         main.appendChild(more);
     }
     main.scrollTop = scroll;
+
+    // Se ve cuál acabas de jugar aunque el foco no pinte anillo (ratón/táctil).
+    if (ui.recentLevelId !== null) {
+        grid.querySelector(`.daino-card__open[data-level-id="${CSS.escape(String(ui.recentLevelId))}"]`)
+            ?.closest('.daino-card')?.setAttribute('data-recent', 'true');
+    }
+    // Foco: la tarjeta pedida al abrir o, si esto es un repintado (la red
+    // refresca lo cacheado), la que lo tenía antes. Sin esto el repintado dejaba
+    // el foco en <body> y el teclado perdía su sitio.
+    const focusId = ui.focusLevelId ?? focusedId;
+    if (focusId !== null) {
+        const card = grid.querySelector(`.daino-card__open[data-level-id="${CSS.escape(String(focusId))}"]`);
+        if (card instanceof HTMLElement) {
+            if (ui.focusLevelId !== null) card.scrollIntoView({ block: 'nearest' });
+            ui.focusLevelId = null;
+            card.focus({ preventScroll: true });
+        }
+    }
 }
 
 /**

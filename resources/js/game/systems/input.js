@@ -59,6 +59,11 @@ class InputHub {
         if (set) set.delete(fn);
     }
 
+    /** ¿Hay alguien escuchando este canal? (una partida en curso escucha 'jump'). */
+    has(event) {
+        return (this._handlers.get(event)?.size ?? 0) > 0;
+    }
+
     emit(event, payload) {
         const set = this._handlers.get(event);
         if (!set) return;
@@ -74,17 +79,19 @@ class InputHub {
         this._mounted = true;
 
         this._keyDown = (ev) => {
-            if (KEYS_JUMP.has(ev.code)) {
-                // preventDefault evita que Space haga scroll. ev.repeat fuera:
-                // mantener pulsado NO re-salta (el jump buffer ya cubre el
-                // "pulsé un pelín antes de aterrizar").
+            if (KEYS_JUMP.has(ev.code) || KEYS_DUCK.has(ev.code)) {
+                // Solo se roban las teclas mientras alguien juega y no hay un
+                // diálogo encima (reintentos, Sep 2026). Antes, tras la primera
+                // partida los listeners seguían montados y el preventDefault
+                // global dejaba sin Espacio a los botones de los paneles y sin
+                // flechas al scroll del catálogo y a los desplegables de AJUSTES.
+                if (!this.has('jump') || document.querySelector('dialog[open]') !== null) return;
+                // Jugando, sí: Espacio no hace scroll ni "pulsa" el botón que
+                // tenga el foco (p. ej. el de pausa tras usarlo con el ratón).
+                // ev.repeat fuera: mantener pulsado NO re-salta (el jump buffer
+                // ya cubre el "pulsé un pelín antes de aterrizar").
                 ev.preventDefault();
-                if (!ev.repeat) this.emit('jump', stamp(ev));
-                return;
-            }
-            if (KEYS_DUCK.has(ev.code)) {
-                ev.preventDefault();
-                if (!ev.repeat) this.emit('duckStart', stamp(ev));
+                if (!ev.repeat) this.emit(KEYS_JUMP.has(ev.code) ? 'jump' : 'duckStart', stamp(ev));
                 return;
             }
             if (KEYS_PAUSE.has(ev.code)) {

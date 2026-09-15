@@ -97,10 +97,14 @@ El juego tiene dos estados visibles, cambiados con una sola animación:
 - Esquina inferior izquierda: nombre/avatar del jugador (mini).
 - Tecla `ESC` o tap en esquina superior derecha → **pausa con menú overlay** (semi-transparente sobre el juego congelado).
 
+> ✅ **Implementado (Sep 2026, doc 10 "Tamaños de pantalla y reintentos").** Botón de pausa en el HUD arriba a la derecha (la única forma de pausar en táctil). La pausa es un panel con Reanudar, Reintentar, Niveles, Menú y volumen. El mundo del juego se escala para que toda pantalla apaisada vea el mismo trecho (`systems/worldView.js`).
+
 ### 4.3 Transiciones
 
 - Entrar a una partida: fade a negro (~300 ms) + drop súbito de la música de menú + arranque del MP3 del nivel. Evita parpadeo y da señal clara al jugador.
 - Game over / nivel completado: **overlay semi-transparente** con resultado + opciones (Reintentar / Siguiente / Volver al menú). El shader de fondo sigue corriendo por detrás.
+
+> ✅ **Implementado (Sep 2026).** Panel de resultados sobre la escena congelada: porcentaje, mapa de la canción con tu mejor marca, intento N y **Reintentar** delante (Espacio, sin volver a cargar), **Niveles** (Esc, vuelve al catálogo con el nivel enfocado) y **Menú**. "Siguiente" no existe: el catálogo no tiene orden de progresión. Reintento automático al chocar opcional (AJUSTES).
 
 ---
 
@@ -125,6 +129,7 @@ Hay excepciones justificadas donde sí devolvemos HTML server-side:
 
 - **Desktop primario**: la experiencia está diseñada para ~16:9 en monitor. Input preferido: teclado (espacio = saltar, ↓ = agacharse).
 - **Touch (móvil/tablet)**: tap en mitad izquierda del viewport = saltar, tap en mitad derecha = agacharse. O botones virtuales si se prefiere — a decidir en implementación.
+  > ✅ **Decidido (Sep 2026):** mitades de pantalla, que las primeras partidas rotulan al empezar. Se juega en horizontal: en vertical se sugiere girar el móvil (se puede jugar igual) y girarlo en plena partida la pausa. La UI escala con la pantalla (rem fluido) y respeta notch y barra de gestos.
 - **Reducir movimiento**: respetar `prefers-reduced-motion`. Si el usuario lo tiene activado:
   - Shader de fondo se reemplaza por un degradado estático.
   - Partículas ambientales se desactivan.

@@ -29,12 +29,19 @@
 //   - El sol se pone con la canción: el final se ve llegar.
 //   - Pulsar exactamente en el golpe suelta un destello a los pies del Dino.
 //   - Pasado el último obstáculo, "¡Superado!" mientras la canción termina.
+//
+// Afinado de velocidad (Sep 2026) — el mundo sube de marcha hacia el clímax y
+// se ve venir: la barra de progreso lleva el mapa de la canción con cada
+// acelerón marcado; en los compases previos a uno, el suelo late a doble
+// tiempo y su chevrón parpadea; al llegar, ráfaga de líneas de velocidad y
+// marcha nueva, y las líneas siguen más cuanto más rápido va el nivel.
 
 import { Dino } from './entities/Dino.js';
 import { Obstacle } from './entities/Obstacle.js';
 import { createSpawner } from './systems/spawner.js';
 import { createBeatClock } from './systems/beatClock.js';
 import { createSongDirector } from './systems/songDirector.js';
+import { createSpeedCues } from './systems/speedCues.js';
 import { speedProfileOf } from './systems/speedProfile.js';
 import { obstacleEvents } from './levels/chartFormat.js';
 import { createBurstEmitter } from './entities/ParticleLayer.js';
@@ -46,7 +53,7 @@ import { createInputTimeline, songTimeOfEvent } from './systems/inputTimeline.js
 import {
     DT_CAP_S, DINO_SIZE, JUMP_BUFFER_S, OBSTACLE_KIND,
     SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
-    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT,
+    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -73,6 +80,10 @@ export class GameSession {
         this.levelId = cfg.levelId ?? null;
         this.skinId = cfg.skinId ?? 'classic';
         this.onGameOver = cfg.onGameOver ?? (() => {});
+        /** Número de intento de este nivel (reintentos sin salir): el HUD lo anuncia desde el 2. */
+        this.attempt = cfg.attempt ?? 1;
+        /** Enseñar los controles al empezar (primeras partidas del jugador). */
+        this.showControls = cfg.showControls === true;
 
         this.dino = null;
         this.spawner = null;
@@ -89,6 +100,12 @@ export class GameSession {
         this._tickFn = null;
         this._isPaused = false;
         this._isRunning = false;
+        /** Terminó (victoria o choque) pero sigue en pantalla bajo el panel de resultados. */
+        this._ended = false;
+        /** Suelo del frame anterior, en unidades de mundo (null antes de empezar). */
+        this._groundY = null;
+        this._hintsShown = false;
+        this._attemptBanner = false;
         this._score = 0;
         this._prevGrounded = true;
         this._dying = false;
@@ -109,6 +126,11 @@ export class GameSession {
             ? createBeatClock(beats, this.chart.music.beatPeriodS, this.chart.music.downbeats ?? [])
             : createBeatClock(obstacleEvents(this.chart).map((e) => e.t), this.chart.music.beatPeriodS);
         this._director = createSongDirector(this.chart, this._durationSec);
+        // Marchas y acelerones (afinado de velocidad).
+        this._speedCues = createSpeedCues(this.chart, this._speed);
+        this._gearMomentAt = Infinity;
+        /** Instantes de drops y lifts: una marcha que cae en uno no suma otro momento. */
+        this._momentTimes = this.chart.events.filter((e) => e.type === 'fx').map((e) => e.t);
         this._climaxGlow = 0;
         this._dropT = Infinity;       // segundos desde el último drop/lift (∞ = ninguno)
         this._momentStrength = 1;     // 1 drop, < 1 lift
@@ -136,7 +158,8 @@ export class GameSession {
         this._ticker = ticker;
         this._layers = layers;
 
-        const groundY = computeGroundY(window.innerHeight);
+        const groundY = this._view().groundY;
+        this._groundY = groundY;
 
         // Dino (con el skin elegido por el user en AJUSTES).
         this.dino = new Dino({ skinId: this.skinId });
@@ -158,11 +181,25 @@ export class GameSession {
         this.hud = createHud();
         this.hud.update(0, 0, this._durationSec);
         if (this.title) this.hud.setSong(this.title);
+        // Reintento: "Intento N" al arrancar (se retira solo en `_tick`).
+        this._attemptBanner = this.attempt > 1;
+        if (this._attemptBanner) this.hud.setBanner?.(`Intento ${this.attempt}`);
+        if (this.showControls) {
+            this.hud.setControls?.(true);
+            this._hintsShown = true;
+        }
+        this.hud.setRoadmap?.({
+            durationSec: this._durationSec,
+            sections: this.chart.events.filter((e) => e.type === 'section'),
+            speedUps: this._speedCues.ups.map((u) => u.at),
+        });
+        this.hud.setGear?.(0);
 
         // El mundo scrollea a la velocidad de la canción; el fondo arranca con
         // la intensidad del primer tramo y el sol en lo alto.
         this.engine.setWorldSpeed(this._speedPxS);
         this.engine.setMusicState?.({ intensity: this._director.intensity, progress: 0, climax: 0, flash: 0 });
+        this.engine.setSpeedFx?.({ level: 0 });
 
         // Input. Las pulsaciones NO se aplican al leerse: se fechan en tiempo de
         // canción y cada paso de física aplica las suyas (ver inputTimeline.js).
@@ -192,12 +229,27 @@ export class GameSession {
         this.audioEngine.play(this.audioBuffer);
     }
 
-    _tick(tickerArg) {
-        if (!this._isRunning || this._isPaused) return;
+    /** Vista del mundo vigente (engine); sin engine con vista, la de la ventana a escala 1. */
+    _view() {
+        const v = this.engine.getView?.();
+        if (v) return v;
+        return { width: window.innerWidth, height: window.innerHeight, groundY: computeGroundY(window.innerHeight), scale: 1 };
+    }
 
+    _tick(tickerArg) {
         // Cap del dt — al volver de bg el deltaMS puede ser enorme y meter
         // al Dino bajo el suelo de un salto. DT_CAP_S protege la integración.
         const dt = Math.min(DT_CAP_S, tickerArg.deltaMS / 1000);
+
+        // Terminada, bajo el panel de resultados: la escena no se congela a
+        // medias. Las partículas del choque terminan de caer y, tras superar el
+        // nivel, el Dino sigue trotando.
+        if (this._ended) {
+            this._bursts?.tick(dt);
+            this.dino?.tickVisual(dt, SCENERY.menuSpeed * 2);
+            return;
+        }
+        if (!this._isRunning || this._isPaused) return;
 
         // ---------- Secuencia de muerte (mundo congelado) ----------
         if (this._dying) {
@@ -235,7 +287,23 @@ export class GameSession {
         // ---------- Frame normal ----------
         const songTime = this.audioEngine.getSongTime();
         const shownTime = Math.max(0, songTime);
-        const groundY = computeGroundY(window.innerHeight);
+        const view = this._view();
+        const groundY = view.groundY;
+        // La vista cambió (resize, rotación): el suelo se mueve en unidades de
+        // mundo y el Dino se mueve con él, en el aire o no. Sin esto, al subir
+        // el suelo el Dino quedaría enterrado un paso y al bajar caería solo.
+        if (this._groundY !== null && groundY !== this._groundY) this.dino.y += groundY - this._groundY;
+        this._groundY = groundY;
+
+        // Rótulo del intento y controles: fuera antes de que llegue la primera acción.
+        if (this._attemptBanner && shownTime > 1.6) {
+            this._attemptBanner = false;
+            if (!this._cleared) this.hud.setBanner?.('');
+        }
+        if (this._hintsShown && (shownTime > 2.6 || this._inputs.size > 0)) {
+            this._hintsShown = false;
+            this.hud.setControls?.(false);
+        }
 
         // Física a PASO FIJO hasta el instante de canción actual. Cada paso
         // integra el Dino y comprueba la colisión con los obstáculos en ese
@@ -248,7 +316,7 @@ export class GameSession {
         const collided = this._physics.advance(songTime, (t) => this._physicsStep(t, groundY));
 
         // Spawner: coloca cada sprite donde el tiempo de canción dice.
-        this.spawner.tick(songTime, dt, { width: window.innerWidth, groundY });
+        this.spawner.tick(songTime, dt, { width: view.width, groundY });
 
         if (collided) {
             this._startDeath();
@@ -305,11 +373,21 @@ export class GameSession {
      */
     _tickStructure(songTime, shownTime, dt, groundY) {
         let pulse = 0;
+        let phase = 0;
         if (songTime >= 0) {
-            const phase = this._beatClock.phaseAt(songTime);
+            phase = this._beatClock.phaseAt(songTime);
             pulse = Math.exp(-phase * 4.5) * (this._beatClock.isAccentAt(songTime) ? 1 : 0.7);
         }
-        this.engine.setBeatPulse(pulse);
+        // Subida hacia un acelerón: en sus compases previos el suelo y el fondo
+        // laten también a contratiempo, cada vez más. Los obstáculos no: su
+        // rebote sigue marcando solo el pulso, que es donde se juega.
+        const { ahead, next } = this._speedCues.aheadAt(shownTime);
+        let worldPulse = pulse;
+        if (ahead > 0 && songTime >= 0) {
+            const offbeat = Math.exp(-((phase * 2) % 1) * 4.5) * GEAR_FX.riserPulse;
+            worldPulse = Math.max(pulse, offbeat * ahead);
+        }
+        this.engine.setBeatPulse(worldPulse);
         const active = this.spawner.getActive();
         for (let i = 0; i < active.length; i++) active[i].setBeat?.(pulse);
 
@@ -318,6 +396,22 @@ export class GameSession {
             if (fired[i].fx === 'drop') this._triggerMoment(groundY, 1);
             else if (fired[i].fx === 'lift') this._triggerMoment(groundY, DROP_FX.liftStrength);
         }
+
+        // Acelerón: ráfaga de líneas y marcha nueva al instante (la pulsación
+        // previa al primer tiempo); en ese primer tiempo, un momento discreto
+        // si allí no cae ya un drop o un lift.
+        const ups = this._speedCues.update(shownTime);
+        for (let i = 0; i < ups.length; i++) {
+            this.engine.setSpeedFx?.({ burst: true });
+            this.hud.bumpGear?.();
+            if (!this._momentTimes.some((t) => Math.abs(t - ups[i].at) < 0.05)) this._gearMomentAt = ups[i].at;
+        }
+        if (shownTime >= this._gearMomentAt) {
+            this._gearMomentAt = Infinity;
+            this._triggerMoment(groundY, GEAR_FX.strength);
+        }
+        this.engine.setSpeedFx?.({ level: this._speedCues.linesAt(shownTime) });
+        this.hud.setGear?.(this._speedCues.gearAt(shownTime), { next: next?.gear ?? null, blink: ahead > 0 && phase < 0.5 });
 
         const climaxTarget = this._director.climax ? 1 : 0;
         const rate = climaxTarget > this._climaxGlow ? 5 : 1.5;
@@ -367,8 +461,8 @@ export class GameSession {
         this._dropT = 0;
         this._momentStrength = strength;
         if (this.engine.reducedMotion) return;
-        const w = window.innerWidth;
-        const h = window.innerHeight;
+        // El destello cubre la PANTALLA (hudLayer, px); la ola recorre el MUNDO visible.
+        const w = this._view().width;
         const full = strength >= 1;
         if (full) {
             if (this._dropOverlay === undefined) {
@@ -377,7 +471,7 @@ export class GameSession {
                 this._layers.hudLayer.addChild(this._dropOverlay);
             }
             // Se redibuja en cada drop: la ventana puede haber cambiado de tamaño.
-            this._dropOverlay.clear().rect(0, 0, w, h).fill(DROP_FX.overlayColor);
+            this._dropOverlay.clear().rect(0, 0, window.innerWidth, window.innerHeight).fill(DROP_FX.overlayColor);
             this._dropOverlay.alpha = DROP_FX.overlayAlpha;
         }
         const bursts = full ? DROP_FX.waveBursts : Math.ceil(DROP_FX.waveBursts / 2);
@@ -538,6 +632,7 @@ export class GameSession {
 
         this.dino.setDead();
         this.engine.setBeatPulse(0);
+        this.engine.setSpeedFx?.({ level: 0 });
         // Un drop a medias no se mezcla con la sacudida de la muerte.
         this._dropT = Infinity;
         if (this._dropOverlay) this._dropOverlay.alpha = 0;
@@ -584,29 +679,26 @@ export class GameSession {
         if (!this._isRunning) return;
         this._isRunning = false;
 
-        // Detener el ticker propio (el de Pixi sigue para el shader).
-        if (this._ticker && this._tickFn) {
-            this._ticker.remove(this._tickFn);
-        }
-
         // Detener el audio (idempotente si la muerte ya lo cortó).
         try {
             if (this.audioEngine.source) this.audioEngine.source.stop();
         } catch { /* idempotente */ }
 
-        // El scenery vuelve al scroll ambiente del menú.
-        this.engine.setWorldSpeed(SCENERY.menuSpeed);
+        // La escena se queda bajo el panel de resultados (reintentos, Sep 2026):
+        // tras un choque el mundo se detiene donde caíste; tras superar el nivel
+        // el suelo sigue corriendo al ritmo del menú. El tick propio sigue vivo
+        // solo para lo visual (ver `_tick`) hasta `stop()`.
+        this._ended = reason !== 'stopped';
+        this.engine.setWorldSpeed(reason === 'collision' ? 0 : SCENERY.menuSpeed);
         this.engine.setBeatPulse(0);
-
-        const message = reason === 'win'
-            ? `WIN  SCORE ${this._score}`
-            : `GAME OVER  SCORE ${this._score}`;
-        this.hud.setMessage(message);
+        this.engine.setSpeedFx?.({ level: 0 });
+        this.hud.setControls?.(false);
+        if (reason !== 'win') this.hud.setBanner?.('');
 
         // Bloque 7: persistir progreso fire-and-forget si hay levelId
-        // (sesión activa). 'stopped' NO persiste — pulsar "Salir al menú" no
-        // debería contar como un intento real. La UI no espera la respuesta;
-        // si falla, log a consola — el toast del menú ya muestra el score.
+        // (sesión activa). 'stopped' NO persiste — salir o reintentar desde la
+        // pausa no cuenta como un intento real. La UI no espera la respuesta;
+        // si falla, log a consola — el panel de resultados ya muestra la marca.
         const reached = this._finalSongTime || Math.max(0, this.audioEngine.getSongTime());
         const percentage = this._durationSec > 0
             ? Math.min(100, Math.max(0, Math.round((reached / this._durationSec) * 100)))
@@ -638,7 +730,14 @@ export class GameSession {
         // mantiene como fallback para callers que prefieran el camino directo.
         // `percentage` (Ola 2): la mejor marca local de los jugadores sin sesión.
         window.dispatchEvent(new CustomEvent('daino:gamestate', {
-            detail: { kind: reason, score: this._score, percentage, durationSec: this._durationSec },
+            detail: {
+                kind: reason,
+                score: this._score,
+                percentage,
+                durationSec: this._durationSec,
+                reachedSec: Math.min(reached, this._durationSec),
+                attempt: this.attempt,
+            },
         }));
 
         this.onGameOver({ reason, score: this._score });
@@ -646,6 +745,11 @@ export class GameSession {
 
     stop() {
         if (this._isRunning) this._end('stopped');
+        this._ended = false;
+        if (this._ticker && this._tickFn) {
+            this._ticker.remove(this._tickFn);
+            this._tickFn = null;
+        }
         // Despide listeners.
         if (this._jumpHandler) Input.off('jump', this._jumpHandler);
         if (this._jumpEndHandler) Input.off('jumpEnd', this._jumpEndHandler);

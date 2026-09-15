@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026). Olas 6 y 7 pendientes.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos). Olas 6 y 7 pendientes.
 
 ---
 
@@ -733,7 +733,7 @@ Los 8 oficiales, charter v2 → v3, con la dificultad del manifiesto. La densida
 - ~~Cambiar la dificultad queda bloqueado en cuanto otra persona juega el nivel.~~ Sustituido tras el playtest (abajo): un nivel publicado ya no cambia de dificultad.
 - La dificultad medida se desvía una estrella de la elegida en 2 oficiales (Running With the Wolves y Dawn of Faith). Los umbrales de la medida están calibrados con estas 8 canciones.
 - Más dificultad da más acciones en el conjunto de la canción, pero no siempre en cada tramo: a partir de ~85-90 BPM dos saltos no caben en beats consecutivos, las acciones seguidas alternan con agachados y la cuota aérea las limita. En What's Up Danger el clímax sale a 87 acciones/min en Difícil y a 81 en Extremo (que en conjunto es más denso, 58 frente a 51, y mide 5★).
-- Aceleración conservadora a propósito hasta el playtest: como mucho +21 % y nunca por encima de 690 px/s.
+- ~~Aceleración conservadora a propósito hasta el playtest: como mucho +21 % y nunca por encima de 690 px/s.~~ Sustituida tras el playtest: marchas hacia el clímax, hasta ×1.55 (ver "Afinado de velocidad").
 
 #### Ajustes tras el primer playtest (Sep 2026)
 
@@ -846,6 +846,156 @@ El propietario preguntó si el analizador es "de verdad potente": notas, partes 
 Operación: `ANALYZER_VERSION` pasa a 2, así que los análisis guardados en caché con la 1 se consideran obsoletos y un trabajo nuevo vuelve a analizar. Los niveles de la comunidad conservan su análisis de la versión 1 hasta que se reanalicen. Eso no afecta a nada: el charter todavía no usa la armonía. Cuando la use, `composer analysis:enqueue -- --level=…` y re-hornear los oficiales. El seeder ahora guarda un análisis nuevo aunque el chart no cambie, sin tocar chart ni marcas. Comprobarlo de oído: `sonify … --chords`.
 
 Limitaciones: solo tríadas (una séptima sale como su tríada; un acorde de quinta, mayor o menor al azar); la confusión con la relativa (Do mayor / La menor) es inherente a los perfiles de tonalidad; en música sin armonía estable la confianza baja y no debe usarse para decisiones de juego. Queda fuera, por RAM: separación de pistas (voz/batería/bajo) y contorno melódico con red neuronal (Basic Pitch, ~1 GB). Esto último sería lo siguiente si el VPS tiene margen, medido antes en una máquina de su tamaño.
+
+#### Afinado de velocidad: marchas hacia el clímax (Sep 2026)
+
+> **Lo que pidió el propietario.** En What's Up Danger, el nivel que debería ser el más épico, no se siente nada inminente: "debería aumentar la velocidad llegando al 60-75 % del nivel, o escalonado". En el Daino legacy la velocidad solo subía, por escalones, y al final se jugaba mucho más rápido: más atención, adrenalina, y los obstáculos más separados para que siguiera siendo pasable. No se pide copiarlo, sino esa emoción, **sin romper la sincronía con la música** y sin cerrar la puerta a obstáculos, interacciones o modos nuevos.
+
+**Primero se midió.** Con el charter v3, What's Up Danger (Extremo, 3:36) arrancaba a 370 px/s (el scroll **más lento de todo el catálogo**, por su pulso de 95 BPM), subía un 10 % en el minuto 1:42, **volvía a la base del 61 % al 80 % de la canción** y el clímax iba un 21 % por encima. En los 8 oficiales la velocidad máxima no pasaba de ×1.21 sobre la de arranque. El legacy iba de 427 a 1280 px/s (×3) en un contenedor de 1000 px: al final, cada obstáculo se veía 0.74 s antes de llegar. Aquí, en una ventana de 1536 px, se ve 3.7 s.
+
+**Por qué acelerar no rompe la sincronía (y qué sí cambia).** Desde la Ola 3 un obstáculo se coloca por TIEMPO: su acción es un instante de la rejilla musical y su posición en pantalla es la distancia que el mundo recorre hasta ese instante. Con cualquier perfil de velocidad cruza al Dino exactamente en su golpe (`speedProfile.js`, con test). La velocidad solo cambia cuatro cosas, y se midieron:
+
+| Qué cambia al acelerar | Medido | Consecuencia |
+|---|---|---|
+| Distancia entre obstáculos en pantalla | proporcional a la velocidad | la separación "más amplia a más velocidad" del legacy sale sola |
+| Margen de error de cada acción | cactus ancho: −125/+145 ms a 370 px/s, −195/+215 a 650 | a más velocidad, **más** margen: no se vuelve injusto |
+| Huecos mínimos entre acciones | salto→agachado y agachado→salto se acortan; salto→salto, igual | el charter ya los calcula a la velocidad de cada instante |
+| Tiempo para leer lo que viene | (ancho − 157 px) / velocidad | manda el techo: 690 px/s = 1 s en un móvil apaisado de 844 px |
+
+El riesgo real no es la velocidad sino **el instante del cambio**. Quien juega con el oído pulsa en el golpe y no le afecta. Quien juega con la VISTA pulsa cuando el obstáculo "está a la distancia de siempre": si el mundo acaba de acelerar, estima una velocidad menor y pulsa tarde. Se modeló (`playability.readerOffsetS`: velocidad percibida = media de los últimos 0.3 s, lo que tarda una persona en corregir una intercepción) y el charter v3 salía mal parado: **el portal caía en el primer tiempo del drop, justo donde va la acción obligatoria, y esa acción llegaba 41-58 ms tarde** en los 8 oficiales. Con dos saltos a 0.70 s (legal en Extremo) y un acelerón del 26 % encima del primero, quien juega con el oído pasa y quien juega con la vista choca con el segundo (test).
+
+**Qué se construyó (charter v4, `CHARTER_VERSION = 4`; el formato no cambia).**
+
+1. **Marchas** (`levels/speedPlan.js`, pieza nueva del charter). Una por cada ~36 s entre el arranque y el clímax, hasta 3, y la última ES el clímax: una canción de 40 s solo acelera en su clímax; una de 3 minutos llega a él bastante más rápida que empezó (la "canción larga = más épica" del legacy, anclada a la estructura). Cada una cae en el compás que abre un tramo o, si no hay uno cerca de su reparto, uno que abre frase (cada 8 compases).
+2. **Trinquete hasta el clímax.** La velocidad no baja nunca antes de que termine el clímax: un puente tras un estribillo se juega igual de rápido, menos denso. La subida por nivel del arco (empuje +6 %, clímax +18 %) es la mayor alcanzada y cada marcha (+8 %) suma encima, todo × la amplitud de la dificultad (0.5 Relajado … 1.3 Extremo). Tras el clímax, **un único frenazo en rampa de 4 beats**. Primero se probó el trinquete sobre la velocidad: en "Instrumental" (comunidad, arranca empujando) la marcha intermedia caía en una estrofa, pedía menos que el tramo inicial y desaparecía; el nivel solo aceleraba en el clímax (test de regresión).
+3. **El acelerón, en la anacrusa.** El mundo acelera en el hueco de la rejilla previo al primer tiempo que lo motiva, con ≥ 0.3 s de antelación (medio beat, o uno entero en tempos rápidos). La acción de ese primer tiempo ya se ve llegar a la velocidad nueva. Encaja con la respiración que el charter ya dejaba antes de cada drop.
+4. **Validación para las dos maneras de jugar.** `validatePlayability` juega además cada chart con quien se guía por la vista (su error + la tolerancia de la dificultad), y el charter no coloca ninguna acción cuyo error de vista pase de 20 ms. Es genérico: usa el adelanto de cada kind, así que un obstáculo futuro con adelanto propio o un cambio de reglas de la Ola 6 queda cubierto sin tocar nada.
+5. **Se ve venir** (runtime, `systems/speedCues.js` puro y testeado, derivado de `world.speedChanges`: sirve para cualquier chart con cambios de velocidad):
+   - **Mapa de la canción en la barra de progreso**: cada tramo más claro cuanto más intenso, el clímax en rosa y una marca en cada acelerón. Lo que viene se ve venir.
+   - **Marchas en el HUD**: chevrones junto al tiempo, uno por escalón sobre la velocidad de arranque (×1.06, ×1.18, ×1.32, ×1.46); el cuarto, en rosa.
+   - **Aviso**: los dos compases previos a un acelerón, su chevrón parpadea al pulso y el suelo y el fondo laten también a contratiempo, cada vez más (una subida).
+   - **Al llegar**: ráfaga de líneas de velocidad y marcha nueva; en el primer tiempo, un momento discreto si allí no hay ya un drop o un lift.
+   - **Líneas de velocidad** (`entities/SpeedLines.js`): rayas de luz que cruzan el cielo más rápido que el suelo, más cuanto más por encima de su arranque va el nivel. Nunca bajan a los 200 px sobre el suelo (ahí salta el Dino y vuela el ptero). Pool fijo, limitado por el perfil de render; sin ellas con `prefers-reduced-motion`.
+
+**Resultado en los 8 oficiales** (dificultad del manifiesto; "vista" = peor error de quien juega mirando):
+
+| Oficial (dificultad) | Duración | v3: arranque → máx · al 60 % / 75 % | v4: arranque → máx · al 60 % / 75 % | Acelerones v4 | Vista v3 → v4 |
+|---|---|---|---|---|---|
+| Sugar Red (Normal) | 0:40 | 472 → 547 · 472 / 547 | 472 → 557 (×1.18) · 472 / 557 | 1 (clímax) | 42 → 0 ms |
+| Last Christmas (Relajado) | 0:39 | 394 → 426 · 394 / 426 | 394 → 430 (×1.09) · 394 / 430 | 1 | 25 → 0 ms |
+| HOPE (Fácil) | 1:19 | 500 → 560 · 560 / 560 | 500 → 567 (×1.13) · 567 / 567 | 1 | 34 → 0 ms |
+| Running With the Wolves (Normal) | 2:44 | 508 → 589 · 548 / 508 | 508 → 690 (×1.36, techo) · 619 / 619 | 3 | 42 → 0 ms |
+| Time (Fácil) | 2:46 | 432 → 484 · 458 / 484 | 432 → 542 (×1.25) · 477 / 542 | 3 | 19 → 2 ms |
+| Mi Fiesta (Difícil) | 3:14 | 389 → 460 · 425 / 425 | 389 → 577 (×1.48) · 487 / 487 | 3 | 28 → 8 ms |
+| Dawn of Faith (Difícil) | 3:17 | 440 → 521 · 440 / 521 | 440 → 652 (×1.48) · 521 / 652 | 3 | 47 → 3 ms |
+| What's Up Danger (Extremo) | 3:36 | 370 → 447 · 409 / **370** | 370 → 572 (×1.55) · 476 / 476 | 3: 0:53, 1:41, 2:52 | 51 → 8 ms |
+
+Mismas acciones que con v3 en los 8 (en 6 de las 40 combinaciones de oficial × dificultad hay 1 o 2 más), 0 reparaciones y la misma dificultad medida (en 2 de las 40 sube una estrella: Last Christmas en Normal y en Extremo, que no son la suya). En las 40 combinaciones (8 × 5 dificultades) el máximo va de ×1.09 (Relajado, canción corta) a ×1.55 (Extremo, larga), y el mayor escalón individual es de ×1.25 (Dawn of Faith en Difícil, al clímax).
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **183 JS** (+17: `speed-plan`, `speed-cues`, modelo de la vista en `speed-profile`), 68 PHP, 104 Python (un test del worker fijaba `chart_version == 3`: ahora comprueba la del chart) |
+| Regresiones | What's Up Danger ≥ ×1.2 del 60 % al 80 % y ≥ ×1.5 en el clímax; canción que arranca empujando sube de marcha antes del clímax (falla con el trinquete sobre la velocidad); ninguna acción de canciones sintéticas a 66-174 BPM con error de vista > 20 ms |
+| E2E What's Up Danger, Extremo, 1536×864 (bot con pulsaciones fechadas) | **victoria al 100 %**, 200 obstáculos; acelerones en 53.279, 101.28 y 172.029 s (chart: 53.278, 101.277, 172.017, dentro de un frame); frenazo de 572 a 485 px/s entre 202.66 y 205.18 s; marchas del HUD 1 → 2 → 4 → 3 → 2 en esos instantes; avisos desde 48.23 y 96.55 s con el chevrón parpadeando cada medio beat (0.32 s); 0 errores de JS; 12 756 frames, mediana 16.7 ms, p95 19, p99 23.7 (el máximo de 987 ms coincide con una captura de pantalla a resolución de dispositivo) |
+| E2E Sugar Red, Normal, 1536×864 y móvil apaisado 844×390 | victoria al 100 % en ambos; mapa de 360 y 203 px; líneas de velocidad por encima de la franja de juego |
+| Worker del analizador (`--charter-below=4` y `--level`) | los 3 niveles de la comunidad re-charteados en el contenedor: 37-49 s la primera vez (tenían análisis de la versión 1), 1.6-2.2 s con el análisis en caché. Instrumental: 478 → 497 → 543 (clímax) → 502; conga (4:16, Difícil): 425 → 454 → 493 → 532 → 630 (clímax) → 542 |
+| Bundle | 169.86 KB gzip (+3.97 KB), CSS 10.26 KB |
+
+**Decisiones (vinculantes):**
+
+- **La velocidad escala por marchas hacia el clímax, con trinquete sobre el nivel hasta que termina y un único frenazo después.** Sustituye la de la Ola 5 "acelera solo en tramos de empuje (+8 %) y clímax (+16 %) y baja en 2 beats al terminar cada uno".
+- **Un acelerón nunca cae encima de una acción: va en la anacrusa**, ≥ 0.3 s antes del primer tiempo. Sustituye "subida de golpe en el primer tiempo del drop (el portal es el drop)": el destello del drop sigue en el primer tiempo.
+- **Un chart es justo si lo superan quien juega con el oído Y quien juega con la vista**, con la tolerancia de su dificultad. Vale para cualquier transición futura.
+- **Cualquier cambio de reglas en mitad de un nivel es una transición** (hoy la velocidad; en la Ola 6, modos de movimiento o gravedad): cae en la anacrusa de un compás que abre tramo o frase, se avisa en el runtime antes de llegar y el validador la juega con quien se guía por la vista.
+- **La velocidad se enseña, no solo se aplica**: mapa, marchas, aviso y líneas, derivados de `world.speedChanges` (sin campos nuevos en el chart).
+- La velocidad de arranque sigue saliendo del pulso; la dificultad decide la amplitud. El techo sigue en 690 px/s.
+
+**Limitaciones que quedan:**
+
+- **El playtest humano manda.** Todo lo afinable está en tablas: `SPEED_RULES` (`speedPlan.js`), `speedAmp` en `difficulty.js`, `SPEED_CUES` (umbrales de marchas y aviso), `SPEED_LINES` y `GEAR_FX` en `config.js`. Cambiar las dos primeras exige subir `CHARTER_VERSION`, re-hornear y `--charter-below`; las visuales no.
+- ~~**En ventanas anchas la velocidad se diluye.** El juego pinta el mundo a 1 px CSS por px, así que en 1920 px un obstáculo a 572 px/s se ve 3.1 s antes de llegar.~~ Resuelto: el propietario lo aprobó y la vista del mundo escala con la pantalla (ver "Tamaños de pantalla y reintentos").
+- El modelo de la vista es una heurística (0.3 s de recalibración). Quien calcula "a ojo" con la distancia aprendida tarda más en recalibrar; lo amortiguan escalones de ≤ ×1.25 (≤ 72 ms de error) y el margen, que crece con la velocidad.
+- Los huecos mínimos entre acciones (`PAIR_GAP`) están medidos hasta 720 px/s: no subir el techo sin volver a medir.
+- En producción, tras desplegar: re-hornear no hace falta (los horneados van en el repo), pero sí `seed:official -- --rechart` y `analysis:enqueue -- --charter-below=4` para la comunidad.
+
+#### Tamaños de pantalla y reintentos (Sep 2026)
+
+> **Lo que pidió el propietario.** Arreglar todo lo que tenga que ver con tamaños de pantalla (móviles, medianas, grandes y muy grandes) mirando la experiencia del jugador, incluida la velocidad que se diluía en pantallas anchas. Y un panel para repetir al terminar: al perder se volvía al menú y reintentar costaba pulsar JUGAR y buscar la canción otra vez. Referencia: la pausa de Geometry Dash (barra con el porcentaje, jugar, reintentar, lista de niveles), con la duda de si reiniciar solo al perder o enseñar un panel.
+
+**Primero se midió**, con capturas en 390×844, 844×390, 667×375, 768×1024, 1366×768, 1536×864, 1920×1080, 2560×1440 y 3840×2160, jugando en cada una:
+
+| Hallazgo | Dónde | Efecto |
+|---|---|---|
+| El mundo se dibujaba a 1 unidad = 1 px CSS | engine, scenery, spawner | cuánto se ve dependía de la pantalla: tabla de abajo. En 4K el juego era una franja al pie de un cielo vacío; en un móvil vertical, injugable |
+| Menú en móvil apaisado desbordado | `.daino-menu` (título `9vw`, 4 rem de relleno) | RANKING, PERFIL y AJUSTES **fuera de la pantalla, sin forma de llegar** |
+| En táctil no había forma de pausar | solo Esc | ni pausar ni salir de una partida en un móvil |
+| Sol ovalado / en píldora, estrellas estiradas | `background.frag` medía en uv | óvalo ancho en 16:9, píldora en vertical, estrellas de 17 px en 4K |
+| UI en px fijos | CSS | en 4K menú, catálogo y HUD eran sellos diminutos |
+| Botón de cerrar del catálogo junto al título | cabecera sin pestañas (sin sesión) | la columna central vacía se colapsaba |
+| Fila del volumen rota en AJUSTES | grid de `.daino-settings__row` | el slider tapaba el porcentaje y la etiqueta caía debajo |
+| Tras la primera partida, Espacio y flechas secuestrados | `input.js` hacía `preventDefault` global para siempre | Espacio no pulsaba botones con foco; flechas sin scroll en el catálogo ni en los desplegables |
+| El repintado del catálogo perdía el foco | `paintGrid` (la red refresca lo cacheado) | el teclado volvía a `<body>` |
+| `100vh` en móviles | `#app`, raíces, modales | incluye la barra del navegador: el suelo quedaba debajo |
+| Montañas nuevas en cada resize | `Scenery.buildRidge` con `Math.random` | en un móvil, al esconderse la barra, la cordillera cambiaba de golpe |
+
+**1. Vista del mundo** (`systems/worldView.js`, puro y con test de matriz de dispositivos; `WORLD_VIEW` en `config.js`). Scenery, líneas de velocidad, juego y motas cuelgan de un `worldRoot` escalado; todo lo de dentro trabaja en unidades de mundo. La escala enseña 620 de alto (`targetHeight`) sin ver nunca menos de 1000 × 420 ni más de 1600 de ancho, y se redondea para que cada celda del arte ocupe un número **entero de píxeles de dispositivo** (con `devicePixelRatio` 1.25, 7 px; nunca emborronado). La sincronía no cambia: la posición de cada obstáculo sigue saliendo del reloj de la canción en unidades de mundo, y ni el charter ni la física leen la pantalla (re-hornear los 8 oficiales dio charts idénticos).
+
+| Pantalla (CSS, dpr) | Mundo visible antes → ahora | Lectura a 572 px/s antes → ahora | Alto del Dino (px CSS) antes → ahora |
+|---|---|---|---|
+| Móvil vertical 390×844 @3 | 390 → 1170 × 2532 | 0.41 → 1.77 s | 84 → 28 (se sugiere girarlo) |
+| Móvil apaisado 844×390 @3 | 844 → 1266 × 585 | 1.20 → 1.94 s | 84 → 56 |
+| Portátil 1366×768 @1 | 1366 → 1093 × 614 | 2.11 → 1.64 s | 84 → 105 |
+| Portátil 1536×864 @1.25 | 1536 → 1097 × 617 | 2.41 → 1.64 s | 84 → 118 |
+| 1080p @1 | 1920 → 1097 × 617 | 3.08 → 1.64 s | 84 → 147 |
+| 4K @1 | 3840 → 1097 × 617 | 6.44 → 1.64 s | 84 → 294 |
+| Ultrapanorámico 3440×1440 @1 | 3440 → 1529 × 640 | 5.74 → 2.40 s | 84 → 189 |
+
+A la velocidad máxima del charter (690) toda pantalla apaisada da ≥ 1.26 s de lectura (test). El fondo acompaña: `uFrame` y `uCell` en el shader hacen el sol redondo en cualquier formato y cada estrella del tamaño de una celda del arte; `uHorizon` sale del suelo del mundo. El menú en una pantalla vertical usa `WORLD_VIEW_PORTRAIT_MENU` (ancho mínimo 520) para que el dino de adorno no mida 21 px; en horizontal menú y partida comparten vista y la escena no cambia de escala al empezar. Si la vista cambia en plena partida (girar, redimensionar), el Dino se mueve con el suelo.
+
+**2. UI que escala y respeta el dispositivo** (`main.css`).
+- **`rem` fluido**: 16 px hasta 1080 de alto (en su equivalente 16:9, para que una ultrapanorámica no lo infle), 20 px en 1440p, 28 px en 4K. HUD, menú, catálogo, modales y paneles pasaron de px a rem.
+- **Alturas bajas** (`max-height: 560px` y `480px`): menú compacto (título por `min(9vw, 15vh)`), catálogo a pantalla completa con portadas 2:1, HUD más fino, modales centrados con menos relleno, "Subir mi canción" con el botón a la vista.
+- **Márgenes seguros** (notch, barra de gestos) en HUD, menú, chip de sesión, catálogo, modales y avisos; `dvh` en vez de `vh`.
+- Arreglados: cabecera del catálogo sin sesión, fila del volumen, marcas que partían "100 %" en dos líneas, slider con medidas en rem.
+
+**3. Pausa y resultados: un solo panel** (`ui/runPanel.js`; lo que enseña, `ui/runPanelModel.js`, puro y testeado).
+- **Al terminar**, la escena se queda tal cual (el Dino caído junto al obstáculo; tras superar el nivel, trotando) y encima un panel: el **porcentaje** en grande, la **barra con el mapa de la canción** (tramos, clímax) y una marca en tu mejor intento, una nota ("¡Nuevo récord!", "¡Te faltaba muy poco!", "Caíste en pleno clímax", tu mejor marca), puntos, tiempo e **intento N**. **REINTENTAR** es el único botón de color (Espacio, Enter, ↑ o R); debajo, **Niveles** (Esc: vuelve al catálogo con ese nivel enfocado y resaltado) y **Menú**.
+- **Reintentar no carga nada**: el nivel cargado se guarda mientras se juega (`run` en `AppController`) y un reintento es otra `GameSession` con el mismo audio decodificado y el mismo chart, tras un fundido de 0.36 s. Al arrancar, "Intento N" en el HUD.
+- **Durante 0.42 s tras abrirse, el panel ignora teclas y toques**, y una tecla mantenida desde antes (repetición) nunca decide: quien choca suele seguir machacando saltar.
+- **La pausa es el mismo panel** con Reanudar delante (Esc), Reintentar (R), Niveles, Menú y el volumen. Reintentar o salir desde la pausa no guarda progreso (igual que antes salir).
+- **¿Reinicio automático o panel?** Panel por defecto: un nivel de Daino es una canción entera (no 30 s memorizables como en Geometry Dash), el panel enseña lo lejos que llegaste y deja salir, y reintentar sigue costando una tecla. Quien prefiere repetir sin pausa activa **"Reintentar al instante al chocar"** en el propio panel o en AJUSTES (`daino:auto_retry`): el nivel vuelve a empezar solo ~0.8 s después del choque; la pausa sigue dejando salir.
+
+**4. Táctil.** Botón de **pausa** en el HUD (44 px, arriba a la derecha: el mismo canal que Esc). Las **primeras 3 partidas** enseñan los controles al empezar (en táctil, cada mitad de la pantalla con lo que hace; con teclado, las teclas). En un móvil vertical, antes de empezar se sugiere **girarlo** (se puede jugar en vertical igualmente) y girarlo a vertical en plena partida la pausa. `input.js` solo captura Espacio y flechas mientras hay una partida escuchando y ningún diálogo abierto.
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **200 JS** (+17: `world-view` con 16 pantallas reales, `run-panel`). PHP y Python no se tocaron; `bake:official -- --check`: los 8 oficiales idénticos |
+| E2E 1536×864 (Sugar Red) | choque al 38 % → panel (38 %, mejor 100 %, intento 1) → Espacio → "Intento 2" → Esc → pausa (AudioContext suspendido) → R → intento 3 → choque → Esc → catálogo con Sugar Red enfocada. Estados: LOADING → PLAYING → RESULTS → GAME_OVER → PLAYING → PAUSED → GAME_OVER → PLAYING → RESULTS → GAME_OVER → MENU. 0 errores de JS |
+| E2E 3840×2160 | victoria al 100 % ("¡Nivel superado!", "Otra vez"); Enter → otra vez; con el reintento automático, choque → PLAYING sin panel (intento 3) |
+| E2E táctil emulado (`pointer: coarse`) | 390×844: "Gira el móvil" antes de empezar; al girar a 844×390 empieza sola (vista 1266 × 585); resultados a dos columnas; pausa con el botón del HUD; girar a vertical en partida → pausa con "Gira el móvil"; Reanudar sigue la canción donde estaba |
+| Teclado tras una partida | Espacio pulsa JUGAR con foco y ↓ desplaza el catálogo (antes, bloqueados); la tarjeta del nivel jugado sigue resaltada tras el repintado de la red |
+| Capturas antes/después | menú y catálogo en 8-9 tamaños; partida, pausa y resultados en 390×844, 844×390, 1536×864 y 3840×2160; ajustes, "Subir mi canción" y ficha en 844×390, 390×844 y 3840×2160. Sin desbordes horizontales (catálogo medido en 3 tamaños, página en 1536×864) |
+| Bundle | 175.01 KB gzip (+5.15 KB), CSS 13.09 KB |
+
+**Decisiones (vinculantes):**
+
+- **Toda pantalla apaisada ve el mismo mundo** (`WORLD_VIEW`), con la celda del arte entera en píxeles de dispositivo. El tiempo de lectura no depende del monitor. Ni el charter ni la física leen la pantalla; el techo de 690 px/s se razona con `WORLD_VIEW.minWidth`.
+- **La UI escala con la pantalla** (rem fluido) y respeta márgenes seguros y `dvh`.
+- **Una partida termina en un panel sobre la escena, con Reintentar delante y sin cargar nada.** Esc en resultados = Niveles; en pausa = Reanudar. El reinicio automático es opcional y está apagado por defecto.
+- **En táctil se puede pausar siempre** (botón del HUD) y se juega en horizontal (se sugiere, no se impone).
+- **El juego solo captura teclas mientras se juega** y no hay un diálogo encima.
+
+**Limitaciones que quedan:**
+
+- Probado con emulación de Chrome (tamaño, `devicePixelRatio`, táctil), no en dispositivos reales: márgenes seguros de iOS Safari y la barra dinámica sin comprobar en un iPhone.
+- En vertical se puede jugar, pero el mundo sale pequeño (el Dino mide 28 px en un móvil de 390 px): es la consecuencia de conservar el trecho de lectura.
+- 4:3 (iPad apaisado) da la lectura más justa: 1.26 s a 690 px/s.
+- Sin modo práctica ni checkpoints (el diamante de Geometry Dash): encajaría con reintentos desde el último tramo de la canción, pero cambia qué cuenta como marca.
+- El contador de intentos vive en memoria (se reinicia al recargar); la nota "Gira el móvil" de la pausa se decide al abrirla.
 
 ---
 

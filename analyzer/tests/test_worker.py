@@ -192,12 +192,15 @@ def test_publish_flow_leaves_the_level_ready_with_a_chart_per_difficulty_but_not
 
     lvl = row(conn, "SELECT * FROM levels WHERE id = %s", level_id)
     assert lvl["is_public"] == 0 and lvl["pending_public"] == 0, "analizado, pero no publicado"
-    assert lvl["chart_status"] == "ready" and lvl["chart_version"] == 3
+    assert lvl["chart_status"] == "ready"
     assert lvl["chart_hash"] == hashlib.sha256(lvl["chart_json"].encode()).hexdigest()
     ceiling = lvl["difficulty_ceiling"]
     assert ceiling is not None and 1 <= lvl["difficulty"] <= 5
     chart = json.loads(lvl["chart_json"])
     assert len(chart["events"]) > 10 and chart["audio"]["sha256"] == lvl["audio_sha256"]
+    # La versión guardada es la del charter que hizo el chart (la del JS compartido,
+    # que sube con cada cambio del charter: no se fija un número aquí).
+    assert lvl["chart_version"] == chart["charter"]["version"] >= 4
 
     variants = json.loads(lvl["chart_variants_json"])
     assert sorted(variants) == sorted(["auto", *[str(d) for d in range(1, ceiling + 1)]]), "Automática y 1..techo, nada por encima"

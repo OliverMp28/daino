@@ -9,11 +9,11 @@
 //   - openProfileModal()      — hidrata desde client.getUser(). Si null, CTA login.
 //   - openRankingModal()      — ranking global.
 //   - openSettingsModal()     — funcional con localStorage.
-//   - openPauseModal()        — pausa centrada.
 //   - closeAllModals()        — cierra cualquier <dialog> abierto.
 //
 // El catálogo de niveles vive en `catalog.js` desde la Ola 2 (pantalla casi
-// completa, no un panel lateral).
+// completa, no un panel lateral). La pausa y los resultados de una partida, en
+// `runPanel.js` (reintentos, Sep 2026).
 
 import { getUser, logout, isAuthenticated, request as apiRequest } from '../api/client.js';
 import { isBridgeEmbedded } from '../iframe/bridge.js';
@@ -23,6 +23,7 @@ import {
     getReduceEffects, setReduceEffects,
     getSkin, setSkin,
     getQuality, setQuality,
+    getAutoRetry, setAutoRetry,
     listKeys, clearAll,
 } from './settings.js';
 import { DINO_SKINS, normalizeSkinId } from '../game/assets/pixelart.js';
@@ -310,58 +311,6 @@ function renderRankingRow(entry, isMine) {
     return row;
 }
 
-// --------------------------- Modal: PAUSA ---------------------------
-
-/**
- * Abre el modal de pausa. Centrado sobre el viewport (no slide-in lateral
- * — la pausa es un break "fuerte", no un panel secundario).
- *
- * @param {{ onResume: () => void, onExit: () => void }} cfg
- */
-export function openPauseModal(cfg) {
-    let exited = false;
-
-    const body = document.createElement('div');
-    body.className = 'daino-pause__body';
-    const note = document.createElement('p');
-    note.textContent = 'La canción está suspendida. Reanuda para continuar exactamente donde lo dejaste.';
-    note.style.opacity = '0.85';
-    body.appendChild(note);
-
-    const footer = document.createElement('div');
-    footer.style.display = 'flex';
-    footer.style.gap = '0.5rem';
-    footer.style.justifyContent = 'flex-end';
-    footer.style.width = '100%';
-
-    const exitBtn = button('Salir al menú', 'daino-btn daino-btn--danger');
-    exitBtn.addEventListener('click', () => {
-        exited = true;
-        dialog.close();
-        cfg.onExit();
-    });
-    const resumeBtn = button('Reanudar', 'daino-btn daino-btn--primary');
-    resumeBtn.addEventListener('click', () => dialog.close());
-
-    footer.appendChild(exitBtn);
-    footer.appendChild(resumeBtn);
-
-    const dialog = createModal('pause', { title: 'Pausa', body, footer });
-    // El `daino-modal--center` cambia el layout: en lugar de slide-in lateral,
-    // queda centrado sobre el viewport. Doc 06 §4.2 lo pinta así.
-    dialog.classList.add('daino-modal--center');
-
-    // Cualquier vía de cierre (botón ×, click backdrop, ESC nativo, click
-    // Reanudar) que NO haya pasado por "Salir al menú" → equivale a Resume.
-    dialog.addEventListener('close', () => {
-        if (!exited) cfg.onResume();
-    }, { once: true });
-
-    dialog.showModal();
-    // Foco inicial al botón Reanudar — Enter accept-cierra.
-    queueMicrotask(() => resumeBtn.focus());
-}
-
 // --------------------------- Modal: AJUSTES (funcional con localStorage) ---------------------------
 
 /**
@@ -468,6 +417,27 @@ export function openSettingsModal(opts = {}) {
     qualityRow.appendChild(qualitySelect);
     qualityRow.appendChild(qualityNote);
     body.appendChild(qualityRow);
+
+    // ----- Reintento automático (reintentos, Sep 2026) -----
+    const retryRow = document.createElement('section');
+    retryRow.className = 'daino-settings__row';
+    const retryLabel = document.createElement('label');
+    retryLabel.className = 'daino-settings__label';
+    retryLabel.htmlFor = 'daino-settings-autoretry';
+    retryLabel.textContent = 'Reintentar al instante al chocar';
+    const retryToggle = document.createElement('input');
+    retryToggle.type = 'checkbox';
+    retryToggle.id = 'daino-settings-autoretry';
+    retryToggle.dataset.interactive = 'true';
+    retryToggle.checked = getAutoRetry();
+    retryToggle.addEventListener('change', () => setAutoRetry(retryToggle.checked));
+    const retryNote = document.createElement('p');
+    retryNote.className = 'daino-settings__hint';
+    retryNote.textContent = 'Sin panel de resultados: el nivel vuelve a empezar solo. La pausa (Esc o ❚❚) sigue dejando salir.';
+    retryRow.appendChild(retryLabel);
+    retryRow.appendChild(retryToggle);
+    retryRow.appendChild(retryNote);
+    body.appendChild(retryRow);
 
     // ----- Reducir efectos visuales (placeholder funcional para Bloque 8) -----
     const fxRow = document.createElement('section');

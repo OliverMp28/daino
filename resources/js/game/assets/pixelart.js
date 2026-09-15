@@ -15,9 +15,14 @@
 // (decisión del rediseño visual, Jul 2026). NO se copian los PNGs del legacy.
 
 import { Texture } from 'pixi.js';
+import { PIXEL_SCALE } from '../config.js';
 
-/** Factor de escala de celda→px en pantalla. 4 ⇒ un dino de 21 celdas = 84px. */
-export const PIXEL_SCALE = 4;
+/**
+ * Factor de escala de celda → unidades de mundo. 4 ⇒ un dino de 21 celdas = 84.
+ * Vive en config.js (lo necesita la vista del mundo, que se prueba sin Pixi);
+ * se reexporta aquí para los consumidores de siempre.
+ */
+export { PIXEL_SCALE };
 
 // --------------------------- Paleta global ---------------------------
 // Sincronía: BEAT/HIGH espejan COLOR_BEAT/COLOR_HIGH de background.frag.

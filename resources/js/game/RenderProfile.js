@@ -38,7 +38,7 @@
  */
 
 /**
- * @typedef {'MENU'|'LOADING'|'PLAYING'|'PAUSED'|'GAME_OVER'} ProfileName
+ * @typedef {'MENU'|'LOADING'|'PLAYING'|'PAUSED'|'RESULTS'|'GAME_OVER'} ProfileName
  */
 
 /**
@@ -86,8 +86,17 @@ export const RENDER_PROFILES = Object.freeze({
         sceneryAnimated: false,
     }),
 
-    // La secuencia de muerte sigue en curso al entrar aquí, así que conserva
-    // más presupuesto que el menú hasta que la transición termina.
+    // Panel de resultados sobre la escena (reintentos, Sep 2026): el choque se
+    // queda quieto y, tras una victoria, el Dino trota. Detrás de un panel con
+    // desenfoque no hace falta más que el menú.
+    RESULTS: Object.freeze({
+        maxFPS: 30,
+        filterResolution: 0.6,
+        particleRatio: 0.3,
+        sceneryAnimated: true,
+    }),
+
+    // Transición de salida (a otra partida o al menú): dura un fundido.
     GAME_OVER: Object.freeze({
         maxFPS: 30,
         filterResolution: 0.75,

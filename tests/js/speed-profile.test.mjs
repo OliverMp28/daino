@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { createSpeedProfile, asSpeedProfile } from '../../resources/js/game/systems/speedProfile.js';
 import { createSpawner } from '../../resources/js/game/systems/spawner.js';
 import { DINO_CENTER_X, actionLeadS, obstacleLeftX } from '../../resources/js/game/systems/physics.js';
-import { simulateRun, toSimObstacles, validatePlayability } from '../../resources/js/game/systems/playability.js';
+import { READER_ADAPT_S, readerOffsetS, simulateRun, toSimObstacles, validatePlayability } from '../../resources/js/game/systems/playability.js';
 import { OBSTACLE_KIND } from '../../resources/js/game/config.js';
 
 /** Integral numérica de la velocidad, para comparar con la exacta. */
@@ -115,7 +115,9 @@ test('spawner con perfil: posiciones continuas al cambiar la velocidad y cruce e
 test('simulador con perfil: lo que valida con la velocidad variable se supera con esa velocidad', () => {
     const events = [];
     for (let i = 0; i < 40; i++) events.push({ t: 3 + i * 0.75, type: 'obstacle', kind: i % 3 === 2 ? 'PTERO' : 'CACTUS_SMALL' });
-    const profile = createSpeedProfile(420, [{ t: 12, speedPxS: 600, rampS: 0 }, { t: 24, speedPxS: 480, rampS: 1.5 }]);
+    // El acelerón cae entre dos acciones, como la anacrusa del charter: el
+    // obstáculo anterior ya cruzó y el siguiente se ve llegar a la velocidad nueva.
+    const profile = createSpeedProfile(420, [{ t: 11.625, speedPxS: 600, rampS: 0 }, { t: 24, speedPxS: 480, rampS: 1.5 }]);
     const sim = toSimObstacles(events);
     assert.ok(validatePlayability(sim, profile).ok);
     assert.ok(simulateRun(sim, profile).ok);
@@ -123,4 +125,45 @@ test('simulador con perfil: lo que valida con la velocidad variable se supera co
     const lazy = simulateRun(sim, profile, { pressOffset: () => 5 });
     assert.equal(lazy.ok, false);
     assert.equal(lazy.index, 0);
+});
+
+test('vista: tras un acelerón quien juega mirando pulsa tarde; tras un frenazo, pronto; con velocidad constante, en el golpe', () => {
+    const lead = actionLeadS(OBSTACLE_KIND.CACTUS_SMALL);
+    assert.equal(readerOffsetS(createSpeedProfile(430), 10, lead), 0, 'velocidad constante');
+
+    const up = createSpeedProfile(400, [{ t: 10, speedPxS: 560, rampS: 0 }]);
+    const late = readerOffsetS(up, 10, lead);
+    // Sin recalibrar pulsaría adelanto·(1 − 400/560) tarde; recalibra algo antes de pulsar.
+    assert.ok(late > 0.04 && late < lead * (1 - 400 / 560) + 1e-9, `acción en el acelerón: ${late}`);
+    assert.ok(readerOffsetS(up, 9.8, lead) > 0.02, 'el error empieza antes del cambio: ese obstáculo ya se ve más lejos');
+    assert.ok(Math.abs(readerOffsetS(up, 9.5, lead)) < 1e-6, 'uno que cruza antes del cambio no se entera');
+
+    const brake = createSpeedProfile(560, [{ t: 10, speedPxS: 400, rampS: 0 }]);
+    assert.ok(readerOffsetS(brake, 10, lead) < -0.04, 'tras un frenazo, pronto');
+
+    // La anacrusa: el cambio READER_ADAPT_S antes de la acción, con el
+    // obstáculo anterior ya cruzado. La vista acierta.
+    const pickup = createSpeedProfile(400, [{ t: 10 - READER_ADAPT_S, speedPxS: 560, rampS: 0 }]);
+    assert.ok(Math.abs(readerOffsetS(pickup, 10, lead)) < 1e-6);
+});
+
+test('validatePlayability exige que también lo supere quien juega mirando', () => {
+    // Dos saltos a 0.70 s (legal en Extremo, ±40 ms) y un acelerón del 26 %
+    // justo en el primero, como el portal en el primer tiempo del charter de la
+    // Ola 5. Quien pulsa con el oído pasa; quien se guía por la vista salta
+    // tarde el primero, aterriza tarde y el segundo le alcanza.
+    const sim = toSimObstacles([
+        { t: 10, type: 'obstacle', kind: 'CACTUS_SMALL' },
+        { t: 10.7, type: 'obstacle', kind: 'CACTUS_SMALL' },
+    ]);
+    const onAction = createSpeedProfile(380, [{ t: 10, speedPxS: 480, rampS: 0 }]);
+    const ear = [0, 0.04, -0.04].every((o) => simulateRun(sim, onAction, { pressOffset: (i) => (i % 2 === 0 ? o : -o) }).ok);
+    assert.ok(ear, 'con el oído se supera');
+    const verdict = validatePlayability(sim, onAction, { toleranceS: 0.04 });
+    assert.equal(verdict.ok, false, 'con la vista no');
+    assert.match(verdict.pattern, /^vista-/);
+    assert.equal(verdict.index, 1);
+    // El mismo acelerón en la anacrusa (0.35 s antes): lo superan los dos.
+    const pickup = createSpeedProfile(380, [{ t: 10 - 0.35, speedPxS: 480, rampS: 0 }]);
+    assert.ok(validatePlayability(sim, pickup, { toleranceS: 0.04 }).ok);
 });

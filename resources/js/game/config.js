@@ -8,8 +8,49 @@
 
 // --------------------------- Mundo / suelo ---------------------------
 
-/** Píxeles desde el bottom del viewport hasta donde "pisa" el Dino. */
+/**
+ * Unidades de mundo desde el borde inferior de la vista hasta donde "pisa" el
+ * Dino. Todas las medidas del juego (tamaños, alturas, px/s) están en unidades
+ * de mundo; la pantalla las multiplica por la escala de la vista (WORLD_VIEW).
+ */
 export const GROUND_OFFSET_PX = 22;
+
+/** Unidades de mundo por celda del arte pixel (assets/pixelart.js). */
+export const PIXEL_SCALE = 4;
+
+/**
+ * Cuánto mundo se ve (tamaños de pantalla, Sep 2026).
+ *
+ * Antes el mundo se dibujaba a 1 unidad = 1 px CSS: un monitor ancho veía más
+ * mundo, no uno más grande. En 1920 px un obstáculo aparecía 3 s antes de
+ * llegar y la velocidad se diluía; en un móvil vertical, 0.4 s antes; y en un
+ * 4K el juego era una franja diminuta al pie de un cielo vacío. Ahora la vista
+ * se escala para enseñar el MISMO mundo en cualquier pantalla apaisada, con el
+ * píxel del arte entero en píxeles de dispositivo (nunca emborronado).
+ *
+ *   targetHeight  Alto de mundo que se quiere ver. Fija la escala en casi todas
+ *                 las pantallas (16:9 → ~1100 × 620 de mundo).
+ *   minWidth      Ancho mínimo visible: lo que se lee por delante del Dino a la
+ *                 velocidad máxima del charter (SPEED_RULES.maxSpeedPxS) nunca
+ *                 baja de ~1.2 s. Manda en pantallas estrechas (4:3, vertical).
+ *   maxWidth      Ancho máximo: en una ultrapanorámica se amplía aunque se vea
+ *                 menos alto, para no volver a diluir la velocidad.
+ *   minHeight     Alto mínimo: salto completo, ptero y HUD caben siempre.
+ */
+export const WORLD_VIEW = Object.freeze({
+    targetHeight: 620,
+    minWidth: 1000,
+    maxWidth: 1600,
+    minHeight: 420,
+});
+
+/**
+ * Vista del MENÚ en una pantalla vertical. Ahí no se juega (el dino trota de
+ * adorno) y el ancho mínimo de partida lo dejaba en 21 px al pie de la pantalla;
+ * con este mínimo se ve al tamaño de un móvil apaisado. En horizontal el menú
+ * usa WORLD_VIEW: la escena no cambia de escala al empezar a jugar.
+ */
+export const WORLD_VIEW_PORTRAIT_MENU = Object.freeze({ ...WORLD_VIEW, minWidth: 520 });
 
 /** Aceleración hacia abajo en px/s² aplicada al Dino mientras está en el aire. */
 export const GRAVITY = 2500;
@@ -248,6 +289,47 @@ export const DROP_FX = Object.freeze({
  * en el instante de acción de un obstáculo, y color del destello.
  */
 export const ON_BEAT = Object.freeze({ windowS: 0.06, color: 0x8fe0ff });
+
+/**
+ * Líneas de velocidad (afinado de velocidad, Sep 2026). Rayas de luz que cruzan
+ * el cielo más rápido que el suelo cuando el nivel va por encima de su velocidad
+ * de arranque (systems/speedCues.js decide cuántas), con una ráfaga en cada
+ * acelerón. Solo visual: no tocan la jugabilidad ni la sincronía. Con
+ * `prefers-reduced-motion` no existen.
+ */
+export const SPEED_LINES = Object.freeze({
+    count: 26,
+    /** Rayas extra de la ráfaga de un acelerón (cruzan toda la pantalla de golpe). */
+    burst: 14,
+    /** Velocidad de cada raya respecto a la del mundo: aire en primer plano. */
+    speedFactor: Object.freeze([1.7, 2.8]),
+    /** Largo en px con intensidad 0 y 1 (cada raya varía ±40 %). */
+    lengthPx: Object.freeze([46, 170]),
+    thicknessPx: 2,
+    /** Alpha con intensidad 0 y 1 (mezcla aditiva). */
+    alpha: Object.freeze([0.12, 0.34]),
+    /**
+     * Franja libre sobre el suelo: el Dino salta hasta ~160 px y el ptero vuela
+     * a ~115 px. Una raya ahí se confundiría con un obstáculo.
+     */
+    clearAboveGroundPx: 200,
+    /** Primera fracción de la altura sin rayas (la ocupa el HUD). */
+    topFraction: 0.16,
+    /** Fundido del conjunto al aparecer y al irse (1/s). */
+    fadeRate: 5,
+    colors: Object.freeze([0x8fe0ff, 0xf2f5ff, 0xff5d7e]),
+});
+
+/**
+ * Marchas (afinado de velocidad).
+ *   strength    En el primer tiempo que motiva un acelerón que no coincide con
+ *               un drop ni un lift, un momento más discreto que ellos (ola de
+ *               partículas por el suelo y fondo avivado, sin golpe de cámara).
+ *   riserPulse  En los compases previos a un acelerón, el suelo y el fondo
+ *               laten también a contratiempo, cada vez más fuerte (hasta este
+ *               pulso): una subida que avisa sin palabras.
+ */
+export const GEAR_FX = Object.freeze({ strength: 0.4, riserPulse: 0.75 });
 
 /** Partículas ambientales (capa 2): cuántas y rango de velocidad base px/s. */
 export const AMBIENT_PARTICLES = Object.freeze({ count: 80, minSpeed: 8, maxSpeed: 26 });

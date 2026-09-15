@@ -11,7 +11,12 @@ const KEY_VOLUME = 'daino:volume';
 const KEY_REDUCE_EFFECTS = 'daino:reduce_effects';
 const KEY_SKIN = 'daino:skin';
 const KEY_QUALITY = 'daino:quality';
+const KEY_AUTO_RETRY = 'daino:auto_retry';
+const KEY_RUNS_STARTED = 'daino:runs_started';
 const PREFIX = 'daino:';
+
+/** Partidas en las que se enseñan los controles al empezar. */
+export const CONTROL_HINT_RUNS = 3;
 
 /** Valores aceptados para la calidad gráfica. 'auto' = degradado adaptativo. */
 export const QUALITY_VALUES = Object.freeze(['auto', 'high', 'medium', 'low']);
@@ -97,6 +102,45 @@ export function setQuality(quality) {
     const safe = QUALITY_VALUES.includes(quality) ? quality : 'auto';
     localStorage.setItem(KEY_QUALITY, safe);
     window.dispatchEvent(new CustomEvent('daino:qualitychange', { detail: { quality: safe } }));
+}
+
+/**
+ * Reintentar al instante al chocar, sin panel de resultados (como Geometry
+ * Dash). Default false: un nivel de Daino es una canción entera y el panel deja
+ * ver lo lejos que llegaste y salir; quien prefiere repetir sin pausa lo activa.
+ */
+export function getAutoRetry() {
+    return safeGet(KEY_AUTO_RETRY) === 'true';
+}
+
+export function setAutoRetry(enabled) {
+    if (enabled) safeSet(KEY_AUTO_RETRY, 'true');
+    else safeRemove(KEY_AUTO_RETRY);
+}
+
+/**
+ * Cuenta una partida empezada y dice si toca enseñar los controles (las
+ * primeras CONTROL_HINT_RUNS). "Borrar datos locales" la vuelve a poner a cero.
+ *
+ * @returns {boolean}
+ */
+export function countRunAndShouldHint() {
+    const n = Number.parseInt(safeGet(KEY_RUNS_STARTED) ?? '0', 10);
+    const runs = Number.isFinite(n) && n >= 0 ? n : 0;
+    safeSet(KEY_RUNS_STARTED, String(runs + 1));
+    return runs < CONTROL_HINT_RUNS;
+}
+
+function safeGet(key) {
+    try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function safeSet(key, value) {
+    try { localStorage.setItem(key, value); } catch { /* modo privado o cuota: es una comodidad */ }
+}
+
+function safeRemove(key) {
+    try { localStorage.removeItem(key); } catch { /* idem */ }
 }
 
 /**

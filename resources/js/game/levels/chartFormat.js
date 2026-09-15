@@ -54,8 +54,12 @@ export const CHART_FORMAT_VERSION = 2;
  * cualquier cosa que altere los eventos generados para la misma entrada:
  * así los charts cacheados o persistidos con una versión anterior se detectan
  * como obsoletos en lugar de mezclarse con los nuevos.
+ *
+ * 3: charter musical (Ola 5). 4: marchas de velocidad hacia el clímax, en la
+ * anacrusa, y validación también para quien juega con la vista (afinado de
+ * velocidad). El formato no cambia: solo los eventos y la velocidad generados.
  */
-export const CHARTER_VERSION = 3;
+export const CHARTER_VERSION = 4;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */

@@ -61,6 +61,11 @@ export function createAudioFilter() {
                 // Y del horizonte en uv [0,1] (v=0 arriba). El engine la deriva
                 // de GROUND_OFFSET_PX / viewport height y la refresca en resize.
                 uHorizon:    { value: 0.94, type: 'f32' },
+                // Tamaño del frame en px CSS y px CSS por celda del arte (vista
+                // del mundo): el sol es redondo y las estrellas miden una celda
+                // en cualquier formato de pantalla.
+                uFrame:      { value: new Float32Array([1280, 720]), type: 'vec2<f32>' },
+                uCell:       { value: 4.0, type: 'f32' },
                 // Estructura de la canción (Ola 5): ver background.frag.
                 uIntensity:  { value: 0.0, type: 'f32' },
                 uProgress:   { value: 0.0, type: 'f32' },
@@ -80,8 +85,13 @@ export function createAudioFilter() {
     // datos y el sample devuelve memoria sin inicializar.
     fftSource.update();
 
-    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, intensity, progress, climax, flash }) {
+    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, frame, cell, intensity, progress, climax, flash }) {
         const u = filter.resources.audioUniforms.uniforms;
+        if (frame     !== undefined) {
+            u.uFrame[0] = frame[0];
+            u.uFrame[1] = frame[1];
+        }
+        if (cell      !== undefined) u.uCell      = cell;
         if (time      !== undefined) u.uTime      = time;
         if (rms       !== undefined) u.uRMS       = rms;
         if (bass      !== undefined) u.uBass      = bass;

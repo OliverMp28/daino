@@ -171,6 +171,7 @@ export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}
  * @param {number} ctx.target                  Acciones que se buscan.
  * @param {ChartAction[]} ctx.placed           Acciones ya fijadas, ordenadas (compases anteriores).
  * @param {(t: number) => number} ctx.speedAt
+ * @param {(t: number, type: 'jump'|'duck') => boolean} [ctx.readerOk]  ¿Se lee bien una acción ahí? (alrededor de un cambio de velocidad)
  * @param {object} ctx.profile                 Perfil de dificultad.
  * @param {(mechanic: string, t: number) => boolean} ctx.unlocked
  * @param {number} ctx.tMin
@@ -357,6 +358,9 @@ function canDuck(cand, ctx, chosen) {
 /** ¿Cabe la acción entre sus vecinas (ya fijadas y de este compás)? */
 function fits(action, chosen, ctx) {
     const { placed, profile, speedAt } = ctx;
+    // Alrededor de un acelerón, quien juega con la vista se equivocaría: esa
+    // pulsación se deja libre (speedPlan.js, SPEED_RULES.readerBudgetS).
+    if (ctx.readerOk !== undefined && !ctx.readerOk(action.t, action.type)) return false;
     const prev = neighborBefore(action.t, placed, chosen);
     // Sin vecina posterior en el compás, el primer tiempo del SIGUIENTE compás
     // cuenta como reservado: un golpe al final de este no le quita el ancla al
