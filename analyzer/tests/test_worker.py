@@ -86,14 +86,20 @@ def valid_analysis(duration: float = 40.0, bpm: float = 120.0) -> dict:
     period = 60.0 / bpm
     beats = [round(0.5 + i * period, 3) for i in range(int((duration - 1) / period))]
     onsets = [[b, 1.0 if i % 4 == 0 else 0.6] for i, b in enumerate(beats)]
+    frames = int(duration * 10)
     return {
         "formatVersion": 2,
-        "analyzer": {"name": "daino-mir-py", "version": 1, "models": {"beats": "fake"}},
+        "analyzer": {"name": "daino-mir-py", "version": 2, "models": {"beats": "fake"}},
         "durationSec": duration, "sampleRate": 44100, "bpm": bpm, "bpmConfidence": 1.0, "beatPeriodS": round(period, 5),
-        "onsets": onsets, "onsetColor": [[0.3, 0.3, 0.4] for _ in onsets],
+        "onsets": onsets, "onsetColor": [[0.3, 0.3, 0.4] for _ in onsets], "onsetPercussive": [0.9 for _ in onsets],
         "beats": beats, "downbeats": beats[::4], "meter": 4,
-        "sections": [{"startSec": 0.0, "endSec": duration, "cluster": "A", "role": "verse", "energy": 0.7, "density": 2.0}],
-        "energy": {"hopSec": 0.1, "values": [0.5] * int(duration * 10)},
+        "sections": [{"startSec": 0.0, "endSec": duration, "cluster": "A", "role": "verse", "energy": 0.7, "density": 2.0,
+                      "key": "C major", "keyConfidence": 0.8}],
+        "energy": {"hopSec": 0.1, "values": [0.5] * frames,
+                   "bands": {"low": [0.5] * frames, "mid": [0.5] * frames, "high": [0.5] * frames},
+                   "bandLevelDb": [-1.5, -5.2, -21.0]},
+        "tonal": {"tuningCents": 0.0, "key": "C major", "keyConfidence": 0.8, "chords": [[0.0, "C:maj"]],
+                  "chordConfidence": 0.9, "harmonicRhythm": 0.0, "modulations": []},
         "features": {"tempoStability": 1.0, "beatSupport": 1.0, "pulseDoubled": False, "percussiveRatio": 0.5,
                      "eventsPerMin": 120.0, "strongEventsPerMin": 60.0, "loudnessDbfs": -12.0, "dynamicRangeDb": 10.0,
                      "silenceRatio": 0.0},

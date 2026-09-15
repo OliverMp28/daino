@@ -458,6 +458,75 @@ test('ChartValidator acepta un análisis de formato 2 y conserva sus hechos rico
     assertSame(false, $decoded['features']['pulseDoubled']);
 });
 
+/**
+ * El análisis del analizador 2: armonía, percusividad y bandas.
+ *
+ * @return array<string, mixed>
+ */
+function analysisV2Harmony(): array
+{
+    $a = analysisV2();
+    $a['analyzer']['version'] = 2;
+    $a['onsetPercussive'] = [0.93, 0.12];
+    $a['sections'][0] += ['key' => 'A minor', 'keyConfidence' => 0.81];
+    $a['energy']['bands'] = ['low' => array_fill(0, 605, 0.2), 'mid' => array_fill(0, 605, 0.5), 'high' => array_fill(0, 605, 0.9)];
+    $a['energy']['bandLevelDb'] = [-2.1, -4.8, -22.5];
+    $a['tonal'] = [
+        'tuningCents'     => -32.5,
+        'key'             => 'A minor',
+        'keyConfidence'   => 0.81,
+        'chords'          => [[0.0, 'N'], [0.5, 'A:min'], [2.5, 'F:maj'], [4.5, 'C#:maj'], [40.0, 'A:min']],
+        'chordConfidence' => 0.77,
+        'harmonicRhythm'  => 1.0,
+        'modulations'     => [['t' => 40.0, 'key' => 'C minor', 'semitones' => 3]],
+    ];
+    return $a;
+}
+
+test('ChartValidator conserva la armonía, la percusividad y las bandas del analizador 2', function (): void {
+    $input = analysisV2Harmony();
+    $decoded = json_decode(ChartValidator::validateAnalysis($input), true);
+    assertSame($input['tonal'], $decoded['tonal']);
+    assertSame($input['onsetPercussive'], $decoded['onsetPercussive']);
+    assertSame($input['energy']['bands'], $decoded['energy']['bands']);
+    assertSame($input['energy']['bandLevelDb'], $decoded['energy']['bandLevelDb']);
+    assertSame('A minor', $decoded['sections'][0]['key']);
+    assertSame(0.81, $decoded['sections'][0]['keyConfidence']);
+    assertSame(3, $decoded['tonal']['modulations'][0]['semitones'], 'los semitonos siguen siendo enteros');
+
+    $old = json_decode(ChartValidator::validateAnalysis(analysisV2()), true);
+    assertTrue(!isset($old['tonal']) && !isset($old['onsetPercussive']) && !isset($old['energy']['bands']),
+        'un análisis del analizador 1 sigue valiendo, sin inventarse campos');
+});
+
+test('ChartValidator rechaza armonía, percusividad o bandas incoherentes', function (): void {
+    $cases = [
+        'percusividad no paralela' => static fn (array $a) => array_merge($a, ['onsetPercussive' => [0.5]]),
+        'percusividad fuera'       => static fn (array $a) => array_merge($a, ['onsetPercussive' => [0.5, 1.5]]),
+        'tonalidad de sección'     => static fn (array $a) => array_replace_recursive($a, ['sections' => [0 => ['key' => 'H major']]]),
+        'banda que falta'          => static function (array $a) { unset($a['energy']['bands']['high']); return $a; },
+        'banda no paralela'        => static function (array $a) { $a['energy']['bands']['low'] = [0.1]; return $a; },
+        'nivel positivo'           => static function (array $a) { $a['energy']['bandLevelDb'] = [3.0, -4.8, -22.5]; return $a; },
+        'ninguna banda domina'     => static function (array $a) { $a['energy']['bandLevelDb'] = [-9.0, -9.0, -9.0]; return $a; },
+        'bandas sin niveles'       => static function (array $a) { unset($a['energy']['bandLevelDb']); return $a; },
+        'afinación absurda'        => static function (array $a) { $a['tonal']['tuningCents'] = 80.0; return $a; },
+        'tonalidad inventada'      => static function (array $a) { $a['tonal']['key'] = 'C dorian'; return $a; },
+        'acorde inventado'         => static function (array $a) { $a['tonal']['chords'][1][1] = 'C:dim'; return $a; },
+        'acordes desordenados'     => static function (array $a) { $a['tonal']['chords'][2][0] = 0.2; return $a; },
+        'acorde repetido'          => static function (array $a) { $a['tonal']['chords'][2][1] = 'A:min'; return $a; },
+        'no empieza en 0'          => static function (array $a) { array_shift($a['tonal']['chords']); return $a; },
+        'sin acordes'              => static function (array $a) { $a['tonal']['chords'] = []; return $a; },
+        'semitonos fuera'          => static function (array $a) { $a['tonal']['modulations'][0]['semitones'] = 9; return $a; },
+        'semitonos no enteros'     => static function (array $a) { $a['tonal']['modulations'][0]['semitones'] = 2.5; return $a; },
+        'modulación tras el final' => static function (array $a) { $a['tonal']['modulations'][0]['t'] = 999.0; return $a; },
+    ];
+    foreach ($cases as $label => $mutate) {
+        assertThrows(ValidationException::class, fn () => ChartValidator::validateAnalysis($mutate(analysisV2Harmony())), function ($e) use ($label): void {
+            assertTrue(isset($e->fields['analysis']), "{$label}: error en analysis");
+        });
+    }
+});
+
 test('ChartValidator rechaza análisis de formato 2 incoherentes', function (): void {
     $cases = [
         'color no paralelo'      => static fn (array $a) => array_merge($a, ['onsetColor' => [[0.3, 0.3, 0.4]]]),

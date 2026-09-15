@@ -9,6 +9,7 @@ import pytest
 from daino_analyzer import onsets, spectral
 from tests import synth
 from tests.conftest import matched_errors
+from tests.synth import TonalSection
 
 
 @pytest.mark.parametrize("name, min_f", [("90", 0.97), ("128swing", 0.97), ("150", 0.95), ("174busy", 0.9), ("pop", 0.93)])
@@ -87,3 +88,44 @@ def test_strength_is_normalized_and_loudness_invariant(songs):
     assert all(0.0 <= s <= 1.0 for s in loud)
     assert len(loud) == len(quiet)
     assert np.allclose(loud, quiet, atol=0.02), "la misma canción 20 dB más baja da las mismas fuerzas"
+
+
+def _auc(pos, neg) -> float:
+    pos, neg = np.asarray(pos), np.asarray(neg)
+    return float(np.mean([(p > neg).mean() + 0.5 * (p == neg).mean() for p in pos]))
+
+
+@pytest.mark.parametrize("drum_gain, min_auc", [(2.5, 0.95), (1.0, 0.95), (0.35, 0.85)])
+def test_percussiveness_separates_drum_hits_from_note_attacks(drum_gain, min_auc):
+    """Melodía a semicorcheas (fuera de la rejilla del charles) y acordes con
+    armónicos, contra golpes de batería. Se comparan solo los ataques que no
+    coinciden con el otro tipo: un golpe sobre una nota es, con razón, golpe."""
+    y, truth = synth.tonal_song([TonalSection(["Am", "F", "Dm", "E"], key="A minor", repeats=3, melody_grid=0.25)],
+                                bpm=120, drum_gain=drum_gain, seed=22)
+    found = onsets.detect(spectral.compute(y))
+    times = np.array([o.t for o in found])
+    perc = np.array([o.percussive for o in found])
+    chord_starts = np.array([a for a, _, label in truth.chords if label != "N"])
+    notes = np.unique(np.round(np.concatenate([truth.melody_onsets, chord_starts]), 4))
+    drums = np.round(truth.drum_onsets, 4)
+    only_drums = [d for d in drums if np.min(np.abs(notes - d)) > 0.03]
+    only_notes = [n for n in notes if np.min(np.abs(drums - n)) > 0.03]
+
+    def near(ref):
+        return [int(np.argmin(np.abs(times - r))) for r in ref if np.min(np.abs(times - r)) < 0.025]
+
+    d, n = perc[near(only_drums)], perc[near(only_notes)]
+    assert len(d) >= 20 and len(n) >= 10
+    # Con la batería 9 dB por debajo de la armonía (0.35) los charles apenas
+    # asoman sobre la cola de las notas: medido AUC 0.91. Sigue ordenando, peor.
+    assert _auc(d, n) >= min_auc, f"batería x{drum_gain}: AUC {_auc(d, n):.3f}"
+    assert d.mean() > n.mean() + 0.3 and n.mean() < 0.35, f"batería {d.mean():.2f}, notas {n.mean():.2f}"
+
+
+def test_percussiveness_is_loudness_invariant(songs):
+    y, _ = songs["pop"]
+    loud = [o.percussive for o in onsets.detect(spectral.compute(y))]
+    quiet = [o.percussive for o in onsets.detect(spectral.compute(y * 0.1))]
+    assert len(loud) == len(quiet)
+    assert np.allclose(loud, quiet, atol=0.02)
+    assert all(0.0 <= p <= 1.0 for p in loud)

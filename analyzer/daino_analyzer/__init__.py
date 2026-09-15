@@ -9,7 +9,9 @@ ANALYZER_NAME = "daino-mir-py"
 
 # Súbelo cuando cambie cualquier cosa que altere el análisis de un mismo audio:
 # los análisis guardados con otra versión se detectan como obsoletos.
-ANALYZER_VERSION = 1
+# 2: armonía (tonalidad, acordes, modulaciones), percusividad de cada onset y
+#    energía por bandas. Lo de la versión 1 sale idéntico.
+ANALYZER_VERSION = 2
 
 ANALYZER_KEY = f"{ANALYZER_NAME}@{ANALYZER_VERSION}"
 

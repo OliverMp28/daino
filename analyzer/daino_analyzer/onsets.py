@@ -15,6 +15,15 @@
   onset en "bombo / caja / charles" con umbrales y en mezclas reales las bandas
   se solapan demasiado: cada umbral arreglaba un caso y rompía otro. El reparto
   continuo es robusto y deja la decisión de juego al charter (Ola 5).
+- PERCUSIVIDAD del ataque: qué fracción del espectro se enciende a la vez. Un
+  golpe de batería excita muchas bandas; el ataque de una nota, las pocas de sus
+  armónicos. Medido con verdad conocida (tests/test_onsets.py): separa golpes de
+  batería de ataques de nota con AUC 0.96-1.00, y 0.91 con la batería 9 dB por
+  debajo de la armonía; en canciones reales ordena bien (baladas ≈ 0.2 de
+  anchura, reguetón ≈ 0.46).
+  Se probó antes detectar notas aparte sobre la parte armónica (HPSS) y no sirve:
+  el tono de bombos y cajas se cuela y entre el 39 y el 66 % de los golpes
+  salían como notas. Filtrar los onsets por percusividad da las notas mejor.
 """
 
 from __future__ import annotations
@@ -35,6 +44,13 @@ ABS_FLOOR = 3.0
 
 BANDS_HZ = {"low": (0.0, 150.0), "mid": (150.0, 3000.0), "high": (3000.0, 11025.0)}
 BAND_NAMES = ("low", "mid", "high")
+
+# Percusividad: una banda "se enciende" si su flujo pasa del 25 % del de la banda
+# más activa del ataque. Anchura medida: golpes de batería 0.31-0.45, ataques de
+# nota 0.17-0.20 (con armónicos, no senos). La logística centra ahí el 0.5.
+BREADTH_RELATIVE = 0.25
+PERCUSSIVE_CENTER = 0.26
+PERCUSSIVE_WIDTH = 0.04
 
 # Desfase entre el pico de la envolvente y el golpe real: el detector se ADELANTA.
 # La ventana de 46 ms empieza a ver el golpe antes de centrarse en él, y en dB la
@@ -63,6 +79,7 @@ class Onset:
     t: float
     strength: float                       # [0, 1] en la escala de la canción (con suelo absoluto)
     color: tuple[float, float, float]     # reparto del flujo del ataque (grave, medio, agudo), suma 1
+    percussive: float = 0.0               # [0,1] >0.5: golpe de batería; <0.5: ataque de nota
 
 
 @dataclass(frozen=True)
@@ -71,6 +88,7 @@ class Envelopes:
     band_flux: np.ndarray                 # (3, fotogramas) flujo dB medio dentro de cada banda
     scale: float                          # flujo dB que vale 1.0
     hop_sec: float
+    breadth: np.ndarray | None = None     # (fotogramas,) fracción de bandas encendidas (±1 fotograma)
 
 
 def log_mel_db(spec: Spectral) -> np.ndarray:
@@ -103,7 +121,22 @@ def envelopes(spec: Spectral) -> Envelopes:
     slices = band_slices(spec)
     band_flux = np.stack([F[slices[name]].mean(axis=0) for name in BAND_NAMES]).astype(np.float32)
     return Envelopes(full=np.clip(full / scale, 0.0, 1.5).astype(np.float32), band_flux=band_flux,
-                     scale=scale, hop_sec=spec.hop_sec)
+                     scale=scale, hop_sec=spec.hop_sec, breadth=_breadth(F))
+
+
+def _breadth(F: np.ndarray) -> np.ndarray:
+    """Por fotograma, fracción de bandas cuyo flujo (máximo en ±1 fotograma, como
+    el color) pasa del BREADTH_RELATIVE del de la banda más activa."""
+    if F.shape[1] == 0:
+        return np.zeros(0, dtype=np.float32)
+    M = maximum_filter1d(F, size=3, axis=1)
+    peak = M.max(axis=0)
+    lit = (M > BREADTH_RELATIVE * peak).mean(axis=0)
+    return np.where(peak > 0, lit, 0.0).astype(np.float32)
+
+
+def percussiveness(breadth: float) -> float:
+    return float(1.0 / (1.0 + np.exp(-(breadth - PERCUSSIVE_CENTER) / PERCUSSIVE_WIDTH)))
 
 
 def detect(spec: Spectral, envs: Envelopes | None = None, *, delta: float = DELTA) -> list[Onset]:
@@ -127,7 +160,8 @@ def detect(spec: Spectral, envs: Envelopes | None = None, *, delta: float = DELT
         flux = envs.band_flux[:, lo:hi].max(axis=1)
         total = float(flux.sum())
         color = tuple(float(v / total) for v in flux) if total > 1e-9 else (1 / 3, 1 / 3, 1 / 3)
-        out.append(Onset(t=t, strength=float(min(1.0, env[k])), color=color))  # type: ignore[arg-type]
+        perc = percussiveness(float(envs.breadth[k])) if envs.breadth is not None and k < len(envs.breadth) else 0.5
+        out.append(Onset(t=t, strength=float(min(1.0, env[k])), color=color, percussive=perc))  # type: ignore[arg-type]
     return out
 
 

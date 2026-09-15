@@ -405,6 +405,39 @@ test('seed: cambios de metadata se aplican; un chart nuevo solo con --rechart', 
     }
 });
 
+test('seed: un análisis nuevo con el mismo chart se guarda sin tocar el chart ni las marcas', function (): void {
+    $fx = makeSeedFixture(['test-analisis' => []]);
+    try {
+        seedWith($fx, ['from' => $fx['from']]);
+        $level = Level::findOfficialBySlug('test-analisis');
+        $player = makeUser('jugador-analisis');
+        \App\Models\Progress::upsert($player->id, $level->id, 80, 4000);
+        $chartBefore = Level::findChart($level->id)['json'];
+
+        // Re-horneado con otra versión del analizador: mismo audio, mismo chart,
+        // otro análisis.
+        $path = "{$fx['seed']}/baked/test-analisis.json";
+        $baked = json_decode(file_get_contents($path), true);
+        $baked['analysis']['onsets'][0][1] = 5.0;     // fuerza fuera de [0,1]
+        file_put_contents($path, json_encode($baked, JSON_PRESERVE_ZERO_FRACTION));
+        assertSame('skipped', seedWith($fx)['test-analisis']['result'], 'un análisis inválido no se guarda');
+
+        $baked['analysis']['onsets'][0][1] = 0.55;
+        file_put_contents($path, json_encode($baked, JSON_PRESERVE_ZERO_FRACTION));
+        $report = seedWith($fx)['test-analisis'];
+        assertSame('updated', $report['result']);
+        assertTrue(str_contains($report['detail'], 'análisis'), $report['detail']);
+
+        $row = \App\Core\Database::getInstance()->query("SELECT analysis_json FROM levels WHERE id = {$level->id}")->fetch();
+        assertSame(0.55, json_decode($row['analysis_json'], true)['onsets'][0][1]);
+        assertSame($chartBefore, Level::findChart($level->id)['json'], 'el chart no cambia');
+        assertSame(4000, \App\Models\Progress::findByUserAndLevel($player->id, $level->id)->points, 'la marca sigue');
+        assertSame('unchanged', seedWith($fx)['test-analisis']['result'], 'y volver a sembrar ya no cambia nada');
+    } finally {
+        ($fx['cleanup'])();
+    }
+});
+
 test('seed: audio ausente o distinto del horneado se salta sin frenar a los demás', function (): void {
     $fx = makeSeedFixture(['test-falta' => [], 'test-cambiado' => [], 'test-bien' => []]);
     try {

@@ -413,6 +413,21 @@ final class Level
     }
 
     /**
+     * Sustituye solo el análisis (hechos musicales), nunca el chart: un análisis
+     * más rico del mismo audio no cambia el nivel que se juega ni sus marcas.
+     *
+     * @return bool true si cambió.
+     */
+    public function updateAnalysis(string $analysisJson): bool
+    {
+        $stmt = Database::getInstance()->prepare(
+            'UPDATE levels SET analysis_json = :analysis_json WHERE id = :id AND NOT (analysis_json <=> :same)',
+        );
+        $stmt->execute(['analysis_json' => $analysisJson, 'same' => $analysisJson, 'id' => $this->id]);
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
      * Actualiza la metadata mostrable de un nivel (no toca audio ni chart).
      *
      * @param array{title?: string, artist?: ?string, difficulty?: int, file_path?: ?string} $data

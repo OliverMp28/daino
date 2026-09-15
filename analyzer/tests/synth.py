@@ -182,3 +182,154 @@ def pop_song(bpm: float = 118.0, seed: int = 3) -> tuple[np.ndarray, Truth]:
 
 def to_stereo(mono: np.ndarray) -> np.ndarray:
     return np.stack([mono, mono])
+
+
+# --------------------------- Armonía: tonalidad, acordes y melodía ---------------------------
+#
+# Notas con armónicos (no senos puros): el croma de una nota real reparte energía
+# en su quinta (3er armónico) y su tercera mayor (5º), y un detector que solo
+# funcione con senos no sirve para música. Etiquetas con la sintaxis de mir_eval
+# ("A:min", "C major") para medir con sus métricas estándar.
+
+NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+_FLATS = {"Db": "C#", "Eb": "D#", "Gb": "F#", "Ab": "G#", "Bb": "A#"}
+MAJOR_SCALE = (0, 2, 4, 5, 7, 9, 11)
+MINOR_SCALE = (0, 2, 3, 5, 7, 8, 11)          # menor armónica: la sensible del V mayor
+
+
+def pitch_class(name: str) -> int:
+    return NOTE_NAMES.index(_FLATS.get(name, name))
+
+
+def parse_chord(label: str) -> tuple[int, str]:
+    """"Am" → (9, "min"), "F#" → (6, "maj"), "Bb" → (10, "maj"), "D5" → (2, "5") (quinta, sin tercera)."""
+    if label.endswith("5"):
+        return pitch_class(label[:-1]), "5"
+    minor = label.endswith("m")
+    return pitch_class(label[:-1] if minor else label), "min" if minor else "maj"
+
+
+def hz(midi: float, cents: float = 0.0) -> float:
+    return 440.0 * 2 ** ((midi - 69 + cents / 100.0) / 12)
+
+
+def _note(freq: float, dur: float, *, rolloff: float = 0.62, decay: float = 1.2, attack: float = 0.004,
+          release: float = 0.04, harmonics: int = 8) -> np.ndarray:
+    n = int((dur + release) * SR)
+    t = np.arange(n) / SR
+    wave = np.zeros(n)
+    for h in range(1, harmonics + 1):
+        if freq * h < 9000:
+            wave += rolloff ** (h - 1) * np.sin(2 * np.pi * freq * h * t)
+    env = np.minimum(t / attack, 1.0) * np.exp(-t * decay)
+    tail = t > dur
+    env[tail] *= np.exp(-(t[tail] - dur) / (release / 4))
+    return (wave * env).astype(np.float32)
+
+
+@dataclass
+class TonalSection:
+    chords: list[str]                # un acorde por hueco: ["C", "G", "Am", "F"]; vacío = sin armonía
+    beats_per_chord: int = 4
+    repeats: int = 2
+    key: str = "C major"
+    drums: bool = True
+    melody: bool = True
+    gain: float = 1.0
+    melody_grid: float = 0.5         # 0.25 = semicorcheas: notas fuera de la rejilla del charles
+
+
+@dataclass
+class TonalTruth:
+    beats: np.ndarray
+    downbeats: np.ndarray
+    chords: list[tuple[float, float, str]]      # (inicio, fin, "A:min" | "N")
+    key: str                                    # tonalidad global
+    section_bounds: np.ndarray                  # inicio de cada sección y el final
+    section_keys: list[str]
+    melody_onsets: np.ndarray
+    drum_onsets: np.ndarray
+    duration: float
+    bpm: float
+
+    def chord_arrays(self) -> tuple[np.ndarray, list[str]]:
+        return np.array([[a, b] for a, b, _ in self.chords]), [c for _, _, c in self.chords]
+
+
+def tonal_song(sections: list[TonalSection], bpm: float = 110.0, key: str | None = None, tuning_cents: float = 0.0,
+               seed: int = 5, intro_silence: float = 0.5, bass: bool = True, drum_gain: float = 1.0) -> tuple[np.ndarray, TonalTruth]:
+    """Canción con progresión de acordes, bajo en la fundamental, melodía sobre la
+    escala y batería, en 4/4. `tuning_cents` desafina TODO (una grabación no
+    afinada a La 440). La tonalidad global es la de la primera sección salvo que
+    se indique."""
+    rng = _rng(seed)
+    kick, snare, hat = _kick(rng), _snare(rng), _hat(rng)
+    period = 60.0 / bpm
+    total_beats = sum(len(s.chords or [""]) * s.beats_per_chord * s.repeats for s in sections)
+    duration = intro_silence + total_beats * period + 1.5
+    buf = np.zeros(int(duration * SR), dtype=np.float32)
+
+    beats, downbeats, chords, melody, drums, bounds = [], [], [], [], [], []
+    t = intro_silence
+    for sec in sections:
+        bounds.append(t)
+        tonic = pitch_class(sec.key.split()[0])
+        scale = MINOR_SCALE if sec.key.endswith("minor") else MAJOR_SCALE
+        slots = (sec.chords or [None]) * sec.repeats
+        for label in slots:
+            start = t
+            span = sec.beats_per_chord * period
+            if label is None:
+                chords.append((start, start + span, "N"))
+            else:
+                root, quality = parse_chord(label)
+                chords.append((start, start + span, f"{NOTE_NAMES[root]}:{quality}"))
+                third = 3 if quality == "min" else 4
+                voicing = ((0, 0.55), (7, 0.45), (12, 0.35)) if quality == "5" else ((0, 0.55), (third, 0.45), (7, 0.45))
+                for iv, gain in voicing:
+                    midi = 48 + (root + iv) % 12 + (12 if (root + iv) % 12 < 5 else 0)     # voicing en la octava 3-4
+                    _place(buf, _note(hz(midi, tuning_cents), span, decay=0.6, attack=0.012), start, 0.16 * gain * sec.gain)
+                if bass:
+                    for b in range(sec.beats_per_chord):
+                        if b % 2 == 0:
+                            _place(buf, _note(hz(36 + root, tuning_cents), period * 2 * 0.9, rolloff=0.5, decay=2.0),
+                                   start + b * period, 0.22 * sec.gain)
+                if sec.melody:
+                    chord_tones = [(root + iv) % 12 for iv in ((0, 7) if quality == "5" else (0, third, 7))]
+                    pos = 0.0
+                    while pos < sec.beats_per_chord - 1e-9:
+                        step = sec.melody_grid * (1 + int(rng.integers(0, int(round(1 / sec.melody_grid)))))
+                        if pos + step > sec.beats_per_chord:
+                            step = sec.beats_per_chord - pos
+                        on_chord = rng.random() < 0.7 or pos == 0
+                        pcl = int(rng.choice(chord_tones)) if on_chord else (tonic + int(rng.choice(scale))) % 12
+                        at = start + pos * period
+                        _place(buf, _note(hz(72 + pcl, tuning_cents), step * period * 0.95, rolloff=0.45, decay=3.0),
+                               at, 0.2 * sec.gain)
+                        melody.append(at)
+                        pos += step
+            for b in range(sec.beats_per_chord):
+                bt = start + b * period
+                beats.append(bt)
+                if (len(beats) - 1) % 4 == 0:
+                    downbeats.append(bt)
+                if sec.drums:
+                    g = drum_gain * sec.gain
+                    if b % 4 in (0, 2):
+                        _place(buf, kick, bt, 0.8 * g)
+                        drums.append(bt)
+                    if b % 4 in (1, 3):
+                        _place(buf, snare, bt, 0.55 * g)
+                        drums.append(bt)
+                    for s in (0.0, 0.5):
+                        _place(buf, hat, bt + s * period, 0.45 * g)
+                        drums.append(bt + s * period)
+            t = start + span
+    bounds.append(duration)
+    buf /= max(1e-6, float(np.max(np.abs(buf)))) / 0.9
+    truth = TonalTruth(
+        beats=np.array(beats), downbeats=np.array(downbeats), chords=chords,
+        key=key or sections[0].key, section_bounds=np.array(bounds), section_keys=[s.key for s in sections],
+        melody_onsets=np.array(melody), drum_onsets=np.unique(np.round(drums, 6)), duration=duration, bpm=bpm,
+    )
+    return buf.astype(np.float32), truth

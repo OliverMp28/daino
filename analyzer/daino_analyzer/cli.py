@@ -5,6 +5,7 @@
     python -m daino_analyzer report <mp3>...             resumen legible de varias canciones
     python -m daino_analyzer bake-official [--from DIR]  hornea los niveles oficiales
     python -m daino_analyzer sonify <mp3> --out f.wav    la canción con clics en beats y downbeats
+                                       [--chords]        …y los acordes detectados sonando debajo
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("sonify", help="canción + clics en beats/downbeats para escucharla")
     p.add_argument("file")
     p.add_argument("--out", required=True)
+    p.add_argument("--chords", action="store_true", help="añade los acordes detectados")
 
     args = parser.parse_args(argv)
 
@@ -61,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sonify":
         from daino_analyzer.sonify import sonify
 
-        return sonify(Path(args.file), Path(args.out))
+        return sonify(Path(args.file), Path(args.out), chords=args.chords)
     return 2
 
 
@@ -80,6 +82,9 @@ def _analyze(file: str, out: str | None) -> int:
 
 
 def _report(files: list[str]) -> int:
+    import resource
+    from collections import Counter
+
     from daino_analyzer import analysis, schema
     from daino_analyzer.decode import decode_file
 
@@ -94,7 +99,20 @@ def _report(files: list[str]) -> int:
         print(f"   onsets {len(a['onsets'])} · eventos/min {ft['eventsPerMin']:.0f} (fuertes {ft['strongEventsPerMin']:.0f}) · percusivo {ft['percussiveRatio']:.2f}")
         print(f"   sonoridad {ft['loudnessDbfs']:.1f} dBFS · rango dinámico {ft['dynamicRangeDb']:.1f} dB · silencio {ft['silenceRatio']:.0%}")
         print("   secciones: " + " | ".join(
-            f"{s['startSec']:.0f}s {s['role']}({s['cluster']}) e={s['energy']:.2f}" for s in a["sections"]))
+            f"{s['startSec']:.0f}s {s['role']}({s['cluster']}) e={s['energy']:.2f} {s['key']}" for s in a["sections"]))
+        ton = a["tonal"]
+        chords, held = ton["chords"], Counter()
+        for i, (t, label) in enumerate(chords):
+            held[label] += (chords[i + 1][0] if i + 1 < len(chords) else a["durationSec"]) - t
+        perc = sorted(a["onsetPercussive"])
+        print(f"   tonalidad {ton['key']} (confianza {ton['keyConfidence']:.2f}) · afinación {ton['tuningCents']:+.1f} cents · "
+              f"acordes {len(chords)} (encaje {ton['chordConfidence']:.2f}, {ton['harmonicRhythm']:.2f} cambios/compás)")
+        print("   acordes más largos: " + ", ".join(f"{label} {secs:.0f}s" for label, secs in held.most_common(6)))
+        if ton["modulations"]:
+            print("   modulaciones: " + ", ".join(f"{m['t']:.0f}s → {m['key']} ({m['semitones']:+d})" for m in ton["modulations"]))
+        lv = a["energy"]["bandLevelDb"]
+        print(f"   percusividad mediana {perc[len(perc) // 2] if perc else 0:.2f} · nivel graves/medios/agudos "
+              f"{lv[0]:.0f}/{lv[1]:.0f}/{lv[2]:.0f} dB · memoria pico {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")
     return 0
 
 

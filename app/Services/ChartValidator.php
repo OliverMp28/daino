@@ -45,12 +45,18 @@ final class ChartValidator
 
     /**
      * 1 = analizador JS del navegador (bpm + onsets). 2 = analizador del servidor
-     * (Ola 4): el 1 más beats, downbeats, secciones, energía y rasgos.
+     * (Ola 4): el 1 más beats, downbeats, secciones, energía y rasgos. Desde la
+     * versión 2 del analizador, además (opcionales en el formato): percusividad de
+     * cada onset, energía por bandas, tonalidad por sección y el bloque `tonal`.
      */
     public const ANALYSIS_FORMAT_VERSIONS = [1, 2];
 
     public const MAX_BEATS = 30_000;
     public const MAX_SECTIONS = 200;
+    public const MAX_CHORDS = 40_000;
+    public const MAX_MODULATIONS = 200;
+    private const BAND_NAMES = ['low', 'mid', 'high'];
+    private const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
     private const SECTION_ROLES = ['intro', 'verse', 'chorus', 'bridge', 'break', 'outro'];
 
     /** @var array<string, array{0: int|float, 1: int|float}> */
@@ -383,6 +389,15 @@ final class ChartValidator
             $out['onsetColor'][] = array_map(static fn ($v) => self::number($v, $f, "onsetColor[{$i}]", 0, 1), $c);
         }
 
+        // Analizador 2: opcionales (los análisis de la versión 1 no los tienen).
+        if (array_key_exists('onsetPercussive', $a)) {
+            $perc = $a['onsetPercussive'];
+            if (!is_array($perc) || !array_is_list($perc) || count($perc) !== $onsetCount) {
+                self::fail($f, 'onsetPercussive debe ser paralelo a onsets.');
+            }
+            $out['onsetPercussive'] = array_map(static fn ($v) => self::number($v, $f, 'onsetPercussive', 0, 1), $perc);
+        }
+
         foreach (['beats', 'downbeats'] as $key) {
             $list = $a[$key] ?? null;
             if (!is_array($list) || !array_is_list($list) || count($list) > self::MAX_BEATS) {
@@ -423,7 +438,7 @@ final class ChartValidator
                 || !in_array($role, self::SECTION_ROLES, true)) {
                 self::fail($f, "sections[{$i}] inválida.");
             }
-            $out['sections'][] = [
+            $section = [
                 'startSec' => $start,
                 'endSec'   => $end,
                 'cluster'  => $cluster,
@@ -431,6 +446,11 @@ final class ChartValidator
                 'energy'   => self::number($s['energy'] ?? null, $f, "sections[{$i}].energy", 0, 1),
                 'density'  => self::number($s['density'] ?? null, $f, "sections[{$i}].density", 0, 1000),
             ];
+            if (array_key_exists('key', $s)) {
+                $section['key'] = self::keyLabel($s['key'], $f, "sections[{$i}].key");
+                $section['keyConfidence'] = self::number($s['keyConfidence'] ?? null, $f, "sections[{$i}].keyConfidence", 0, 1);
+            }
+            $out['sections'][] = $section;
         }
 
         $energy = $a['energy'] ?? null;
@@ -442,6 +462,31 @@ final class ChartValidator
             'hopSec' => self::number($energy['hopSec'] ?? null, $f, 'energy.hopSec', 0.01, 10),
             'values' => array_map(static fn ($v) => self::number($v, $f, 'energy.values', 0, 1), $values),
         ];
+        if (array_key_exists('bands', $energy)) {
+            $bands = $energy['bands'];
+            $names = is_array($bands) ? array_keys($bands) : [];
+            sort($names);
+            if (!is_array($bands) || array_is_list($bands) || $names !== ['high', 'low', 'mid']) {
+                self::fail($f, 'energy.bands debe tener low, mid y high.');
+            }
+            $out['energy']['bands'] = [];
+            foreach (self::BAND_NAMES as $name) {
+                $curve = $bands[$name];
+                if (!is_array($curve) || !array_is_list($curve) || count($curve) !== count($values)) {
+                    self::fail($f, "energy.bands.{$name} debe ser paralela a energy.values.");
+                }
+                $out['energy']['bands'][$name] = array_map(static fn ($v) => self::number($v, $f, "energy.bands.{$name}", 0, 1), $curve);
+            }
+            $levels = $energy['bandLevelDb'] ?? null;
+            if (!is_array($levels) || !array_is_list($levels) || count($levels) !== 3) {
+                self::fail($f, 'energy.bandLevelDb debe tener 3 niveles.');
+            }
+            $levels = array_map(static fn ($v) => self::number($v, $f, 'energy.bandLevelDb', -120, 0), $levels);
+            if (max($levels) < -5.0) {
+                self::fail($f, 'energy.bandLevelDb: la banda más fuerte no puede quedar por debajo de −5 dB.');
+            }
+            $out['energy']['bandLevelDb'] = $levels;
+        }
 
         $features = $a['features'] ?? null;
         if (!is_array($features) || array_is_list($features) || !is_bool($features['pulseDoubled'] ?? null)) {
@@ -451,6 +496,112 @@ final class ChartValidator
         foreach (self::FEATURE_RANGES as $key => [$lo, $hi]) {
             $out['features'][$key] = self::number($features[$key] ?? null, $f, "features.{$key}", $lo, $hi);
         }
+
+        if (array_key_exists('tonal', $a)) {
+            $out['tonal'] = self::validateTonal($a['tonal'], $duration);
+        }
+        return $out;
+    }
+
+    /**
+     * Armonía (analizador 2): afinación, tonalidad, acordes y modulaciones.
+     *
+     * @return array<string, mixed>
+     */
+    private static function validateTonal(mixed $t, float $duration): array
+    {
+        $f = 'analysis';
+        if (!is_array($t) || array_is_list($t)) {
+            self::fail($f, 'tonal debe ser un objeto.');
+        }
+        $out = [
+            'tuningCents'   => self::number($t['tuningCents'] ?? null, $f, 'tonal.tuningCents', -50, 50),
+            'key'           => self::keyLabel($t['key'] ?? null, $f, 'tonal.key'),
+            'keyConfidence' => self::number($t['keyConfidence'] ?? null, $f, 'tonal.keyConfidence', 0, 1),
+            'chords'        => [],
+        ];
+
+        $chords = $t['chords'] ?? null;
+        if (!is_array($chords) || !array_is_list($chords) || $chords === [] || count($chords) > self::MAX_CHORDS) {
+            self::fail($f, 'tonal.chords debe ser una lista acotada y no vacía.');
+        }
+        $chordLabels = self::chordLabels();
+        $prevT = -INF;
+        $prevLabel = null;
+        foreach ($chords as $i => $c) {
+            if (!is_array($c) || !array_is_list($c) || count($c) !== 2) {
+                self::fail($f, "tonal.chords[{$i}] debe ser [t, etiqueta].");
+            }
+            $time = self::number($c[0], $f, "tonal.chords[{$i}][0]", 0, $duration + 0.001);
+            if ($time <= $prevT || !in_array($c[1], $chordLabels, true) || $c[1] === $prevLabel) {
+                self::fail($f, "tonal.chords[{$i}] inválido.");
+            }
+            $prevT = $time;
+            $prevLabel = $c[1];
+            $out['chords'][] = [$time, $c[1]];
+        }
+        if ($out['chords'][0][0] !== 0.0) {
+            self::fail($f, 'tonal.chords debe empezar en 0.');
+        }
+
+        $out['chordConfidence'] = self::number($t['chordConfidence'] ?? null, $f, 'tonal.chordConfidence', 0, 1);
+        $out['harmonicRhythm'] = self::number($t['harmonicRhythm'] ?? null, $f, 'tonal.harmonicRhythm', 0, 64);
+
+        $mods = $t['modulations'] ?? null;
+        if (!is_array($mods) || !array_is_list($mods) || count($mods) > self::MAX_MODULATIONS) {
+            self::fail($f, 'tonal.modulations debe ser una lista acotada.');
+        }
+        $out['modulations'] = [];
+        $prevT = 0.0;
+        foreach ($mods as $i => $m) {
+            if (!is_array($m) || array_is_list($m)) {
+                self::fail($f, "tonal.modulations[{$i}] no es un objeto.");
+            }
+            $time = self::number($m['t'] ?? null, $f, "tonal.modulations[{$i}].t", 0, $duration + 0.001);
+            $semitones = $m['semitones'] ?? null;
+            if ($time <= $prevT || !is_int($semitones) || $semitones < -5 || $semitones > 6) {
+                self::fail($f, "tonal.modulations[{$i}] inválida.");
+            }
+            $prevT = $time;
+            $out['modulations'][] = [
+                't'         => $time,
+                'key'       => self::keyLabel($m['key'] ?? null, $f, "tonal.modulations[{$i}].key"),
+                'semitones' => $semitones,
+            ];
+        }
+        return $out;
+    }
+
+    private static function keyLabel(mixed $value, string $field, string $path): string
+    {
+        if (!is_string($value) || !in_array($value, self::keyLabels(), true)) {
+            self::fail($field, "{$path} no es una tonalidad conocida.");
+        }
+        return $value;
+    }
+
+    /** @return list<string> "C major" … "B minor" (sintaxis de mir_eval, como el analizador). */
+    private static function keyLabels(): array
+    {
+        $out = [];
+        foreach (['major', 'minor'] as $mode) {
+            foreach (self::NOTE_NAMES as $note) {
+                $out[] = "{$note} {$mode}";
+            }
+        }
+        return $out;
+    }
+
+    /** @return list<string> "C:maj" … "B:min" y "N" (sin acorde). */
+    private static function chordLabels(): array
+    {
+        $out = [];
+        foreach (['maj', 'min'] as $quality) {
+            foreach (self::NOTE_NAMES as $note) {
+                $out[] = "{$note}:{$quality}";
+            }
+        }
+        $out[] = 'N';
         return $out;
     }
 

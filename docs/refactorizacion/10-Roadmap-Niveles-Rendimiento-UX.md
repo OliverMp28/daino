@@ -792,6 +792,61 @@ Archivos: migración `011_add_publish_ready_variants.sql`; `Level` (`hasVariants
 
 Limitaciones: en este entorno local cada petición a la API cuesta 0.3-0.6 s aunque no haga nada (Docker Desktop en Windows con el código montado y `opcache.revalidate_freq=0`), así que el bloqueo breve al cambiar la dificultad se nota más que en producción. Un nivel listo que su autor nunca publica conserva su audio en el servidor hasta que pulse "No publicar". Desde la ficha solo se puede retirar un nivel que todavía no se ha publicado.
 
+#### Afinado del analizador: armonía, percusividad y bandas (Sep 2026)
+
+El propietario preguntó si el analizador es "de verdad potente": notas, partes de la canción, graves y agudos, no solo BPM. Tras revisar el estado del arte (búsqueda propia y un informe de investigación externo) la conclusión fue doble. **beat_this es la elección correcta** para el pulso (ISMIR 2024, del mismo laboratorio que madmom, al que sustituye). Pero **faltaba toda la armonía** y la estructura es la segmentación clásica. Lo que ese informe recomendaba (separar pistas con Demucs, estructura con `all-in-one`) pide **6-12 GB de RAM de pico**, y el servidor previsto es un VPS de 1-2 GB compartido con otro proyecto: un solo análisis así lo tumbaría. Así que el afinado se hizo **sin dependencias nuevas**: todo sale de `librosa`, que ya estaba.
+
+**Qué añade el analizador 2** (el formato del análisis sigue siendo el 2; los campos son nuevos y opcionales para quien lee):
+
+| Campo | Qué es | Para qué sirve |
+|---|---|---|
+| `tonal.key`, `keyConfidence` | tonalidad global ("D minor") | color y ánimo de la escena |
+| `tonal.tuningCents` | afinación de la grabación (−50…+50) | que una versión a 432 Hz o acelerada no salga un semitono corrida |
+| `tonal.chords` | `[t, "B:min"]` por beat, "N" sin acorde | momentos en que la música cambia aunque no haya golpe |
+| `tonal.chordConfidence` | cuánto explican los acordes la armonía [0,1] | no usar la armonía en rap sobre 808 o ruido |
+| `tonal.harmonicRhythm` | cambios de acorde por compás | canción que "se mueve" frente a una estática |
+| `tonal.modulations` | `{t, key, semitones}` | la subida de tono del estribillo final (momento épico) |
+| `sections[].key` | tonalidad de cada sección | estrofa menor frente a estribillo mayor |
+| `onsetPercussive` | por onset, >0.5 golpe de batería, <0.5 ataque de nota | seguir la melodía o la batería |
+| `energy.bands` | curvas graves/medios/agudos a 10 Hz, relativas | cuándo entra el bajo (drop), cuándo se abre el brillo |
+| `energy.bandLevelDb` | nivel de cada banda respecto a la mezcla | saber si una banda de verdad pesa |
+
+**Cómo** (`analyzer/daino_analyzer/tonal.py`): CQT a 93 ms con un bin cada tercio de semitono → separación armónico/percusiva por medianas → afinación elegida probando desplazamientos y quedándose con el que mejor explica la armonía → croma agudo y grave → acordes por plantillas de las 24 tríadas con el bajo reforzando la fundamental y Viterbi por beat → tonalidad en el tiempo (croma de ±4 s, perfiles de Temperley, Viterbi muy estable) → bloques de armadura que solo se separan si su tonalidad los explica mejor que la de **ambos** vecinos. La percusividad (`onsets.py`) es la fracción del espectro que se enciende en el ataque, sobre el flujo que ya se calculaba.
+
+**Decisiones tomadas midiendo, no suponiendo:**
+
+- **La separación armónica en el CQT sí sirve para acordes** (90.8 % → 97.7 % de acierto con batería), **no para detectar notas aparte**: los bombos y cajas tienen tono, y entre el 39 y el 66 % de los golpes salían como "nota". Se descartó; filtrar los onsets por percusividad da las notas mejor.
+- **Afinación por encaje armónico**, no por picos del espectro: en temas con voces procesadas los estimadores clásicos (`librosa.estimate_tuning` y picos del CQT) discrepaban hasta 30 cents entre sí; en temas limpios el encaje tiene un pico nítido en el valor correcto.
+- **"Sin acorde" relativo a la canción**: un break de batería encajaba a 0.56 frente a 0.94 de sus acordes. Un umbral fijo no sirve (en música real el encaje típico es 0.6-0.8). Del 0 % pasó al 87 % "sin acorde" en el break.
+- **Modulaciones con criterio de dos lados**: la primera versión medía la ganancia de la tonalidad nueva en su propio tramo, que siempre sale alta. Inventaba 3-5 modulaciones en What's Up Danger y Time. Además, los errores típicos (quinta, paralela) exigen más evidencia, y una modulación dura al menos 12 s.
+- **Nivel de banda en dB, no cuota**: en los 8 oficiales los agudos son el 0.1-2 % de la potencia (−30 a −17 dB) aunque charles y platillos se oyen. Una cuota del 1 % engañaba.
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tonalidad, 5 canciones sintéticas (mayores, menores, sostenidos, batería ×3) | 5/5 exactas, confianza ≥ 0.8 |
+| Acordes (mir_eval, mayor/menor) | ≥ 95 % en las 5; 87 % con acordes cada 2 beats |
+| Grabación desafinada +35, −30, −45 cents | afinación a ≤ 12 cents, misma tonalidad y acordes |
+| Volumen ×0.05 | acordes, tonalidad y afinación idénticos |
+| Modulaciones Do→Re, La m→Do m, Sol→La♭→Sol, La m→La | todas, con su signo, a ≤ 4 s de la frontera |
+| Sin modulación: dominante sin alterar, acordes de quinta sin tercera, estrofa en la relativa | 0 modulaciones falsas |
+| Integración con beats seguidos por beat_this (`pop_song`) | el acorde de cada sección es el suyo |
+| Percusividad golpe vs nota (AUC) | 0.96-1.00; 0.91 con la batería 9 dB por debajo |
+| Energía por bandas (bajo 5 s + charles 5 s) | cada curva sube en su mitad |
+| Real: Time | Am, Em, G, D, su progresión conocida |
+| Real: Last Christmas (clip subido de tono) | los acordes {B♭, Fm, Cm, E♭} son I–vi–ii–V en Mi♭, la progresión de la canción transpuesta; afinación −32.5 cents. Tonalidad dada como B♭ (error de quinta) |
+| Real: Dawn of Faith | Do menor con Cm, G, E♭, A♭, Fm |
+| Real: What's Up Danger | Re, con acordes de quinta: mayor/menor ambiguo por naturaleza (documentado) |
+| Re-horneado de los 8 oficiales | **charts, dificultad y estadísticas idénticos**; onsets, beats, secciones y energía idénticos; análisis 303 → 522 KB |
+| `seed:official` | "análisis actualizado" en los 8: mismos `chart_hash`, marca existente conservada |
+| Coste por canción de 3-4 min | etapa de tonalidad 0.3-1.4 s; **RAM pico 640-890 MB, −10 a +20 MB** respecto a antes (casi todo es PyTorch, como ya era) |
+| Tests | 166 JS, 68 PHP (+3), 104 Python (+33: `test_tonal.py`, percusividad, bandas, integración, esquema) |
+
+Operación: `ANALYZER_VERSION` pasa a 2, así que los análisis guardados en caché con la 1 se consideran obsoletos y un trabajo nuevo vuelve a analizar. Los niveles de la comunidad conservan su análisis de la versión 1 hasta que se reanalicen. Eso no afecta a nada: el charter todavía no usa la armonía. Cuando la use, `composer analysis:enqueue -- --level=…` y re-hornear los oficiales. El seeder ahora guarda un análisis nuevo aunque el chart no cambie, sin tocar chart ni marcas. Comprobarlo de oído: `sonify … --chords`.
+
+Limitaciones: solo tríadas (una séptima sale como su tríada; un acorde de quinta, mayor o menor al azar); la confusión con la relativa (Do mayor / La menor) es inherente a los perfiles de tonalidad; en música sin armonía estable la confianza baja y no debe usarse para decisiones de juego. Queda fuera, por RAM: separación de pistas (voz/batería/bajo) y contorno melódico con red neuronal (Basic Pitch, ~1 GB). Esto último sería lo siguiente si el VPS tiene margen, medido antes en una máquina de su tamaño.
+
 ---
 
 ### Ola 6 — Vocabulario de juego ampliado

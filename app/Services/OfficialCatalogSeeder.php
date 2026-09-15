@@ -174,10 +174,18 @@ final class OfficialCatalogSeeder
             return ['result' => self::RESULT_RECHART, 'detail' => 'audio/chart sustituidos', 'level_id' => $level->id];
         }
 
-        $changed = $level->updateMetadata($metadata);
+        // Mismo chart: un análisis más rico (otra versión del analizador) se guarda
+        // igual. No cambia lo que se juega, así que no afecta a ninguna marca.
+        $details = [];
+        if ($level->updateMetadata($metadata)) {
+            $details[] = 'metadata actualizada';
+        }
+        if ($level->updateAnalysis($analysisJson)) {
+            $details[] = 'análisis actualizado';
+        }
         return [
-            'result'   => $changed ? self::RESULT_UPDATED : self::RESULT_SAME,
-            'detail'   => $changed ? 'metadata actualizada' : '',
+            'result'   => $details !== [] ? self::RESULT_UPDATED : self::RESULT_SAME,
+            'detail'   => implode(', ', $details),
             'level_id' => $level->id,
         ];
     }
