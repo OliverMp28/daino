@@ -6,8 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { computeWorldView, readAheadS, sameView } from '../../resources/js/game/systems/worldView.js';
-import { WORLD_VIEW, GROUND_OFFSET_PX, PIXEL_SCALE, DINO_SIZE, JUMP_VELOCITY, GRAVITY } from '../../resources/js/game/config.js';
+import { WORLD_VIEW, GROUND_OFFSET_PX, PIXEL_SCALE, DINO_SIZE, JUMP_VELOCITY, GRAVITY, FLIP_MODE } from '../../resources/js/game/config.js';
 import { SPEED_RULES } from '../../resources/js/game/levels/speedPlan.js';
+import { ceilingYOf } from '../../resources/js/game/systems/geometry.js';
 
 /** Pantallas reales: [nombre, ancho CSS, alto CSS, devicePixelRatio]. */
 const LANDSCAPE = [
@@ -40,14 +41,16 @@ test('la celda del arte ocupa siempre un número entero de píxeles de dispositi
     }
 });
 
-test('en pantalla apaisada nunca se ve menos del mínimo: a la velocidad máxima hay ≥ 1.2 s para ver venir cada obstáculo', () => {
+test('en pantalla apaisada nunca se ve menos del mínimo: a la velocidad máxima hay ≥ 1.0 s para ver venir cada obstáculo', () => {
+    // Ola 6a: el techo pasó de 690 a 820 px/s (la velocidad se notaba poco). El
+    // legacy acababa sus canciones con 0.74 s de lectura.
     for (const [name, width, height, dpr] of LANDSCAPE) {
         const v = computeWorldView({ width, height, dpr });
         assert.ok(v.width >= WORLD_VIEW.minWidth - 1e-6, `${name}: ancho ${v.width.toFixed(0)}`);
         assert.ok(v.height >= WORLD_VIEW.minHeight - 1e-6, `${name}: alto ${v.height.toFixed(0)}`);
         assert.ok(v.width <= WORLD_VIEW.maxWidth * 1.08, `${name}: ancho ${v.width.toFixed(0)} (no se diluye)`);
         const read = readAheadS(v, SPEED_RULES.maxSpeedPxS);
-        assert.ok(read >= 1.2, `${name}: ${read.toFixed(2)} s a ${SPEED_RULES.maxSpeedPxS}/s`);
+        assert.ok(read >= 1.0, `${name}: ${read.toFixed(2)} s a ${SPEED_RULES.maxSpeedPxS}/s`);
     }
 });
 
@@ -74,6 +77,17 @@ test('el salto completo, el ptero y el HUD caben siempre por encima del suelo', 
         const hudWorld = HUD_CSS_PX / v.scale;
         assert.ok(v.groundY - apex > hudWorld, `${name}: la cabeza del Dino en el ápice (${(v.groundY - apex).toFixed(0)}) queda bajo el HUD (${hudWorld.toFixed(0)})`);
     }
+});
+
+test('el pasillo de la antigravedad y la franja de su techo caben siempre bajo el HUD', () => {
+    const HUD_CSS_PX = 84;
+    const RAIL_WORLD = 44;
+    for (const [name, width, height, dpr] of LANDSCAPE) {
+        const v = computeWorldView({ width, height, dpr });
+        const railTop = ceilingYOf(v.groundY) - RAIL_WORLD;
+        assert.ok(railTop > HUD_CSS_PX / v.scale, `${name}: la franja del techo (${railTop.toFixed(0)}) queda bajo el HUD (${(HUD_CSS_PX / v.scale).toFixed(0)})`);
+    }
+    assert.ok(FLIP_MODE.ceilingAbovePx - DINO_SIZE.h > 180, 'el Dino tiene recorrido de sobra entre suelo y techo');
 });
 
 test('en un móvil apaisado el mundo se reduce en vez de recortarse: más lectura que antes', () => {

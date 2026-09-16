@@ -16,14 +16,14 @@ import { createFixedStepper } from '../../resources/js/game/systems/fixedStep.js
 import { createInputTimeline, songTimeOfEvent } from '../../resources/js/game/systems/inputTimeline.js';
 import { createSpawner } from '../../resources/js/game/systems/spawner.js';
 import {
-    applyDuckEnd, applyDuckStart, applyJump, actionLeadS, dinoHitbox, integrateDino, isDuckKind,
+    applyInput, bodyHitbox, bodyState, enterMode, integrateBody,
 } from '../../resources/js/game/systems/physics.js';
-import {
-    COYOTE_TIME_S, DINO_SIZE, DINO_X, JUMP_BUFFER_S, MAX_PHYSICS_CATCHUP_S, OBSTACLE_KIND, PHYSICS_STEP_S,
-} from '../../resources/js/game/config.js';
+import { MAX_PHYSICS_CATCHUP_S, PHYSICS_STEP_S } from '../../resources/js/game/config.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
 import { speedProfileOf } from '../../resources/js/game/systems/speedProfile.js';
-import { makeSyntheticAnalysis } from './helpers/synthetic-audio.mjs';
+import { toSimModes, toSimObstacles } from '../../resources/js/game/systems/playability.js';
+import { virtualPlayerScript } from '../../resources/js/game/systems/virtualPlayer.js';
+import { makeSyntheticAnalysis, makeSyntheticSong } from './helpers/synthetic-audio.mjs';
 
 const GROUND = 700;
 
@@ -85,22 +85,13 @@ test('un paso puede detener el avance (colisión)', () => {
  * como una persona: no puede actuar entre dos frames que no ha visto.
  */
 function playLikeTheGame(chart, frameMs) {
-    const obstacles = chart.events.filter((e) => e.type === 'obstacle');
-    const spawner = createSpawner({
-        events: chart.events,
-        speed: speedProfileOf(chart),
-        layer: { addChild() {}, removeChild() {} },
-        createObstacle: () => ({ activate() {}, deactivate() {}, placeAt() {}, animate() {} }),
-    });
-    const body = {
-        x: DINO_X, y: GROUND - DINO_SIZE.h, vy: 0, grounded: true, ducking: false, fastFall: false,
-        jumpHeld: false, coyoteT: COYOTE_TIME_S, jumpBufferT: 0, dead: false,
-    };
+    const { script, modes } = levelOf(chart);
+    const spawner = fakeSpawner(chart);
+    const body = bodyState(GROUND);
     const stepper = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
     const box = { x: 0, y: 0, w: 0, h: 0 };
-    let prevGrounded = true;
     let next = 0;
-    let duckRelease = Infinity;
+    let modeIdx = 0;
     let songTime = 0;
     let frame = 0;
     const end = chart.audio.durationSec;
@@ -109,28 +100,14 @@ function playLikeTheGame(chart, frameMs) {
         songTime += frameMs(frame++) / 1000;
 
         // Entrada del jugador (entre frames, como los eventos de teclado).
-        while (next < obstacles.length && obstacles[next].t <= songTime) {
-            const e = obstacles[next++];
-            const def = OBSTACLE_KIND[e.kind];
-            if (isDuckKind(def)) {
-                applyDuckStart(body);
-                duckRelease = e.t + actionLeadS(def) + (def.w / 2 + 60) / speedProfileOf(chart).speedAt(e.t + actionLeadS(def));
-            } else if (!applyJump(body) && !body.grounded) {
-                body.jumpBufferT = JUMP_BUFFER_S;
-            }
-        }
-        if (songTime >= duckRelease) { applyDuckEnd(body); duckRelease = Infinity; }
+        while (next < script.length && script[next].at <= songTime) applyInput(body, script[next++].input);
 
-        // Igual que GameSession: física a paso fijo, luego el spawner.
+        // Igual que GameSession: física a paso fijo (portales en su instante), luego el spawner.
         let hitAt = null;
         stepper.advance(songTime, (t) => {
-            integrateDino(body, PHYSICS_STEP_S, GROUND);
-            if (!prevGrounded && body.grounded && body.jumpBufferT > 0) {
-                body.jumpBufferT = 0;
-                applyJump(body);
-            }
-            prevGrounded = body.grounded;
-            if (spawner.collisionAt(dinoHitbox(body, box), t, GROUND) !== null) { hitAt = t; return true; }
+            while (modeIdx < modes.length && modes[modeIdx].t <= t) enterMode(body, modes[modeIdx++].mode);
+            integrateBody(body, PHYSICS_STEP_S, GROUND);
+            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null) { hitAt = t; return true; }
             return false;
         });
         if (hitAt !== null) return { ok: false, at: hitAt };
@@ -149,6 +126,17 @@ test('un nivel completo se supera actuando en el beat, a 144, 60 y 30 fps', () =
     }
 });
 
+test('un nivel con antigravedad (Ola 6a) se supera con los portales en su paso de física, a 144, 60, 30 y 1 fps y con tirones', () => {
+    const { chart, report } = buildChart(makeSyntheticSong({ bpm: 124 }), { seed: 8, difficulty: 5 });
+    assert.ok(report.modes.length >= 2, 'el chart cambia de modo');
+    for (const fps of [144, 60, 30]) {
+        const r = playLikeTheGame(chart, () => 1000 / fps);
+        assert.ok(r.ok, `${fps} fps: choque en t=${r.at?.toFixed(3)}`);
+    }
+    assert.ok(runWithTimestampedInputs(chart, () => 1000), 'a 1 FPS con pulsaciones fechadas');
+    assert.ok(runWithTimestampedInputs(chart, (i) => (i % 5 === 2 ? 250 : 16)), 'con tirones de 250 ms');
+});
+
 test('se supera también con frames irregulares y tirones moderados', () => {
     // Patrón pseudoaleatorio determinista entre 6 y 33 ms, con un tirón de
     // 33 ms cada pocos frames: una máquina ocupada pero jugable.
@@ -165,27 +153,17 @@ test('regresión: con dt capado (el bucle anterior) un tirón hacía chocar a qu
     const hitchEvery = (i) => (i % 7 === 3 ? 160 : 16);
 
     const oldLoop = () => {
-        const obstacles = chart.events.filter((e) => e.type === 'obstacle');
-        const spawner = createSpawner({
-            events: chart.events, speed: speedProfileOf(chart),
-            layer: { addChild() {}, removeChild() {} },
-            createObstacle: () => ({ activate() {}, deactivate() {}, placeAt() {}, animate() {} }),
-        });
-        const body = {
-            x: DINO_X, y: GROUND - DINO_SIZE.h, vy: 0, grounded: true, ducking: false, fastFall: false,
-            jumpHeld: false, coyoteT: COYOTE_TIME_S, jumpBufferT: 0, dead: false,
-        };
+        const { script } = levelOf(chart);
+        const spawner = fakeSpawner(chart);
+        const body = bodyState(GROUND);
         let songTime = 0; let next = 0; let frame = 0;
         const box = { x: 0, y: 0, w: 0, h: 0 };
         while (songTime < chart.audio.durationSec) {
             const ms = hitchEvery(frame++);
             songTime += ms / 1000;
-            while (next < obstacles.length && obstacles[next].t <= songTime) {
-                const e = obstacles[next++];
-                if (isDuckKind(OBSTACLE_KIND[e.kind])) applyDuckStart(body); else applyJump(body);
-            }
-            integrateDino(body, Math.min(1 / 30, ms / 1000), GROUND);   // ← el defecto
-            if (spawner.collisionAt(dinoHitbox(body, box), songTime, GROUND) !== null) return false;
+            while (next < script.length && script[next].at <= songTime) applyInput(body, script[next++].input);
+            integrateBody(body, Math.min(1 / 30, ms / 1000), GROUND);   // ← el defecto
+            if (spawner.collisionAt(bodyHitbox(body, box), songTime, GROUND) !== null) return false;
             spawner.tick(songTime, ms / 1000, { width: 1920, groundY: GROUND });
         }
         return true;
@@ -234,58 +212,48 @@ test('con pulsaciones fechadas, un tirón de 250 ms ya no cambia el resultado', 
  * cada pulsación se aplica en el paso de física de su instante real.
  */
 function runWithTimestampedInputs(chart, frameMs) {
-    const obstacles = chart.events.filter((e) => e.type === 'obstacle');
-    const spawner = createSpawner({
-        events: chart.events, speed: speedProfileOf(chart),
-        layer: { addChild() {}, removeChild() {} },
-        createObstacle: () => ({ activate() {}, deactivate() {}, placeAt() {}, animate() {} }),
-    });
-    const body = {
-        x: DINO_X, y: GROUND - DINO_SIZE.h, vy: 0, grounded: true, ducking: false, fastFall: false,
-        jumpHeld: false, coyoteT: COYOTE_TIME_S, jumpBufferT: 0, dead: false,
-    };
+    const { script, modes } = levelOf(chart);
+    const spawner = fakeSpawner(chart);
+    const body = bodyState(GROUND);
     const stepper = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
     const inputs = createInputTimeline();
     const box = { x: 0, y: 0, w: 0, h: 0 };
-    let prevGrounded = true;
     let next = 0;
+    let modeIdx = 0;
     let songTime = 0;
     let frame = 0;
     while (songTime < chart.audio.durationSec) {
         songTime += frameMs(frame++) / 1000;
         // El juego LEE las teclas ahora, pero cada una lleva su instante real.
-        while (next < obstacles.length && obstacles[next].t <= songTime) {
-            const e = obstacles[next++];
-            const def = OBSTACLE_KIND[e.kind];
-            if (isDuckKind(def)) {
-                inputs.push('duckStart', e.t);
-                const release = e.t + actionLeadS(def) + (def.w / 2 + 60) / speedProfileOf(chart).speedAt(e.t + actionLeadS(def));
-                // Como una persona (y como el simulador del charter): si el
-                // siguiente también se pasa agachado y llega antes de soltar, se
-                // mantiene ↓ en vez de soltar entre los dos (Ola 5: el charter
-                // pone voladores seguidos a menos de un salto).
-                const following = obstacles[next];
-                const holdsOn = following !== undefined && isDuckKind(OBSTACLE_KIND[following.kind]) && following.t < release;
-                if (!holdsOn) inputs.push('duckEnd', release);
-            } else {
-                inputs.push('jump', e.t);
-            }
+        while (next < script.length && script[next].at <= songTime) {
+            inputs.push(script[next].input, script[next].at);
+            next++;
         }
         let hit = false;
         stepper.advance(songTime, (t) => {
-            inputs.drainUntil(t, (a) => {
-                if (a === 'jump') { if (!applyJump(body) && !body.grounded) body.jumpBufferT = JUMP_BUFFER_S; }
-                else if (a === 'duckStart') applyDuckStart(body);
-                else if (a === 'duckEnd') applyDuckEnd(body);
-            });
-            integrateDino(body, PHYSICS_STEP_S, GROUND);
-            if (!prevGrounded && body.grounded && body.jumpBufferT > 0) { body.jumpBufferT = 0; applyJump(body); }
-            prevGrounded = body.grounded;
-            if (spawner.collisionAt(dinoHitbox(body, box), t, GROUND) !== null) { hit = true; return true; }
+            while (modeIdx < modes.length && modes[modeIdx].t <= t) enterMode(body, modes[modeIdx++].mode);
+            inputs.drainUntil(t, (a) => applyInput(body, a));
+            integrateBody(body, PHYSICS_STEP_S, GROUND);
+            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null) { hit = true; return true; }
             return false;
         });
         if (hit) return false;
         spawner.tick(songTime, 0.016, { width: 1920, groundY: GROUND });
     }
     return true;
+}
+
+/** Guion del jugador virtual (el mismo del simulador del charter) y portales del chart. */
+function levelOf(chart) {
+    const obstacles = toSimObstacles(chart.events);
+    return { script: virtualPlayerScript(obstacles, speedProfileOf(chart)), modes: toSimModes(chart.events) };
+}
+
+function fakeSpawner(chart) {
+    return createSpawner({
+        events: chart.events,
+        speed: speedProfileOf(chart),
+        layer: { addChild() {}, removeChild() {} },
+        createObstacle: () => ({ activate() {}, deactivate() {}, placeAt() {}, animate() {} }),
+    });
 }

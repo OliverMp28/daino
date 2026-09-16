@@ -11,6 +11,7 @@
 //     combinaciones rápidas salto→agachado se desbloquean en momentos del arco
 //     (primer groove, primer empuje, clímax). Más difícil = antes y más.
 //   - CUÁNTO acelera el mundo en los tramos intensos.
+//   - QUÉ MODOS de movimiento aparecen, cuántas veces y desde cuándo (Ola 6).
 //
 // El techo (difficultyCeiling.js) dice hasta dónde admite la MÚSICA: una balada
 // no ofrece Extremo porque no hay golpes que lo justifiquen.
@@ -42,6 +43,9 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  * @property {{ duck: number, wide: number, offbeat: number, combo: number }} unlock  Etapa (STAGE).
  * @property {number} speedAmp      Cuánto de la aceleración por intensidad se aplica.
  * @property {number} airShare      Cuota máxima de obstáculos voladores por tramo.
+ * @property {Record<string, { from: number, segments: number, climax: boolean }>} modes
+ *           Modos de movimiento (Ola 6): desde qué etapa del arco, cuántos tramos
+ *           como mucho y si el clímax puede ser uno (levels/modePlan.js).
  */
 
 /** @type {Record<number, DifficultyProfile>} */
@@ -53,8 +57,9 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         minGapS: 1.15,
         maxRestS: 8,
         unlock: { duck: STAGE.FIRST_DRIVE, wide: STAGE.NEVER, offbeat: STAGE.NEVER, combo: STAGE.NEVER },
-        speedAmp: 0.5,
+        speedAmp: 0.55,
         airShare: 0.25,
+        modes: Object.freeze({}),
     }),
     2: Object.freeze({
         level: 2,
@@ -63,8 +68,9 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         minGapS: 0.9,
         maxRestS: 7,
         unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.CLIMAX, offbeat: STAGE.CLIMAX, combo: STAGE.NEVER },
-        speedAmp: 0.75,
+        speedAmp: 0.8,
         airShare: 0.34,
+        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_DRIVE, segments: 1, climax: false }) }),
     }),
     3: Object.freeze({
         level: 3,
@@ -75,6 +81,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.FIRST_DRIVE, offbeat: STAGE.FIRST_DRIVE, combo: STAGE.CLIMAX },
         speedAmp: 1,
         airShare: 0.5,
+        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_DRIVE, segments: 2, climax: false }) }),
     }),
     4: Object.freeze({
         level: 4,
@@ -83,8 +90,9 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         minGapS: 0,
         maxRestS: 5,
         unlock: { duck: STAGE.START, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_DRIVE },
-        speedAmp: 1.15,
+        speedAmp: 1.2,
         airShare: 0.5,
+        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_GROOVE, segments: 3, climax: true }) }),
     }),
     5: Object.freeze({
         level: 5,
@@ -93,8 +101,9 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         minGapS: 0,
         maxRestS: 4.5,
         unlock: { duck: STAGE.START, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_GROOVE },
-        speedAmp: 1.3,
+        speedAmp: 1.4,
         airShare: 0.5,
+        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_GROOVE, segments: 3, climax: true }) }),
     }),
 });
 

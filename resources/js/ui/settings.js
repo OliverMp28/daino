@@ -13,6 +13,8 @@ const KEY_SKIN = 'daino:skin';
 const KEY_QUALITY = 'daino:quality';
 const KEY_AUTO_RETRY = 'daino:auto_retry';
 const KEY_RUNS_STARTED = 'daino:runs_started';
+/** Prefijo por modo de movimiento: `daino:mode_seen:flip` (Ola 6a). */
+const KEY_MODE_SEEN = 'daino:mode_seen:';
 const PREFIX = 'daino:';
 
 /** Partidas en las que se enseñan los controles al empezar. */
@@ -129,6 +131,22 @@ export function countRunAndShouldHint() {
     const runs = Number.isFinite(n) && n >= 0 ? n : 0;
     safeSet(KEY_RUNS_STARTED, String(runs + 1));
     return runs < CONTROL_HINT_RUNS;
+}
+
+/**
+ * Cuenta una partida con cierto modo de movimiento y devuelve cuántas van
+ * (incluida esta). GameSession lo usa para explicar los controles de un modo las
+ * primeras veces que alguien se lo encuentra (Ola 6a).
+ *
+ * @param {string} modeId
+ * @returns {number}
+ */
+export function countModeSeen(modeId) {
+    const key = `${KEY_MODE_SEEN}${modeId}`;
+    const n = Number.parseInt(safeGet(key) ?? '0', 10);
+    const seen = (Number.isFinite(n) && n >= 0 ? n : 0) + 1;
+    safeSet(key, String(seen));
+    return seen;
 }
 
 function safeGet(key) {

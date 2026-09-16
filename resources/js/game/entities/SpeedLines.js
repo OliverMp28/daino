@@ -41,6 +41,8 @@ export function createSpeedLines(viewport) {
 
     let level = 0;        // [0,1] intensidad pedida
     let budget = 1;       // fracción del pool que permite el perfil de render
+    /** Franja libre sobre el suelo; sube con el pasillo de un modo (Ola 6a). */
+    let clearance = SPEED_LINES.clearAboveGroundPx;
     let pendingBurst = 0;
     let shown = 0;        // alpha del conjunto, con fundido
 
@@ -54,7 +56,7 @@ export function createSpeedLines(viewport) {
         line.s.alpha = (a0 + (a1 - a0) * k) * (0.6 + Math.random() * 0.4);
         line.s.tint = SPEED_LINES.colors[Math.floor(Math.random() * SPEED_LINES.colors.length)];
         const top = H * SPEED_LINES.topFraction;
-        const bottom = Math.max(top + 8, groundY - SPEED_LINES.clearAboveGroundPx);
+        const bottom = Math.max(top + 8, groundY - clearance);
         line.s.y = Math.round(top + Math.random() * (bottom - top));
         line.s.x = anywhere ? Math.random() * W : W + Math.random() * W * 0.3;
         line.s.visible = true;
@@ -79,6 +81,15 @@ export function createSpeedLines(viewport) {
         /** Ráfaga de un acelerón: rayas por toda la pantalla a la vez. */
         burst() {
             pendingBurst = Math.round(SPEED_LINES.burst * budget);
+        },
+
+        /**
+         * Franja libre sobre el suelo, en unidades de mundo. 0 = la de siempre
+         * (por encima del salto y del ptero).
+         * @param {number} px
+         */
+        setClearance(px) {
+            clearance = Math.max(SPEED_LINES.clearAboveGroundPx, px || 0);
         },
 
         /** @param {number} ratio  Fracción del pool que se permite animar [0,1]. */

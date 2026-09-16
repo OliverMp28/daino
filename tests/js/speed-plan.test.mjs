@@ -184,6 +184,8 @@ test('techo: ni una canción rápida en Extremo pasa de SPEED_RULES.maxSpeedPxS'
 });
 
 test('regresión del playtest: What\'s Up Danger (Extremo) no vuelve a la base del 60 % al 80 % y llega al clímax mucho más rápido', async () => {
+    // Segundo playtest (Ola 6a): con ×1.2 y ×1.55 "se nota un poquito, pero no
+    // tanto". Ahora ×1.35 del 60 % al 80 % y ×1.75 en el clímax como mínimo.
     const b = await baked('whats-up-danger');
     const { chart, report } = buildChart(b.analysis, { sha256: b.audio.sha256, difficulty: 5 });
     const speed = speedProfileOf(chart);
@@ -191,9 +193,9 @@ test('regresión del playtest: What\'s Up Danger (Extremo) no vuelve a la base d
     const dur = chart.audio.durationSec;
     assert.equal(report.gears.length, 3, `marchas ${JSON.stringify(report.gears)}`);
     for (let f = 0.6; f <= 0.8; f += 0.02) {
-        assert.ok(speed.speedAt(dur * f) >= base * 1.2, `al ${Math.round(f * 100)} %: ${speed.speedAt(dur * f)} px/s (base ${base})`);
+        assert.ok(speed.speedAt(dur * f) >= base * 1.35, `al ${Math.round(f * 100)} %: ${speed.speedAt(dur * f)} px/s (base ${base})`);
     }
-    assert.ok(report.topSpeedPxS >= base * 1.5, `clímax a ${report.topSpeedPxS} px/s, ×${(report.topSpeedPxS / base).toFixed(2)}`);
+    assert.ok(report.topSpeedPxS >= base * 1.75, `clímax a ${report.topSpeedPxS} px/s, ×${(report.topSpeedPxS / base).toFixed(2)}`);
     assert.ok(report.climax.t0 > dur * 0.6, 'el clímax llega en el tramo final');
 });
 
@@ -207,7 +209,7 @@ test('los 8 oficiales × 5 dificultades: las canciones de más de 2:30 aceleran 
             const label = `${file} d${difficulty}`;
             if (chart.audio.durationSec >= 150) {
                 assert.ok(ups(chart).length >= 2, `${label}: ${ups(chart).length} acelerones`);
-                assert.ok(report.topSpeedPxS >= chart.world.speedPxS * 1.15, `${label}: solo ×${(report.topSpeedPxS / chart.world.speedPxS).toFixed(2)}`);
+                assert.ok(report.topSpeedPxS >= chart.world.speedPxS * 1.3, `${label}: solo ×${(report.topSpeedPxS / chart.world.speedPxS).toFixed(2)}`);
             }
             const speed = speedProfileOf(chart);
             assert.ok(speed.speedAt(report.climax.t0 + 0.5) > speed.speedAt(report.climax.t0 - 1), `${label}: el clímax acelera`);

@@ -45,15 +45,19 @@ import { createSpeedCues } from './systems/speedCues.js';
 import { speedProfileOf } from './systems/speedProfile.js';
 import { obstacleEvents } from './levels/chartFormat.js';
 import { createBurstEmitter } from './entities/ParticleLayer.js';
+import { createModeGates } from './entities/ModeGates.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
-import { computeGroundY, integrateDino, dinoHitbox, isDuckKind } from './systems/physics.js';
+import { BODY_EVENT, bodyHitbox, ceilingYOf, computeGroundY, enterMode, integrateBody } from './systems/physics.js';
+import { createModeTimeline } from './systems/modeTimeline.js';
+import { MOVEMENT_MODES } from './systems/modes/index.js';
 import { createFixedStepper } from './systems/fixedStep.js';
 import { createInputTimeline, songTimeOfEvent } from './systems/inputTimeline.js';
+import { countModeSeen } from '../ui/settings.js';
 import {
-    DT_CAP_S, DINO_SIZE, JUMP_BUFFER_S, OBSTACLE_KIND,
+    DT_CAP_S, DINO_SIZE, MODE_COLORS, OBSTACLE_KIND,
     SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
-    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX,
+    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -107,7 +111,6 @@ export class GameSession {
         this._hintsShown = false;
         this._attemptBanner = false;
         this._score = 0;
-        this._prevGrounded = true;
         this._dying = false;
         this._dieT = 0;
         this._dustT = 0;
@@ -131,13 +134,21 @@ export class GameSession {
         this._gearMomentAt = Infinity;
         /** Instantes de drops y lifts: una marcha que cae en uno no suma otro momento. */
         this._momentTimes = this.chart.events.filter((e) => e.type === 'fx').map((e) => e.t);
+        // Modos de movimiento (Ola 6a): portales del chart, su línea de tiempo y
+        // lo que el HUD anuncia antes de cada uno.
+        this._modes = createModeTimeline(this.chart.events);
+        this._modeIdx = 0;
+        this._gates = null;
+        this._modeHint = '';
+        this._modeCue = '';
         this._climaxGlow = 0;
         this._dropT = Infinity;       // segundos desde el último drop/lift (∞ = ninguno)
         this._momentStrength = 1;     // 1 drop, < 1 lift
+        this._momentColor = DROP_FX.overlayColor;
         this._dropOverlay = undefined; // destello del drop, se crea en el primero
         this._cleared = false;        // ya no quedan obstáculos por cruzar
         /** Obstáculos por instante de acción, para reconocer pulsaciones en el golpe. */
-        this._onBeatTargets = obstacleEvents(this.chart).map((e) => ({ t: e.t, duck: isDuckKind(OBSTACLE_KIND[e.kind]), claimed: false }));
+        this._onBeatTargets = obstacleEvents(this.chart).map((e) => ({ t: e.t, action: OBSTACLE_KIND[e.kind].action, claimed: false }));
         this._onBeatCursor = 0;
         // Física a paso fijo sincronizada con el reloj de la canción.
         this._physics = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
@@ -174,6 +185,11 @@ export class GameSession {
             createObstacle: (kind) => new Obstacle(kind),
         });
 
+        // Portales y techo de los modos, POR DETRÁS del Dino y los obstáculos:
+        // el Dino atraviesa el portal, no pasa por delante.
+        this._gates = createModeGates({ changes: this._modes.changes, speed: this._speed });
+        layers.gameLayer.addChildAt(this._gates.container, 0);
+
         // Bursts (polvo de aterrizaje, estallido de muerte) sobre el gameLayer.
         this._bursts = createBurstEmitter(layers.gameLayer);
 
@@ -188,10 +204,21 @@ export class GameSession {
             this.hud.setControls?.(true);
             this._hintsShown = true;
         }
+        // Las primeras veces que alguien se encuentra un modo, su aviso explica
+        // cómo se juega (en táctil, tocar; con teclado, la tecla).
+        const newModes = [...new Set(this._modes.changes.map((c) => c.mode))].filter((m) => m !== 'run');
+        if (newModes.length > 0 && newModes.some((m) => countModeSeen(m) <= MODE_FX.hintRuns)) {
+            const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+            this._modeHint = touch ? 'Toca para invertir la gravedad' : 'Espacio: invertir la gravedad';
+        }
         this.hud.setRoadmap?.({
             durationSec: this._durationSec,
             sections: this.chart.events.filter((e) => e.type === 'section'),
             speedUps: this._speedCues.ups.map((u) => u.at),
+            // Los tramos con otras reglas, marcados en el mapa con su color.
+            modes: this._modes.segments
+                .filter((s) => s.mode !== 'run')
+                .map((s) => ({ t0: s.t0, t1: Math.min(s.t1, this._durationSec), color: MODE_COLORS[s.mode] })),
         });
         this.hud.setGear?.(0);
 
@@ -315,8 +342,10 @@ export class GameSession {
         // este mismo frame todavía podría necesitarlos para la colisión.
         const collided = this._physics.advance(songTime, (t) => this._physicsStep(t, groundY));
 
-        // Spawner: coloca cada sprite donde el tiempo de canción dice.
+        // Spawner: coloca cada sprite donde el tiempo de canción dice; los
+        // portales y el techo del modo, con la misma fórmula.
         this.spawner.tick(songTime, dt, { width: view.width, groundY });
+        this._gates.tick(songTime, dt, { width: view.width, groundY });
 
         if (collided) {
             this._startDeath();
@@ -333,22 +362,24 @@ export class GameSession {
 
         this._tickStructure(songTime, shownTime, dt, groundY);
 
-        // Polvo al correr: motita en los pies a intervalo fijo mientras
-        // pisa suelo — vende la velocidad sin coste (1 sprite por emisión).
+        // Polvo al correr: motita en los pies a intervalo fijo mientras pisa una
+        // superficie — vende la velocidad sin coste (1 sprite por emisión).
+        // Cabeza abajo, el polvo cae hacia el techo.
         if (this.dino.grounded) {
             this._dustT += dt;
             if (this._dustT >= RUN_DUST.periodS) {
                 this._dustT = 0;
+                const dir = this.dino.gravityDir;
                 this._bursts.burst({
                     x: this.dino.x + 16,
-                    y: groundY - 2,
+                    y: dir > 0 ? groundY - 2 : ceilingYOf(groundY) + 2,
                     count: 1,
                     color: RUN_DUST.color,
                     speedMin: 15,
                     speedMax: 55,
-                    gravity: 220,
+                    gravity: 220 * dir,
                     lifeS: 0.3,
-                    upBias: 0.35,
+                    upBias: 0.35 * dir,
                 });
             }
         }
@@ -390,6 +421,8 @@ export class GameSession {
         this.engine.setBeatPulse(worldPulse);
         const active = this.spawner.getActive();
         for (let i = 0; i < active.length; i++) active[i].setBeat?.(pulse);
+        this._gates.setBeat(pulse);
+        this._tickModeCue(shownTime);
 
         const fired = this._director.update(shownTime, dt);
         for (let i = 0; i < fired.length; i++) {
@@ -410,7 +443,13 @@ export class GameSession {
             this._gearMomentAt = Infinity;
             this._triggerMoment(groundY, GEAR_FX.strength);
         }
-        this.engine.setSpeedFx?.({ level: this._speedCues.linesAt(shownTime) });
+        // Con el pasillo de un modo en pantalla, las líneas de velocidad se
+        // quedan por encima de él: una raya a la altura del techo se leería
+        // como un obstáculo.
+        this.engine.setSpeedFx?.({
+            level: this._speedCues.linesAt(shownTime),
+            clearAbove: this._corridorNear(shownTime) ? MODE_FX.linesClearPx : 0,
+        });
         this.hud.setGear?.(this._speedCues.gearAt(shownTime), { next: next?.gear ?? null, blink: ahead > 0 && phase < 0.5 });
 
         const climaxTarget = this._director.climax ? 1 : 0;
@@ -452,14 +491,77 @@ export class GameSession {
     }
 
     /**
+     * Aviso del próximo cambio de reglas y estado del modo vigente (Ola 6a). El
+     * portal ya se ve venir por el mundo; el HUD lo nombra y, las primeras veces
+     * que alguien juega un modo, dice cómo se juega.
+     */
+    _tickModeCue(shownTime) {
+        if (this._modes.constant) return;
+        const mode = this._modes.modeAt(shownTime);
+        const next = this._modes.nextChange(shownTime);
+        const beat = this.chart.music.beatPeriodS || 0.5;
+        // Entrar en un modo se avisa con dos compases; volver a correr, con un
+        // par de beats: si no, media antigravedad se pasa anunciando su final.
+        let state = mode === 'run' ? '' : 'on';
+        let shown = mode;
+        const warnS = next?.mode === 'run' ? Math.max(1.5, 3 * beat) : Math.max(MODE_FX.warnMinS, MODE_FX.warnBeats * beat);
+        if (next !== null && next.t - shownTime <= warnS) {
+            state = 'warn';
+            shown = next.mode;
+        }
+        const cue = `${state}:${shown}`;
+        if (cue === this._modeCue) return;
+        this._modeCue = cue;
+        this.hud.setMode?.({
+            state,
+            label: state === '' ? '' : MOVEMENT_MODES[shown].label,
+            color: MODE_COLORS[shown] ?? MODE_COLORS.run,
+            hint: state === 'warn' && shown !== 'run' ? this._modeHint : '',
+        });
+    }
+
+    /** ¿Está el pasillo de un modo en pantalla o a punto de entrar? */
+    _corridorNear(shownTime) {
+        for (const s of this._modes.segments) {
+            if (s.mode === 'run') continue;
+            if (shownTime >= s.t0 - 4 && shownTime <= s.t1 + 1) return true;
+        }
+        return false;
+    }
+
+    /** El Dino cruza un portal: cambian las reglas y se nota. */
+    _onModeChange(change, groundY) {
+        const color = MODE_COLORS[change.mode] ?? MODE_COLORS.run;
+        this._triggerMoment(groundY, MODE_FX.strength, color);
+        if (this.engine.reducedMotion || this.dino === null) return;
+        // Una columna de chispas en el portal, del suelo al techo del pasillo.
+        const top = change.mode === 'run' ? groundY - 120 : ceilingYOf(groundY);
+        for (let k = 0; k < 5; k++) {
+            this._bursts.burst({
+                x: this.dino.x + DINO_SIZE.w * 0.5,
+                y: groundY - (groundY - top) * (k / 4),
+                count: 4,
+                color,
+                speedMin: 80,
+                speedMax: 240,
+                gravity: 0,
+                lifeS: 0.5,
+                upBias: 0,
+            });
+        }
+    }
+
+    /**
      * Momento de la estructura en el primer tiempo de un tramo.
      *   drop (strength 1): destello de pantalla, golpe de cámara y ola de partículas.
      *   lift (strength < 1): el fondo se aviva y una ola más pequeña, sin destello
      *   ni golpe (entrar en un estribillo no debe sentirse como un clímax).
+     *   portal (Ola 6a): lo mismo, con el color del modo que empieza.
      */
-    _triggerMoment(groundY, strength) {
+    _triggerMoment(groundY, strength, color = DROP_FX.overlayColor) {
         this._dropT = 0;
         this._momentStrength = strength;
+        this._momentColor = color;
         if (this.engine.reducedMotion) return;
         // El destello cubre la PANTALLA (hudLayer, px); la ola recorre el MUNDO visible.
         const w = this._view().width;
@@ -471,7 +573,7 @@ export class GameSession {
                 this._layers.hudLayer.addChild(this._dropOverlay);
             }
             // Se redibuja en cada drop: la ventana puede haber cambiado de tamaño.
-            this._dropOverlay.clear().rect(0, 0, window.innerWidth, window.innerHeight).fill(DROP_FX.overlayColor);
+            this._dropOverlay.clear().rect(0, 0, window.innerWidth, window.innerHeight).fill(color);
             this._dropOverlay.alpha = DROP_FX.overlayAlpha;
         }
         const bursts = full ? DROP_FX.waveBursts : Math.ceil(DROP_FX.waveBursts / 2);
@@ -506,13 +608,16 @@ export class GameSession {
      * ¿La pulsación cae en el golpe de un obstáculo de su tipo? Solo visual: un
      * destello a los pies del Dino. Enseña sin palabras que el nivel está hecho
      * sobre la música y que pulsar SOBRE el golpe es la jugada.
+     *
+     * En antigravedad cualquier botón invierte, así que cualquiera cuenta.
      */
-    _checkOnBeat(duck, at) {
+    _checkOnBeat(input, at) {
         const targets = this._onBeatTargets;
+        const matches = (action) => (action === 'flip' ? true : action === (input === 'duckStart' ? 'duck' : 'jump'));
         while (this._onBeatCursor < targets.length && targets[this._onBeatCursor].t < at - ON_BEAT.windowS) this._onBeatCursor++;
         for (let i = this._onBeatCursor; i < targets.length && targets[i].t <= at + ON_BEAT.windowS; i++) {
             const target = targets[i];
-            if (target.claimed || target.duck !== duck) continue;
+            if (target.claimed || !matches(target.action)) continue;
             target.claimed = true;
             if (this.engine.reducedMotion || this.dino === null) return;
             this._bursts.burst({
@@ -570,57 +675,50 @@ export class GameSession {
             this._physics.time ?? -Infinity,
         );
         this._inputs.push(action, at);
-        if (starts) this._checkOnBeat(action === 'duckStart', at);
-    }
-
-    /** Aplica una acción del jugador sobre el Dino (dentro de un paso de física). */
-    _applyInput(action) {
-        const dino = this.dino;
-        switch (action) {
-            case 'jump':
-                // Pulsado un pelín antes de aterrizar: se guarda y dispara al
-                // tocar suelo (jump buffer) — perdona el timing humano.
-                if (!dino.jump() && !dino.grounded) dino.jumpBufferT = JUMP_BUFFER_S;
-                break;
-            case 'jumpEnd': dino.jumpEnd(); break;
-            case 'duckStart': dino.duckStart(); break;
-            case 'duckEnd': dino.duckEnd(); break;
-            default: break;
-        }
+        if (starts) this._checkOnBeat(action, at);
     }
 
     /**
      * Un paso fijo de física en el instante de canción `t`.
+     *
+     * Orden (el mismo que el simulador del charter, playability.js): el portal
+     * que toque, las pulsaciones fechadas hasta aquí y la integración con las
+     * reglas del modo vigente.
+     *
      * @returns {boolean} true si el Dino chocó en este paso.
      */
     _physicsStep(t, groundY) {
         const dino = this.dino;
-        // Primero las pulsaciones que ocurrieron hasta este instante.
-        this._inputs.drainUntil(t, (action) => this._applyInput(action));
-        integrateDino(dino, PHYSICS_STEP_S, groundY);
+        const changes = this._modes.changes;
+        while (this._modeIdx < changes.length && changes[this._modeIdx].t <= t) {
+            const change = changes[this._modeIdx++];
+            enterMode(dino, change.mode);
+            this._onModeChange(change, groundY);
+        }
 
-        // Aterrizaje: squash + polvo + jump buffer.
-        if (!this._prevGrounded && dino.grounded) {
+        this._inputs.drainUntil(t, (action) => dino.input(action));
+        const events = integrateBody(dino, PHYSICS_STEP_S, groundY);
+
+        // Aterrizaje (en el suelo o en el techo): squash, polvo y la pulsación
+        // guardada, que la física ya ha ejecutado (BUFFERED) y aquí solo se ve.
+        if (events & BODY_EVENT.LANDED) {
             dino.onLand();
+            const dir = dino.gravityDir;
             this._bursts.burst({
                 x: dino.x + DINO_SIZE.w * 0.5,
-                y: groundY,
+                y: dir > 0 ? groundY : ceilingYOf(groundY),
                 count: 6,
                 color: 0x8b9aff,
                 speedMin: 30,
                 speedMax: 120,
-                gravity: 500,
+                gravity: 500 * dir,
                 lifeS: 0.35,
-                upBias: 0.4,
+                upBias: 0.4 * dir,
             });
-            if (dino.jumpBufferT > 0) {
-                dino.jumpBufferT = 0;
-                dino.jump();
-            }
+            if (events & BODY_EVENT.BUFFERED) dino.onGesture(dino.mode === 'flip' ? 'flip' : 'jump');
         }
-        this._prevGrounded = dino.grounded;
 
-        return this.spawner.collisionAt(dinoHitbox(dino, this._hitbox), t, groundY) !== null;
+        return this.spawner.collisionAt(bodyHitbox(dino, this._hitbox), t, groundY) !== null;
     }
 
     /** Impacto: congela el mundo, corta el audio en seco y arma el juice. */
@@ -691,8 +789,9 @@ export class GameSession {
         this._ended = reason !== 'stopped';
         this.engine.setWorldSpeed(reason === 'collision' ? 0 : SCENERY.menuSpeed);
         this.engine.setBeatPulse(0);
-        this.engine.setSpeedFx?.({ level: 0 });
+        this.engine.setSpeedFx?.({ level: 0, clearAbove: 0 });
         this.hud.setControls?.(false);
+        this.hud.setMode?.({ state: '', label: '', hint: '' });
         if (reason !== 'win') this.hud.setBanner?.('');
 
         // Bloque 7: persistir progreso fire-and-forget si hay levelId
@@ -775,6 +874,7 @@ export class GameSession {
         }
 
         if (this.spawner) this.spawner.dispose();
+        if (this._gates) this._gates.dispose();
         if (this._bursts) this._bursts.dispose();
         if (this.hud) this.hud.dispose();
         if (this.dino) {
@@ -787,5 +887,6 @@ export class GameSession {
         this.spawner = null;
         this.hud = null;
         this._bursts = null;
+        this._gates = null;
     }
 }

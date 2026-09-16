@@ -31,14 +31,18 @@ use App\Core\ValidationException;
  */
 final class ChartValidator
 {
-    /** Formato que genera el charter actual (Ola 5). */
-    public const CHART_FORMAT_VERSION = 2;
+    /** Formato que genera el charter actual (Ola 6). */
+    public const CHART_FORMAT_VERSION = 3;
 
     /**
      * 1 = charter de las Olas 3-4 (velocidad constante). 2 = charter musical
      * (Ola 5): cambios de velocidad, pulso, dificultad y eventos de estructura.
+     * 3 = modos de movimiento (Ola 6): eventos `mode` con el modo que empieza.
      */
-    public const CHART_FORMAT_VERSIONS = [1, 2];
+    public const CHART_FORMAT_VERSIONS = [1, 2, 3];
+
+    /** Mismo patrón que un kind: el registro de modos vive en el frontend. */
+    private const MODE_PATTERN = '/^[a-z][a-z0-9_]{0,31}$/';
 
     public const MAX_SPEED_CHANGES = 400;
     private const MAX_RAMP_S = 10;
@@ -171,6 +175,12 @@ final class ChartValidator
                     self::fail($f, "events[{$i}].kind inválido.");
                 }
                 $clean['kind'] = $kind;
+            } elseif ($type === 'mode') {
+                $mode = $e['mode'] ?? null;
+                if ($formatVersion < 3 || !is_string($mode) || preg_match(self::MODE_PATTERN, $mode) !== 1) {
+                    self::fail($f, "events[{$i}].mode inválido.");
+                }
+                $clean['mode'] = $mode;
             }
             // Tipos futuros (section, mode, fx…) se aceptan con sus campos
             // escalares, sin anidar: el cliente los ignora si no los conoce.
@@ -198,7 +208,7 @@ final class ChartValidator
             'world'         => ['speedPxS' => $speedPxS],
             'events'        => $cleanEvents,
         ];
-        if ($formatVersion === 2) {
+        if ($formatVersion >= 2) {
             self::addChartV2($normalized, $chart, $music, $world, $durationSec);
         }
 

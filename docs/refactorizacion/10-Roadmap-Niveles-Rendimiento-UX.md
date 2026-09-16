@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos). Olas 6 y 7 pendientes.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), y la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada). Pendientes: Ola 6b y Ola 7.
 
 ---
 
@@ -727,7 +727,7 @@ Los 8 oficiales, charter v2 → v3, con la dificultad del manifiesto. La densida
 #### Limitaciones que quedan
 
 - **El playtest humano manda y está pendiente.** Todo lo anterior son medidas y bots. Lo que se ajusta tras jugarlo está en tablas: `difficulty.js` (acciones/min por nivel, tolerancias, estrenos, amplitud de velocidad), `CHARTER_RULES` en `charter.js` (aceleraciones, tope de velocidad) y `DROP_FX`/`ON_BEAT` en `config.js`. Cualquier cambio del charter exige subir `CHARTER_VERSION`, re-hornear y `--charter-below`.
-- El vocabulario sigue siendo saltar, agacharse y el cactus ancho: los momentos nuevos (modos, portales) son la Ola 6.
+- ~~El vocabulario sigue siendo saltar, agacharse y el cactus ancho: los momentos nuevos (modos, portales) son la Ola 6.~~ Resuelto en la Ola 6a: portales y antigravedad.
 - Tramos, niveles y roles del arco son heurísticos: comprobados con canciones sintéticas de estructura conocida e inspeccionados en los 8 oficiales y 2 de la comunidad, sin anotación humana.
 - Con el análisis local (sin servidor) no hay secciones ni color de golpe: el arco sale de la densidad de golpes y la dinámica es más plana.
 - ~~Cambiar la dificultad queda bloqueado en cuanto otra persona juega el nivel.~~ Sustituido tras el playtest (abajo): un nivel publicado ya no cambia de dificultad.
@@ -910,14 +910,14 @@ Mismas acciones que con v3 en los 8 (en 6 de las 40 combinaciones de oficial × 
 - **Un chart es justo si lo superan quien juega con el oído Y quien juega con la vista**, con la tolerancia de su dificultad. Vale para cualquier transición futura.
 - **Cualquier cambio de reglas en mitad de un nivel es una transición** (hoy la velocidad; en la Ola 6, modos de movimiento o gravedad): cae en la anacrusa de un compás que abre tramo o frase, se avisa en el runtime antes de llegar y el validador la juega con quien se guía por la vista.
 - **La velocidad se enseña, no solo se aplica**: mapa, marchas, aviso y líneas, derivados de `world.speedChanges` (sin campos nuevos en el chart).
-- La velocidad de arranque sigue saliendo del pulso; la dificultad decide la amplitud. El techo sigue en 690 px/s.
+- La velocidad de arranque sigue saliendo del pulso; la dificultad decide la amplitud. ~~El techo sigue en 690 px/s.~~ (Ola 6a: 820 px/s.)
 
 **Limitaciones que quedan:**
 
 - **El playtest humano manda.** Todo lo afinable está en tablas: `SPEED_RULES` (`speedPlan.js`), `speedAmp` en `difficulty.js`, `SPEED_CUES` (umbrales de marchas y aviso), `SPEED_LINES` y `GEAR_FX` en `config.js`. Cambiar las dos primeras exige subir `CHARTER_VERSION`, re-hornear y `--charter-below`; las visuales no.
 - ~~**En ventanas anchas la velocidad se diluye.** El juego pinta el mundo a 1 px CSS por px, así que en 1920 px un obstáculo a 572 px/s se ve 3.1 s antes de llegar.~~ Resuelto: el propietario lo aprobó y la vista del mundo escala con la pantalla (ver "Tamaños de pantalla y reintentos").
 - El modelo de la vista es una heurística (0.3 s de recalibración). Quien calcula "a ojo" con la distancia aprendida tarda más en recalibrar; lo amortiguan escalones de ≤ ×1.25 (≤ 72 ms de error) y el margen, que crece con la velocidad.
-- Los huecos mínimos entre acciones (`PAIR_GAP`) están medidos hasta 720 px/s: no subir el techo sin volver a medir.
+- Los huecos mínimos entre acciones (`PAIR_GAP`) estaban medidos hasta 720 px/s. Vueltos a medir hasta **900 px/s** al subir el techo en la Ola 6a: sigue valiendo la misma regla, no subirlo sin volver a medir.
 - En producción, tras desplegar: re-hornear no hace falta (los horneados van en el repo), pero sí `seed:official -- --rechart` y `analysis:enqueue -- --charter-below=4` para la comunidad.
 
 #### Tamaños de pantalla y reintentos (Sep 2026)
@@ -1012,6 +1012,110 @@ A la velocidad máxima del charter (690) toda pantalla apaisada da ≥ 1.26 s de
 
 **Nota de alcance.** Los ejemplos concretos que motivaron esta ola (naves, portales, esquivar tres aves en tres agudos) son *ilustrativos*, no compromisos. Lo que la ola entrega es la **capacidad** de expresarlos; qué se implementa se decide al arrancarla.
 
+La ola se parte en dos por tamaño: **6a** monta las bases y el primer modo; **6b** añade los siguientes sobre esas bases.
+
+---
+
+#### Ola 6a — Bases de los modos + antigravedad ✅ (Sep 2026)
+
+> **Lo que pidió el propietario.** Jugó la Ola 5, el afinado de velocidad y los tamaños de pantalla: todo bien, pero *"en el tema del aumento de velocidad al pasar el tiempo, no se siente tanto el aumento de velocidad y dificultad; un poquito, pero no tanto"*. Y para la Ola 6: como es grande, hacer **una primera parte** que siente bien las bases — eficiente, escalable y con buena experiencia de juego.
+
+**1. La progresión se nota más (lo que el playtest pedía).** Se midió primero: con la vista del mundo escalada, el techo de 690 px/s dejaba ≥ 1.26 s de lectura en cualquier pantalla, así que sobraba margen para escalar más. Cambios en `SPEED_RULES` y en `speedAmp` (dificultad):
+
+| Regla | Antes | Ahora |
+|---|---|---|
+| Subida por marcha | +8 % | **+11 %** |
+| Subida del clímax · del empuje | +18 % · +6 % | **+24 % · +8 %** |
+| Una marcha cada… | 36 s | **32 s** |
+| Amplitud por dificultad (Relajado → Extremo) | 0.5 … 1.3 | **0.55 … 1.4** |
+| Techo | 690 px/s | **820 px/s** (≥ 1.0 s de lectura en cualquier pantalla apaisada; el legacy acababa en 0.74 s) |
+
+Los huecos mínimos entre acciones se volvieron a medir hasta **900 px/s**: `PAIR_GAP.jumpDuck` necesitaba 15 ms más para seguir por encima de lo medido; el resto aguantaba. Resultado en los 8 oficiales: de ×1.09-1.55 a **×1.13-1.80** (What's Up Danger, Extremo: 370 → 665 px/s).
+
+**2. Modos de movimiento: la base.** Un modo es un conjunto de reglas del cuerpo durante un tramo de la canción. El registro (`systems/modes/index.js`) es a los modos lo que `OBSTACLE_KIND` a los obstáculos: **añadir uno es un archivo con su contrato + una entrada + sus kinds**, y todo lo demás (física, simulador, charter, runtime, formato) lo consume de forma genérica.
+
+| Pieza | Qué aporta |
+|---|---|
+| `systems/modes/{run,flip}.js` | Un archivo por modo: `enter`, `integrate`, `input`, `hitbox`, `leadS`, `actions`, `settleS`. La física de correr sale de `physics.js` y se convierte en un modo más. |
+| `systems/geometry.js` | Superficies (suelo, techo), hitboxes y posiciones, sin depender del despachador: los modos la usan sin ciclos de importación. |
+| `systems/physics.js` | Pasa a **despachar** al modo del cuerpo: `integrateBody`, `applyInput`, `bodyHitbox`, `enterMode`, `actionLeadS`. Nadie más sabe qué modos existen. |
+| `systems/modeTimeline.js` | Qué modo rige cada instante de un chart. La leen la partida, el simulador, el formato y el HUD: una sola interpretación. |
+| `systems/virtualPlayer.js` | "Jugar bien" definido UNA vez (antes estaba duplicado entre el simulador y los tests del bucle de frame): pulsa en el golpe, mantiene el agachado mientras haga falta, invierte ante cada cristal. |
+| `levels/modePlan.js` | Dónde van los modos en la canción y por qué portales se entra y se sale. |
+| Formato de chart **3** | Eventos `{ t, type: 'mode', mode }`. Un cliente viejo se niega a cargarlo (cambia la semántica) en vez de jugar un nivel distinto; un obstáculo fuera de su modo se descarta con aviso. `ChartValidator.php` acepta 1, 2 y 3. |
+
+**3. El primer modo: antigravedad.** Un pasillo con techo (300 unidades de mundo); cualquier pulsación invierte la gravedad y el Dino cae a la otra superficie en ~0.21 s. Los cristales del suelo obligan a subir y los del techo a bajar, así que un tramo se lee como un **zigzag** que se ve desde lejos.
+
+Por qué este modo primero, y no la nave: es la mecánica nueva que **mejor encaja con "actúa sobre el golpe"**. Cada pulsación sigue siendo un gesto discreto (como un salto), así que toda la sincronía de la Ola 3, la validación de la Ola 5 y el modelo de la vista del afinado de velocidad valen tal cual; lo que cambia es *qué* se juega. Una nave (mantener para subir) es control continuo: necesita otro jugador virtual y otra forma de chartear, y es justo lo que las bases de 6a permiten añadir después sin tocar lo de ahora.
+
+Medido con la física real (`tests/js/modes.test.mjs`): el adelanto del cristal sale de lo que tarda el Dino en despejarlo (0.075 s) más un margen de 0.24 s, lo que deja **90-210 ms para pulsar tarde** según la velocidad y de sobra para pulsar pronto; dos inversiones seguidas caben a 0.21-0.30 s, y `PAIR_GAP.flipFlip` queda por encima en todo el rango. **Aporrear no sirve**: pulsando cada 0.2 s se choca con algún cristal en las cuatro fases probadas.
+
+**4. Dónde va un modo (y dónde no).** `modePlan.js`, con las mismas ideas que las marchas de velocidad:
+
+- Tramos que **suenan con cuerpo** (groove o más), nunca en el primer 20 % de la canción ni antes del segundo 24: primero se aprende a correr.
+- Frases completas de 4 compases, entre **12 y 24 s** (en un tema a 65 BPM, 16 compases son 44 s: sería media canción).
+- Orden: **estreno**, luego el **clímax** si la dificultad lo permite, luego el material del primer tramo que empuja. Cuando ese material vuelve, vuelve su modo: "el estribillo es la antigravedad". Entre dos tramos, ≥ 16 s corriendo.
+- **La dificultad decide**: Relajado no cambia de reglas nunca; Fácil un tramo; Normal hasta dos y **el clímax se corre** a toda velocidad; Difícil y Extremo hasta tres, el clímax incluido.
+- **Transiciones como las de velocidad** (decisión vinculante del afinado): el portal cae en la **anacrusa** del primer compás, antes de él la última acción deja pasar su obstáculo y después el Dino tiene tiempo de asentarse. La **primera vez** que un modo aparece en la canción, sus dos primeras inversiones van en el pulso y separadas ≥ 1.1 s: se estrena, no se impone.
+
+**5. Se ve venir, como todo lo demás.** El portal es un **objeto del mundo** (`entities/ModeGates.js`) que cruza al Dino exactamente en el instante del chart, con la misma fórmula que los obstáculos: un óvalo de neón con las flechas del modo y, tras él, el techo del pasillo, que aparece con el portal de entrada y termina en el de salida. Encima: el mapa de la canción marca los tramos con el color del modo; el HUD lo nombra dos compases antes (y un par de beats antes de volver a correr) y, las **tres primeras partidas** con un modo, explica sus controles ("Espacio: invertir la gravedad" / "Toca para invertir la gravedad"); al cruzar, destello del color del modo y columna de chispas; las líneas de velocidad se quedan por encima del pasillo (una raya a la altura del techo se leería como un obstáculo).
+
+**Los 8 oficiales con el charter 5** (dificultad del manifiesto; lectura = segundos para ver venir un obstáculo a la velocidad máxima en una pantalla 16:9):
+
+| Oficial (dificultad) | Duración | Velocidad (×) | Lectura a tope | Acciones | Tramos de antigravedad | Acciones/min | Estrellas |
+|---|---|---|---|---|---|---|---|
+| Sugar Red (Normal) | 0:40 | 472 → 585 (×1.24) | 1.61 s | 27 | — | 46 · pico 48 | 3★ (medida 3★) |
+| Last Christmas (Relajado) | 0:39 | 394 → 446 (×1.13) | 2.11 s | 12 | — | 20 · pico 21 | 1★ (medida 1★) |
+| HOPE (Fácil) | 1:19 | 500 → 640 (×1.28) | 1.47 s | 36 | — | 30 · pico 36 | 2★ (medida 2★) |
+| Running With the Wolves (Normal) | 2:44 | 508 → 797 (×1.57) | 1.18 s | 119 (19 cristales) | 1: 1:31-1:54 | 46 · pico 72 | 3★ (medida 4★) |
+| Time (Fácil) | 2:46 | 432 → 629 (×1.46) | 1.50 s | 88 (8) | 1: 1:15-1:30 | 33 · pico 51 | 2★ (medida 2★) |
+| Mi Fiesta (Difícil) | 3:14 | 389 → 655 (×1.68) | 1.44 s | 169 (15) | 1: 1:18-1:36 | 55 · pico 75 | 4★ (medida 4★) |
+| Dawn of Faith (Difícil) | 3:17 | 440 → 741 (×1.68) | 1.27 s | 130 (41) | 3: 0:44 · 2:00 · 2:32 | 44 · pico 60 | 4★ (medida 3★) |
+| What's Up Danger (Extremo) | 3:36 | 370 → 665 (×1.80) | 1.42 s | 205 (79) | 3: 0:53 · 1:41 · 2:52 (clímax) | 59 · pico 90 | 5★ (medida 5★) |
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **219 JS** (+19: `modes.test.mjs` entero, antigravedad en el bucle de frame, umbrales nuevos), **69 PHP** (+1: formato 3), **104 Python** (sin cambios) |
+| 8 oficiales × 5 dificultades (40 charts) | jugables con la tolerancia de su dificultad **y con los portales aplicados**, 0 reparaciones, sin avisos al normalizar, 10-350 ms por chart |
+| Regresiones protegidas | Relajado nunca cambia de reglas; ningún tramo pasa de 24 s; alrededor de un portal no hay acciones; los cristales alternan suelo/techo desde el suelo; el estreno espera y va espaciado; determinismo byte a byte con modos |
+| E2E Time (Fácil, 1536×864, bot con pulsaciones fechadas) | **victoria al 100 %**, 88 pulsaciones, 8 inversiones entre 77.2 y 88.6 s; aviso del modo desde 67.1 s (portal en 74.7), chip "on" a 74.8 y fuera a 90.0; 9 859 frames, mediana 16.7 ms, p95 20, p99 22.5 |
+| E2E Dawn of Faith (Difícil, 3 tramos) | **victoria al 100 %**, 142 pulsaciones, **44 inversiones** en los tres pasillos (47-66, 120-133, 152-166 s); capturas del portal acercándose, del Dino cabeza abajo y del pasillo entero |
+| E2E móvil apaisado (844×390, táctil emulado) | reintento desde el panel, mitad derecha agacha y mitad izquierda salta corriendo, y **en antigravedad cualquier mitad invierte**; panel de resultados legible (26 %, intento 2) |
+| Consola | 0 errores de JS (solo el 401 del arranque anónimo y el favicon) |
+| Bundle | **180.20 KB gzip** (+5.19), CSS 13.55 KB (+0.46); por debajo del límite de 200 KB |
+| Oficiales y comunidad | los 8 re-horneados y re-sembrados; los 3 de la comunidad re-charteados por el worker en 2 s cada uno (análisis en caché) |
+
+**Decisiones (vinculantes):**
+
+- **Un modo de movimiento es una entrada de registro**, no un `if` en la física: `systems/modes/`. Quien añada uno escribe su archivo, sus kinds (con `mode` y `action`) y sus reglas de colocación; física, simulador, charter, formato y runtime no se tocan.
+- **Todo chart empieza corriendo** y cambia de modo solo con eventos `mode`; un obstáculo fuera de su modo no se juega (se descarta con aviso).
+- **Un cambio de modo es una transición**, con las reglas ya vinculantes del afinado de velocidad: anacrusa de un compás que abre tramo, sin acciones alrededor, avisado en el runtime y validado con el modelo de la vista.
+- **Un modo es un momento, no la norma**: frases de 12-24 s, ≥ 16 s corriendo entre ellos, y nunca en el primer quinto de la canción.
+- **La dificultad decide qué modos aparecen, cuántas veces y si el clímax es uno.** Relajado se juega entero corriendo.
+- **"Jugar bien" se define una sola vez** (`virtualPlayer.js`): lo usan el validador del charter, los tests del bucle de frame y el bot de los E2E.
+- La progresión de velocidad sube a ×1.13-1.80 con techo 820 px/s; cualquier cambio de esa tabla exige volver a medir `PAIR_GAP`, subir `CHARTER_VERSION`, re-hornear y `--charter-below`.
+
+**Limitaciones que quedan:**
+
+- **El playtest humano manda y está pendiente**, sobre todo si tres tramos de antigravedad en un tema largo (79 de 205 acciones en What's Up Danger Extremo) son demasiados. Todo lo afinable está en tablas: `MODE_RULES` (modePlan.js), `modes` por dificultad (difficulty.js), `FLIP_MODE` y `MODE_FX` (config.js). Las dos primeras exigen subir `CHARTER_VERSION`.
+- El pasillo mide 300 unidades de mundo fijas: en pantallas muy bajas (32:9) cabe, pero el margen sobre el HUD es de ~50 unidades (test en `world-view.test.mjs`).
+- En antigravedad no hay agachado ni salto: una sola acción. Las figuras salen del ritmo, no de combinar gestos.
+- El bot de los E2E pulsa por el reloj de la canción, así que **no prueba la lectura visual** del zigzag: eso solo lo dice una persona jugando.
+- `locator.tap()` sigue sin poder usarse (hace falta `hasTouch` en el contexto): el toque se comprueba con `TouchEvent` sintético, que ejerce nuestro manejador pero no la tubería táctil del navegador.
+
+---
+
+#### Ola 6b — Más modos y momentos (pendiente)
+
+Sobre las bases de 6a, y solo después del playtest humano de la antigravedad:
+
+- **Un modo de control continuo** (nave/jetpack: mantener para subir). Es el que obliga a generalizar el jugador virtual a una *política* (reacciona a su estado) en vez de un guion de pulsaciones, y a chartear "puertas" en vez de acciones puntuales. Candidato natural: la altura de las puertas siguiendo el contorno de la melodía, que el analizador 2 ya puede dar.
+- **Anillos y orbes en el aire** (pulsar en vuelo para volver a saltar): no es un modo, es una acción nueva dentro de correr, y rompe el techo de densidad del salto (0.67 s entre saltos) sin tocar la física del salto.
+- **Momentos especiales anclados a la armonía**: el analizador 2 da acordes, tonalidad y modulaciones; hoy el charter no los usa (ver "Afinado del analizador").
+- **Eventos `fx` nuevos** del chart cableados al runtime (hoy solo `drop` y `lift`).
+
 ---
 
 ### Ola 7 — Overrides manuales y editor
@@ -1037,7 +1141,7 @@ Ola 3 (chart + sincronía) ◀─────────┘
                     │
                     └──> Ola 5 (charter musical)
                                 │
-                                ├──> Ola 6 (modos y eventos)
+                                ├──> Ola 6a (bases de modos + antigravedad) ──> Ola 6b (más modos)
                                 └──> Ola 7 (editor y overrides)
 ```
 

@@ -31,7 +31,7 @@ import { buildSongArc } from '../../resources/js/game/levels/songArc.js';
 import { DIFFICULTY_PROFILES } from '../../resources/js/game/levels/difficulty.js';
 import { OBSTACLE_KIND } from '../../resources/js/game/config.js';
 import { actionLeadS } from '../../resources/js/game/systems/physics.js';
-import { toSimObstacles, validatePlayability } from '../../resources/js/game/systems/playability.js';
+import { validateChart } from '../../resources/js/game/systems/playability.js';
 import { speedProfileOf } from '../../resources/js/game/systems/speedProfile.js';
 import { makeSyntheticAnalysis, makeSyntheticSong } from './helpers/synthetic-audio.mjs';
 
@@ -230,7 +230,7 @@ test('dificultad: más difícil ⇒ más acciones, más rápido y validado con m
         const top = Math.max(chart.world.speedPxS, ...chart.world.speedChanges.map((c) => c.speedPxS));
         assert.ok(top >= prevTop, `dificultad ${difficulty}: velocidad máxima ${top} < ${prevTop}`);
         prevTop = top;
-        const v = validatePlayability(toSimObstacles(obstacles(chart)), speedProfileOf(chart), { toleranceS: DIFFICULTY_PROFILES[difficulty].toleranceS });
+        const v = validateChart(chart, { toleranceS: DIFFICULTY_PROFILES[difficulty].toleranceS });
         assert.ok(v.ok, `dificultad ${difficulty}: injugable en t=${v.t} (${v.pattern}) con ±${DIFFICULTY_PROFILES[difficulty].toleranceS * 1000} ms`);
     }
 });
@@ -304,13 +304,16 @@ test('memoria de frases: un riff que se repite se juega con el mismo patrón', (
     ];
     for (const difficulty of [3, 5]) {
         const analysis = makeSyntheticSong({ bpm: 100, sections: blocks });
-        const { chart } = buildChart(analysis, { seed: 1, difficulty });
+        const { chart, report } = buildChart(analysis, { seed: 1, difficulty });
         const period = 60 / 100;
         const barLen = 4 * period;
         const patternOf = (barStart) => obstacles(chart)
             .filter((e) => e.t >= barStart - 0.01 && e.t < barStart + barLen - 0.01)
             .map((e) => `${Math.round((e.t - barStart) / (period / 2))}:${e.kind}`)
             .join(' ');
+        // Corriendo: los compases de antigravedad (y los que lindan con sus
+        // portales, que pierden acciones a propósito) tienen su propio test.
+        const nearPortal = (barStart) => report.modes.some((m) => barStart < m.t1 + barLen && m.t0 - barLen < barStart + barLen);
         const downbeats = analysis.downbeats;
         // Dentro de cada bloque del riff, sin su primer compás (puede ser un drop)
         // ni los dos últimos (subida y respiración antes del siguiente bloque):
@@ -321,14 +324,16 @@ test('memoria de frases: un riff que se repite se juega con el mismo patrón', (
         let pairs = 0;
         const patterns = [];
         for (const start of [4, 16]) {
-            const block = downbeats.slice(start + 1, start + 12 - 2).map(patternOf);
+            const starts = downbeats.slice(start + 1, start + 12 - 2);
+            const block = starts.map(patternOf);
             patterns.push(block);
             for (let i = 0; i + 4 < block.length; i++) {
+                if (nearPortal(starts[i]) || nearPortal(starts[i + 4])) continue;
                 pairs++;
                 if (block[i] === block[i + 4] && block[i] !== '') same++;
             }
         }
-        assert.ok(pairs >= 8);
+        assert.ok(pairs >= 5, `d${difficulty}: ${pairs} pares comparables`);
         assert.ok(same / pairs >= 0.9, `d${difficulty}: solo ${same}/${pairs} compases repiten la frase: ${JSON.stringify(patterns)}`);
     }
 });
@@ -354,7 +359,7 @@ test('formato 1 (análisis del navegador): pulso reconstruido, en rejilla y juga
         const off = obstacles(chart).filter((e) => !onGrid(e.t, truth, 0.015));
         assert.equal(off.length, 0, `${bpm} BPM: ${off.length}/${obstacles(chart).length} fuera del pulso real`);
         assert.ok(obstacles(chart).length > 15);
-        const v = validatePlayability(toSimObstacles(obstacles(chart)), speedProfileOf(chart), { toleranceS: DIFFICULTY_PROFILES[3].toleranceS });
+        const v = validateChart(chart, { toleranceS: DIFFICULTY_PROFILES[3].toleranceS });
         assert.ok(v.ok, `${bpm} BPM: injugable en ${v.t}`);
     }
 });
@@ -368,7 +373,7 @@ test('canciones extremas: vacía, muy corta o sin golpes no rompen', () => {
     const noHits = { ...makeSyntheticAnalysis({ bpm: 120, durationSec: 40 }), onsets: [] };
     const { chart } = buildChart(noHits, { seed: 1 });
     assert.doesNotThrow(() => normalizeChart(chart));
-    const v = validatePlayability(toSimObstacles(obstacles(chart)), speedProfileOf(chart));
+    const v = validateChart(chart);
     assert.ok(v.ok);
 });
 
@@ -385,7 +390,7 @@ test('los 8 oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos
             const { warnings } = normalizeChart(chart);
             assert.deepEqual(warnings, [], label);
             const obs = obstacles(chart);
-            const v = validatePlayability(toSimObstacles(obs), speedProfileOf(chart), { toleranceS: DIFFICULTY_PROFILES[report.difficulty].toleranceS });
+            const v = validateChart(chart, { toleranceS: DIFFICULTY_PROFILES[report.difficulty].toleranceS });
             assert.ok(v.ok, `${label}: patrón imposible en t=${v.t} (${v.pattern})`);
             const off = obs.filter((e) => !onGrid(e.t, analysis.beats, 0.065));
             assert.equal(off.length, 0, `${label}: ${off.length} acciones fuera de la rejilla`);

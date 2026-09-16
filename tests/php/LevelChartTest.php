@@ -56,6 +56,31 @@ test('ChartValidator acepta el formato 2 (Ola 5) y conserva velocidad, pulso, di
     assertSame(['t' => 20.0, 'type' => 'fx', 'fx' => 'drop', 'level' => 3], $decoded['events'][2]);
 });
 
+test('ChartValidator acepta el formato 3 (Ola 6) con portales de modo, y solo ahí', function (): void {
+    $s = sha('a');
+    $raw = chartV2For($s);
+    $raw['formatVersion'] = 3;
+    $raw['events'][] = ['t' => 30.0, 'type' => 'mode', 'mode' => 'flip'];
+    $raw['events'][] = ['t' => 45.0, 'type' => 'mode', 'mode' => 'run'];
+    $decoded = json_decode(ChartValidator::validateChart($raw, $s)['json'], true);
+
+    assertSame(3, $decoded['formatVersion']);
+    $portals = array_values(array_filter($decoded['events'], static fn (array $e): bool => $e['type'] === 'mode'));
+    assertSame([['t' => 30.0, 'type' => 'mode', 'mode' => 'flip'], ['t' => 45.0, 'type' => 'mode', 'mode' => 'run']], $portals);
+    assertSame([['t' => 20.0, 'speedPxS' => 480.0, 'rampS' => 0.0], ['t' => 40.0, 'speedPxS' => 437.5, 'rampS' => 0.9]], $decoded['world']['speedChanges'], 'el formato 3 conserva lo del 2');
+
+    $cases = [
+        'modo en un chart de formato 2' => static function (array $c): array { $c['formatVersion'] = 2; return $c; },
+        'modo sin nombre'               => static function (array $c): array { $c['events'][count($c['events']) - 2] = ['t' => 30.0, 'type' => 'mode']; return $c; },
+        'nombre de modo inválido'       => static function (array $c): array { $c['events'][count($c['events']) - 2]['mode'] = '<script>'; return $c; },
+    ];
+    foreach ($cases as $label => $mutate) {
+        assertThrows(ValidationException::class, fn () => ChartValidator::validateChart($mutate($raw), $s), function ($e) use ($label): void {
+            assertTrue(isset($e->fields['chart']), "{$label}: el error debe señalar el campo chart");
+        });
+    }
+});
+
 test('ChartValidator rechaza campos de formato 2 mal formados', function (): void {
     $s = sha('a');
     $mutations = [
@@ -78,7 +103,7 @@ test('ChartValidator rechaza charts inválidos o peligrosos', function (): void 
     $s = sha('a');
     $cases = [
         'no objeto'              => [[1, 2, 3], $s],
-        'formato futuro'         => [array_merge(chartFor($s), ['formatVersion' => 3]), $s],
+        'formato futuro'         => [array_merge(chartFor($s), ['formatVersion' => 4]), $s],
         'otro audio'             => [chartFor(sha('b')), $s],
         'duración absurda'       => [array_replace_recursive(chartFor($s), ['audio' => ['durationSec' => 999999]]), $s],
         'velocidad como texto'   => [array_replace_recursive(chartFor($s), ['world' => ['speedPxS' => '437']]), $s],

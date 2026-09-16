@@ -862,6 +862,66 @@ kbd,
     opacity: 0.92;
 }
 
+/* Ola 6a — modos de movimiento.
+ * En el mapa, una banda del color del modo marca sus tramos; el portal en sí se
+ * ve venir por el mundo y este rótulo lo nombra antes de llegar (parpadeando) y
+ * mientras dura. Las primeras partidas con un modo, además explica cómo se juega. */
+.daino-hud__road-mode {
+    position: absolute;
+    top: 45%;
+    bottom: 0;
+    opacity: 0.85;
+}
+
+.daino-hud__mode {
+    --daino-mode-color: var(--color-daino-high);
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-top: 0.15rem;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklch, var(--daino-mode-color) 50%, transparent);
+    background: color-mix(in oklch, #05050a 60%, transparent);
+    color: var(--daino-mode-color);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateY(-0.25rem);
+    transition: opacity 220ms ease-out, transform 220ms ease-out;
+}
+
+.daino-hud__mode[data-state="on"] {
+    opacity: 0.85;
+    transform: none;
+}
+
+.daino-hud__mode[data-state="warn"] {
+    opacity: 1;
+    transform: none;
+    animation: daino-mode-warn 0.55s ease-in-out infinite alternate;
+}
+
+@keyframes daino-mode-warn {
+    from { box-shadow: 0 0 0 color-mix(in oklch, var(--daino-mode-color) 0%, transparent); }
+    to   { box-shadow: 0 0 14px color-mix(in oklch, var(--daino-mode-color) 75%, transparent); }
+}
+
+.daino-hud__mode-hint {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: color-mix(in oklch, var(--color-daino-fg) 82%, transparent);
+}
+
+.daino-hud__mode-hint:empty {
+    display: none;
+}
+
 .daino-hud__banner {
     position: absolute;
     top: 24%;
@@ -899,6 +959,10 @@ body[data-app-state="PAUSED"] .daino-hud__banner {
     .daino-hud__gear[data-bump="true"] {
         animation: none;
     }
+    .daino-hud__mode[data-state="warn"] {
+        animation: none;
+        box-shadow: 0 0 10px color-mix(in oklch, var(--daino-mode-color) 60%, transparent);
+    }
 }
 
 @media (max-width: 640px) {
@@ -917,6 +981,17 @@ body[data-app-state="PAUSED"] .daino-hud__banner {
 
     .daino-hud__progress-bar[data-road="true"] {
         width: clamp(7.5rem, 38vw, 13.75rem);
+    }
+
+    /* En móvil la explicación pasa a su propia línea en vez de desbordar: en
+       táctil es justo lo que hace falta saber ("toca para invertir"). */
+    .daino-hud__mode {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        font-size: 0.65rem;
+        padding: 0.1rem 0.45rem;
+        white-space: normal;
+        text-align: right;
     }
 }
 

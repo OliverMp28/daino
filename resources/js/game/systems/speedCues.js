@@ -22,8 +22,12 @@ import { speedProfileOf } from './speedProfile.js';
 export const SPEED_CUES = Object.freeze({
     /** Un cambio cuenta como acelerón si sube al menos esta fracción. */
     minRise: 0.03,
-    /** Marchas del HUD: velocidad relativa a la de arranque a partir de la que se enciende cada una. */
-    gearThresholds: Object.freeze([1.06, 1.18, 1.32, 1.46]),
+    /**
+     * Marchas del HUD: velocidad relativa a la de arranque a partir de la que se
+     * enciende cada una. Ola 6a: la progresión llega a ×1.3 en Relajado y a ×1.8
+     * en Extremo; la cuarta marcha es cosa de las dificultades altas.
+     */
+    gearThresholds: Object.freeze([1.08, 1.24, 1.42, 1.62]),
     /** El aviso empieza tantos beats antes del acelerón (dos compases de 4/4)… */
     warnBeats: 8,
     /** …y nunca menos de estos segundos. */
@@ -31,7 +35,7 @@ export const SPEED_CUES = Object.freeze({
     /** Líneas de velocidad: ninguna por debajo de esta velocidad relativa… */
     linesFromRatio: 1.04,
     /** …y todas a partir de esta. */
-    linesFullRatio: 1.5,
+    linesFullRatio: 1.7,
     /** Un primer tiempo más lejos que esto del acelerón no es el suyo (en beats). */
     downbeatSearchBeats: 1.25,
 });

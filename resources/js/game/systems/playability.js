@@ -19,24 +19,30 @@
 // pronto, si el mundo frena). `readerOffsetS` mide ese error con la velocidad
 // del nivel y el validador exige que las dos maneras de jugar superen el chart.
 //
+// Modos de movimiento (Ola 6): el nivel se juega con los cambios de modo del
+// chart (`opts.modes`) aplicados en su instante, igual que en la partida, y el
+// jugador virtual (virtualPlayer.js) responde a cada obstáculo con la acción de
+// su kind.
+//
 // Sin Pixi, sin DOM, sin audio: corre en Node (tests) y en el navegador
 // (el charter lo usa para reparar charts antes de devolverlos).
 
-import { OBSTACLE_KIND, DINO_X, DINO_SIZE, COYOTE_TIME_S, JUMP_BUFFER_S, PHYSICS_STEP_S } from '../config.js';
+import { OBSTACLE_KIND, PHYSICS_STEP_S } from '../config.js';
 import {
-    applyJump,
-    applyDuckStart,
-    applyDuckEnd,
-    integrateDino,
-    dinoHitbox,
+    applyInput,
+    bodyHitbox,
+    bodyState,
+    enterMode,
+    integrateBody,
     obstacleHitbox,
     obstacleTopY,
     actionLeadS,
-    isDuckKind,
     aabbHit,
     DINO_CENTER_X,
 } from './physics.js';
-import { asSpeedProfile } from './speedProfile.js';
+import { modeChanges } from './modeTimeline.js';
+import { asSpeedProfile, speedProfileOf } from './speedProfile.js';
+import { virtualPlayerScript } from './virtualPlayer.js';
 
 /**
  * Paso por defecto: EL MISMO que la física del juego (`PHYSICS_STEP_S`). La
@@ -47,12 +53,6 @@ const DEFAULT_DT = PHYSICS_STEP_S;
 
 /** Suelo arbitrario: la simulación solo depende de posiciones relativas a él. */
 const SIM_GROUND_Y = 1000;
-
-/**
- * Margen tras el cruce en el que el jugador virtual sigue agachado, en px más
- * allá de medio obstáculo. Suelta cuando el ptero ya ha pasado del todo.
- */
-const DUCK_HOLD_MARGIN_PX = 60;
 
 /**
  * Tolerancia humana por defecto: ±40 ms (la de Extremo). Cada dificultad
@@ -98,22 +98,32 @@ export function toSimObstacles(events) {
 }
 
 /**
+ * Cambios de modo de una lista de eventos, listos para `opts.modes`.
+ * @param {Array<{ t: number, type: string, mode?: string }>} events
+ * @returns {Array<{ t: number, mode: string }>}
+ */
+export function toSimModes(events) {
+    return modeChanges(events).map(({ t, mode }) => ({ t, mode }));
+}
+
+/**
  * Juega una lista de obstáculos con un jugador virtual.
  *
  * @param {SimObstacle[]} obstacles
  * @param {number | import('./speedProfile.js').SpeedProfile} speed
  *        Velocidad constante o perfil de velocidad del nivel (Ola 5).
- * @param {{ dt?: number, pressOffset?: (index: number) => number }} [opts]
+ * @param {{ dt?: number, pressOffset?: (index: number) => number, modes?: Array<{ t: number, mode: string }> }} [opts]
  *        `pressOffset(i)` desplaza la pulsación del obstáculo i (segundos;
  *        negativo = se adelanta). Por defecto 0: jugador perfecto.
+ *        `modes`: cambios de modo del nivel en orden (toSimModes). Sin ellos, se corre.
  * @returns {{ ok: true } | { ok: false, index: number, t: number, atSongTime: number }}
  */
 export function simulateRun(obstacles, speed, opts = {}) {
     if (obstacles.length === 0) return { ok: true };
 
     const dt = opts.dt ?? DEFAULT_DT;
-    const pressOffset = opts.pressOffset ?? (() => 0);
     const profile = asSpeedProfile(speed);
+    const modes = opts.modes ?? [];
 
     // Distancia del mundo en el cruce de cada obstáculo: la x de cada paso es
     // DINO + (crossD − D(ahora)) − w/2, con D(ahora) calculada una vez por paso.
@@ -122,27 +132,8 @@ export function simulateRun(obstacles, speed, opts = {}) {
         for (let i = 0; i < obstacles.length; i++) crossD[i] = profile.distanceAt(obstacles[i].cross);
     }
 
-    // Guion de pulsaciones del jugador virtual, ordenado en el tiempo. Suelta el
-    // agachado cuando el ptero ya pasó del todo, a la velocidad de ESE momento.
-    const presses = obstacles.map((o, i) => {
-        const at = o.t + pressOffset(i);
-        return isDuckKind(o.def)
-            ? { at, action: 'duck', id: i, releaseAt: o.cross + (o.def.w / 2 + DUCK_HOLD_MARGIN_PX) / profile.speedAt(o.cross) }
-            : { at, action: 'jump', id: i };
-    }).sort((a, b) => a.at - b.at);
-
-    const body = {
-        x: DINO_X,
-        y: SIM_GROUND_Y - DINO_SIZE.h,
-        vy: 0,
-        grounded: true,
-        ducking: false,
-        fastFall: false,
-        jumpHeld: false,
-        coyoteT: COYOTE_TIME_S,
-        jumpBufferT: 0,
-        dead: false,
-    };
+    const script = virtualPlayerScript(obstacles, profile, opts.pressOffset);
+    const body = bodyState(SIM_GROUND_Y);
 
     // Ventana de obstáculos que pueden tocar al Dino en este instante: los que
     // cruzan en ±(margen) segundos. Dos punteros sobre la lista ordenada — el
@@ -156,46 +147,24 @@ export function simulateRun(obstacles, speed, opts = {}) {
     const dh = { x: 0, y: 0, w: 0, h: 0 };
     const oh = { x: 0, y: 0, w: 0, h: 0 };
 
-    let pressIdx = 0;
-    let duckOwner = -1;       // id de la pulsación de agachado vigente
-    let duckReleaseAt = Infinity;
-    let prevGrounded = true;
+    let inputIdx = 0;
+    let modeIdx = 0;
 
-    const startT = Math.min(presses[0].at, obstacles[0].cross - reachS) - 0.25;
+    const startT = Math.min(script[0].at, obstacles[0].cross - reachS) - 0.25;
     const endT = obstacles[obstacles.length - 1].cross + reachS + 0.25;
 
     for (let tau = startT; tau <= endT; tau += dt) {
-        while (pressIdx < presses.length && presses[pressIdx].at <= tau) {
-            const p = presses[pressIdx++];
-            if (p.action === 'jump') {
-                // Igual que GameSession: si no puede saltar en el aire, se guarda.
-                if (!applyJump(body) && !body.grounded) body.jumpBufferT = JUMP_BUFFER_S;
-            } else {
-                applyDuckStart(body);
-                duckOwner = p.id;
-                duckReleaseAt = p.releaseAt;
-            }
-        }
-        // Solo suelta el agachado la pulsación que lo inició: si entre medias
-        // hubo otra, esa manda.
-        if (duckOwner >= 0 && tau >= duckReleaseAt) {
-            applyDuckEnd(body);
-            duckOwner = -1;
-            duckReleaseAt = Infinity;
-        }
+        // Mismo orden que GameSession: primero el portal, después las pulsaciones.
+        while (modeIdx < modes.length && modes[modeIdx].t <= tau) enterMode(body, modes[modeIdx++].mode);
+        while (inputIdx < script.length && script[inputIdx].at <= tau) applyInput(body, script[inputIdx++].input);
 
-        integrateDino(body, dt, SIM_GROUND_Y);
-        if (!prevGrounded && body.grounded && body.jumpBufferT > 0) {
-            body.jumpBufferT = 0;
-            applyJump(body);
-        }
-        prevGrounded = body.grounded;
+        integrateBody(body, dt, SIM_GROUND_Y);
 
         while (hi < obstacles.length && obstacles[hi].cross <= tau + reachS) hi++;
         while (lo < hi && obstacles[lo].cross < tau - reachS) lo++;
         if (lo === hi) continue;
 
-        dinoHitbox(body, dh);
+        bodyHitbox(body, dh);
         const nowD = profile.distanceAt(tau);
         for (let i = lo; i < hi; i++) {
             const o = obstacles[i];
@@ -274,7 +243,7 @@ const READER_SEARCH_S = 1;
  *
  * @param {SimObstacle[]} obstacles
  * @param {number | import('./speedProfile.js').SpeedProfile} speed
- * @param {{ toleranceS?: number, dt?: number, adaptS?: number }} [opts]
+ * @param {{ toleranceS?: number, dt?: number, adaptS?: number, modes?: Array<{ t: number, mode: string }> }} [opts]
  * @returns {{ ok: true } | { ok: false, index: number, t: number, pattern: string }}
  */
 export function validatePlayability(obstacles, speed, opts = {}) {
@@ -295,10 +264,22 @@ export function validatePlayability(obstacles, speed, opts = {}) {
         }
     }
     for (const [name, pressOffset] of runs) {
-        const r = simulateRun(obstacles, profile, { dt: opts.dt, pressOffset });
+        const r = simulateRun(obstacles, profile, { dt: opts.dt, pressOffset, modes: opts.modes });
         if (!r.ok) return { ok: false, index: r.index, t: r.t, pattern: name };
     }
     return { ok: true };
+}
+
+/**
+ * `validatePlayability` de un chart entero: sus obstáculos, sus portales y su
+ * perfil de velocidad. La forma de validar un chart sin olvidar ninguna de las
+ * tres cosas.
+ *
+ * @param {{ events: Array<{ t: number, type: string }>, world: { speedPxS: number, speedChanges?: object[] } }} chart
+ * @param {{ toleranceS?: number, dt?: number, adaptS?: number }} [opts]
+ */
+export function validateChart(chart, opts = {}) {
+    return validatePlayability(toSimObstacles(chart.events), speedProfileOf(chart), { ...opts, modes: toSimModes(chart.events) });
 }
 
 /** Resolución del barrido de `timingWindowS`: 5 ms, por debajo de un frame. */
@@ -320,6 +301,12 @@ const windowCache = new Map();
  * Memorizado por (kind, velocidad redondeada): el barrido cuesta ~200
  * simulaciones de un obstáculo, milisegundos, y se repite poco.
  *
+ * Kinds de otros modos (Ola 6): se miden dentro de su modo, y uno que cuelga del
+ * techo con el Dino ya arriba (un cristal del suelo antes, pulsado en su golpe).
+ * En antigravedad nada limita pulsar pronto ante un cristal aislado: el margen
+ * medido es el de pulsar tarde más el tope del barrido; lo que de verdad lo
+ * acota es el cristal anterior, y eso lo cubre `validatePlayability`.
+ *
  * @param {string} kind  Clave de OBSTACLE_KIND.
  * @param {number} speedPxS
  * @returns {number}  0 si ni la pulsación exacta sobrevive.
@@ -329,11 +316,22 @@ export function timingWindowS(kind, speedPxS) {
     const cached = windowCache.get(key);
     if (cached !== undefined) return cached;
 
-    const obstacles = toSimObstacles([{ t: 5, type: 'obstacle', kind }]);
-    const survives = (offset) => simulateRun(obstacles, speedPxS, { pressOffset: () => offset }).ok;
+    const def = OBSTACLE_KIND[kind];
+    const events = [{ t: 5, type: 'obstacle', kind }];
+    let modes = [];
+    if (def !== undefined && (def.mode ?? 'run') !== 'run') {
+        modes = [{ t: 2, mode: def.mode }];
+        if (def.surface === 'ceiling') {
+            const lift = Object.keys(OBSTACLE_KIND).find((k) => OBSTACLE_KIND[k].mode === def.mode && OBSTACLE_KIND[k].surface === 'floor');
+            if (lift !== undefined) events.unshift({ t: 3.5, type: 'obstacle', kind: lift });
+        }
+    }
+    const obstacles = toSimObstacles(events);
+    const target = obstacles.findIndex((o) => o.kind === kind && o.t === 5);
+    const survives = (offset) => simulateRun(obstacles, speedPxS, { modes, pressOffset: (i) => (i === target ? offset : 0) }).ok;
 
     let width = 0;
-    if (obstacles.length === 1 && survives(0)) {
+    if (target >= 0 && survives(0)) {
         const steps = Math.round(WINDOW_SCAN_MAX_S / WINDOW_SCAN_STEP_S);
         let early = 0;
         while (early < steps && survives(-(early + 1) * WINDOW_SCAN_STEP_S)) early++;

@@ -1,0 +1,52 @@
+// Modos de movimiento — REGISTRO ÚNICO Y EXTENSIBLE (Ola 6).
+//
+// Un modo es un conjunto de reglas del cuerpo durante un tramo de la canción. El
+// nivel cambia de modo con eventos `mode` del chart (un portal que cruza al Dino
+// en ese instante) y todo lo demás lo consume de forma genérica:
+//
+//   physics.js       despacha integración, entradas y hitbox al modo del cuerpo
+//   playability.js   el simulador aplica los cambios de modo en su instante
+//   charter          qué acciones existen en cada modo y cuánto adelanto tienen
+//   GameSession      portal, avisos y lo visual de cada modo
+//
+// Añadir un modo = un archivo con este contrato + una entrada aquí + sus kinds en
+// OBSTACLE_KIND (con `mode` y `action`) + las reglas de dónde va (modePlan.js).
+//
+// Contrato:
+//
+// @typedef {Object} MovementMode
+// @property {string} id
+// @property {string} label        Nombre para el jugador.
+// @property {number} color        Portal, mapa de la canción y avisos.
+// @property {readonly string[]} actions  Acciones del charter en este modo.
+// @property {number} settleS      Tras entrar, cuánto esperar para la primera acción.
+// @property {(body: object) => void} enter  Al cruzar su portal (el cuerpo viene del modo anterior).
+// @property {(body: object, dt: number, groundY: number) => number} integrate  Devuelve BODY_EVENT.
+// @property {(body: object, input: string) => string | null} input
+//           Aplica una entrada cruda ('jump', 'jumpEnd', 'duckStart', 'duckEnd').
+//           Devuelve el gesto que produjo ('jump', 'duck', 'flip') o null.
+// @property {(body: object, out: object) => object} hitbox
+// @property {(def: object) => number} leadS  Adelanto de un kind de este modo.
+
+import { RUN_MODE } from './run.js';
+import { FLIP_MODE_DEF } from './flip.js';
+
+export { BODY_EVENT, bodyState } from './body.js';
+
+export const MOVEMENT_MODES = Object.freeze({
+    run: RUN_MODE,
+    flip: FLIP_MODE_DEF,
+});
+
+/** Modo con el que empieza todo nivel. */
+export const DEFAULT_MODE = 'run';
+
+/** @param {unknown} id */
+export function isMovementMode(id) {
+    return typeof id === 'string' && Object.prototype.hasOwnProperty.call(MOVEMENT_MODES, id);
+}
+
+/** @param {string} id */
+export function movementMode(id) {
+    return MOVEMENT_MODES[id] ?? RUN_MODE;
+}

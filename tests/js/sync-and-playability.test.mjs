@@ -22,7 +22,8 @@ import {
 import { createSpawner } from '../../resources/js/game/systems/spawner.js';
 import { createBeatClock } from '../../resources/js/game/systems/beatClock.js';
 
-const KINDS = Object.keys(OBSTACLE_KIND);
+// Los kinds de correr; los de otros modos se juegan dentro de su modo (modes.test.mjs).
+const KINDS = Object.keys(OBSTACLE_KIND).filter((k) => OBSTACLE_KIND[k].mode === 'run');
 const SPEEDS = [250, 350, 450, 600];
 
 test('el centro del obstáculo cruza al Dino exactamente actionLead después de su evento', () => {

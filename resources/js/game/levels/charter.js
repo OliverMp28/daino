@@ -18,6 +18,8 @@
 //   songArc      tramos, niveles de intensidad, clímax, subidas y drops
 //   difficulty   cuánto se llena cada nivel, con qué margen, qué se desbloquea
 //   speedPlan    marchas hacia el clímax y en qué pulsación acelera el mundo
+//   modePlan     en qué tramos cambian las reglas del cuerpo (antigravedad) y
+//                por qué portales se entra y se sale (Ola 6)
 //   patterns     compás a compás: dónde va cada acción y cuál, con memoria de
 //                frases (un riff que vuelve es un patrón que vuelve)
 //   aquí         silencios demasiado largos, tipo de obstáculo, validación
@@ -33,9 +35,10 @@
 
 import { OBSTACLE_KIND, speedFromBpm } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
-import { toSimObstacles, validatePlayability, timingWindowS, readerOffsetS } from '../systems/playability.js';
+import { toSimModes, toSimObstacles, validatePlayability, timingWindowS, readerOffsetS } from '../systems/playability.js';
 import { createSpeedProfile } from '../systems/speedProfile.js';
 import { SPEED_RULES, planSpeed } from './speedPlan.js';
+import { MODE_RULES, createModeGuide, modeEvents, planModes } from './modePlan.js';
 import { Seeded } from './Seed.js';
 import {
     CHART_FORMAT_VERSION,
@@ -111,6 +114,7 @@ export function gameplayTempo(bpm) {
  * @property {number} speedChanges
  * @property {number[]} gears         Primer tiempo de cada marcha (la última, el clímax).
  * @property {number} topSpeedPxS     Velocidad máxima del nivel.
+ * @property {Array<{ mode: string, t0: number, t1: number }>} modes  Tramos con otro modo de movimiento.
  */
 
 /**
@@ -134,9 +138,9 @@ export function buildChart(analysis, opts = {}) {
     const arc = buildSongArc(model);
 
     const tempoSpeed = speedFromBpm(gameplayTempo(model.bpm));
-    const plan = planSpeed({ arc, model, profile, tempoSpeed, tStart: CHARTER_RULES.firstActionMinS });
-    const baseSpeed = plan.base;
-    const speedChanges = plan.changes;
+    const speedPlanOut = planSpeed({ arc, model, profile, tempoSpeed, tStart: CHARTER_RULES.firstActionMinS });
+    const baseSpeed = speedPlanOut.base;
+    const speedChanges = speedPlanOut.changes;
     const speed = createSpeedProfile(baseSpeed, speedChanges);
     const readerOk = readerCheck(speed);
 
@@ -147,7 +151,12 @@ export function buildChart(analysis, opts = {}) {
     const tMin = CHARTER_RULES.firstActionMinS;
     const tMax = model.durationSec - CHARTER_RULES.tailRestS - maxLead;
 
-    const ctx = { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, prng };
+    const plan = tMax > tMin ? planModes({ arc, model, profile, stageTime: unlockTimes.stageTime, tMax }) : [];
+    const modes = createModeGuide(plan, model.beatPeriodS);
+    const structure = [...structureEvents(arc), ...modeEvents(plan)];
+    const simModes = toSimModes(structure);
+
+    const ctx = { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, prng, modes, simModes };
     let actions = [];
     let fillers = 0;
     let repaired = 0;
@@ -161,7 +170,7 @@ export function buildChart(analysis, opts = {}) {
     }
 
     const events = [
-        ...structureEvents(arc),
+        ...structure,
         ...actions.map((a) => ({ t: round3(a.t), type: 'obstacle', kind: a.kind })),
     ].sort((a, b) => (a.t - b.t) || (EVENT_ORDER[a.type] - EVENT_ORDER[b.type]));
 
@@ -196,14 +205,15 @@ export function buildChart(analysis, opts = {}) {
             segments: arc.segments.length,
             climax: climax === null ? null : { t0: round3(climax.t0), t1: round3(climax.t1) },
             speedChanges: speedChanges.length,
-            gears: plan.gears,
+            gears: speedPlanOut.gears,
             topSpeedPxS: speed.maxSpeed,
+            modes: plan.map((s) => ({ mode: s.mode, t0: s.tIn, t1: s.tOut })),
         },
     };
 }
 
-/** A igual instante, la sección antes que su efecto y ambos antes que el obstáculo. */
-const EVENT_ORDER = Object.freeze({ section: 0, fx: 1, obstacle: 2 });
+/** A igual instante: la sección, su efecto, el portal y, al final, el obstáculo. */
+const EVENT_ORDER = Object.freeze({ section: 0, fx: 1, mode: 2, obstacle: 3 });
 
 // --------------------------- Velocidad ---------------------------
 
@@ -215,15 +225,17 @@ const EVENT_ORDER = Object.freeze({ section: 0, fx: 1, obstacle: 2 });
  * kind futuro con adelanto propio queda cubierto sin tocar nada.
  *
  * @param {import('../systems/speedProfile.js').SpeedProfile} speed
- * @returns {(t: number, type: 'jump'|'duck') => boolean}
+ * @returns {(t: number, type: 'jump'|'duck'|'flip') => boolean}
  */
 function readerCheck(speed) {
     if (speed.constant) return () => true;
-    const leadsOf = (type) => [...new Set(Object.values(OBSTACLE_KIND)
-        .filter((def) => (type === 'duck') === (def.role === 'duck'))
-        .map(actionLeadS))];
-    const leads = { jump: leadsOf('jump'), duck: leadsOf('duck') };
-    return (t, type) => leads[type].every((lead) => Math.abs(readerOffsetS(speed, t, lead)) <= SPEED_RULES.readerBudgetS);
+    const leads = {};
+    for (const def of Object.values(OBSTACLE_KIND)) {
+        const list = leads[def.action] ?? (leads[def.action] = []);
+        const lead = actionLeadS(def);
+        if (!list.includes(lead)) list.push(lead);
+    }
+    return (t, type) => (leads[type] ?? []).every((lead) => Math.abs(readerOffsetS(speed, t, lead)) <= SPEED_RULES.readerBudgetS);
 }
 
 // --------------------------- Desbloqueo de mecánicas ---------------------------
@@ -260,16 +272,20 @@ export function unlockSchedule(arc, profile) {
         wide: at(profile.unlock.wide),
         offbeat: at(profile.unlock.offbeat),
         combo: at(profile.unlock.combo),
+        /** Instante de cualquier etapa (lo usa el plan de modos). */
+        stageTime: at,
     };
 }
 
 // --------------------------- Acciones ---------------------------
 
 function chartActions(ctx) {
-    const { model, arc, profile, speed, readerOk, unlocked, tMin, tMax } = ctx;
+    const { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, modes } = ctx;
     const memory = createPhraseMemory();
     const threshold = duckThreshold(model);
     const placed = [];
+    /** Acciones colocadas en cada tramo de modo (para su estreno). */
+    const spanCounts = new Map();
 
     let segment = -1;
     let previousPositions = null;
@@ -316,6 +332,8 @@ function chartActions(ctx) {
         const k = arcBar.inSegment;
         const target = whole + Math.floor((k + 1) * frac + 1e-6) - Math.floor(k * frac + 1e-6);
 
+        const span = modes.spanAt(bar.t0);
+        const spanCount = span === null ? 0 : (spanCounts.get(span) ?? 0);
         const chosen = chooseBarActions({
             bar,
             nextBar: model.bars[bar.index + 1] ?? null,
@@ -338,10 +356,17 @@ function chartActions(ctx) {
             previousPositions,
             segmentCounts,
             introActions: Math.max(0, CHARTER_RULES.introActions - placed.length),
+            modes,
+            modeIntroLeft: span?.first ? Math.max(0, MODE_RULES.introActions - spanCount) : 0,
         });
 
         for (const a of chosen) {
             placed.push(a);
+            if (a.type === 'flip') {
+                const s = modes.spanAt(a.t);
+                if (s !== null) spanCounts.set(s, (spanCounts.get(s) ?? 0) + 1);
+                continue;
+            }
             segmentCounts.airTotal++;
             if (a.type === 'duck') segmentCounts.airDucks++;
         }
@@ -356,7 +381,7 @@ function chartActions(ctx) {
  * música calla de verdad (un break en silencio), el nivel también calla.
  */
 function fillLongRests(actions, ctx) {
-    const { model, profile, speed, readerOk, tMin, tMax, unlocked } = ctx;
+    const { model, profile, speed, readerOk, tMin, tMax, unlocked, modes } = ctx;
     const out = actions.slice();
     for (let guard = 0; guard < 1000; guard++) {
         let inserted = false;
@@ -370,24 +395,29 @@ function fillLongRests(actions, ctx) {
 
             const mid = (from + to) / 2;
             let best = null;
+            let bestType = 'jump';
             let bestScore = -Infinity;
             for (const bar of model.bars) {
                 if (bar.t1 < from || bar.t0 > to) continue;
                 for (const slot of bar.slots) {
-                    if (!slot.onBeat || slot.t < tMin || slot.t > tMax || !readerOk(slot.t, 'jump')) continue;
-                    if (a !== null && slot.t - a.t < pairGap(a.type, 'jump', speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1) continue;
-                    if (b !== null && b.t - slot.t < pairGap('jump', b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1) continue;
+                    if (!slot.onBeat || slot.t < tMin || slot.t > tMax || !modes.allows(slot.t)) continue;
+                    // El relleno es la acción básica de cada modo: saltar o invertir.
+                    const type = modes.modeAt(slot.t) === 'flip' ? 'flip' : 'jump';
+                    if (!readerOk(slot.t, type)) continue;
+                    if (a !== null && slot.t - a.t < pairGap(a.type, type, speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1) continue;
+                    if (b !== null && b.t - slot.t < pairGap(type, b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1) continue;
                     if (a === null && slot.t < from) continue;
                     const score = slot.strength + 0.3 * slot.metric - (0.4 * Math.abs(slot.t - mid)) / (to - from);
                     if (score > bestScore) {
                         bestScore = score;
                         best = slot;
+                        bestType = type;
                     }
                 }
             }
             if (best === null) continue;
             out.splice(i + 1, 0, {
-                t: best.t, type: 'jump', slot: best, score: 0.15, forced: false,
+                t: best.t, type: bestType, slot: best, score: 0.15, forced: false,
                 bar: best.bar, segment: ctx.arc.bars[best.bar].segment, echo: null,
             });
             inserted = true;
@@ -407,6 +437,7 @@ function assignKinds(actions, ctx) {
 
     for (let i = 0; i < actions.length; i++) {
         const a = actions[i];
+        if (a.type === 'flip') continue;
         if (a.type === 'duck') {
             a.kind = pickKindForRole('duck', prng);
             continue;
@@ -433,14 +464,37 @@ function assignKinds(actions, ctx) {
         }
         a.kind = pickKindForRole(role, prng) ?? pickKindForRole('jump', prng);
     }
+    assignFlipKinds(actions, ctx);
 }
 
 /**
- * Kind del registro para un papel musical. Si hay varios con ese papel, ruleta
- * por `weight` con la seed del nivel; con uno solo no se consume azar.
+ * Cristales de la antigravedad: cada inversión la obliga un cristal en la
+ * superficie que el Dino deja, así que dentro de cada tramo alternan suelo y
+ * techo empezando por el suelo (se entra corriendo por el suelo). Se recalcula
+ * entero tras cada reparación: quitar una inversión cambia la superficie de las
+ * siguientes. Sin azar: el mismo chart en cualquier orden de reparación.
  */
-function pickKindForRole(role, prng) {
-    const kinds = Object.entries(OBSTACLE_KIND).filter(([, def]) => def.role === role);
+function assignFlipKinds(actions, ctx) {
+    let span = null;
+    let onFloor = true;
+    for (const a of actions) {
+        if (a.type !== 'flip') continue;
+        const s = ctx.modes.spanAt(a.t);
+        if (s !== span) {
+            span = s;
+            onFloor = true;
+        }
+        a.kind = pickKindForRole('flip', null, onFloor ? 'floor' : 'ceiling');
+        onFloor = !onFloor;
+    }
+}
+
+/**
+ * Kind del registro para un papel musical (y superficie, si se pide). Si hay
+ * varios, ruleta por `weight` con la seed del nivel; con uno solo no se consume azar.
+ */
+function pickKindForRole(role, prng, surface = null) {
+    const kinds = Object.entries(OBSTACLE_KIND).filter(([, def]) => def.role === role && (surface === null || def.surface === surface));
     if (kinds.length === 0) return null;
     if (kinds.length === 1 || prng === null) return kinds[0][0];
     const total = kinds.reduce((s, [, def]) => s + (def.weight ?? 1), 0);
@@ -462,11 +516,11 @@ function pickKindForRole(role, prng) {
  * anterior), así un golpe de relleno nunca se lleva por delante un drop.
  */
 function repairUnplayable(actions, ctx) {
-    const { speed, profile } = ctx;
+    const { speed, profile, simModes } = ctx;
     let repaired = 0;
     while (repaired < CHARTER_RULES.maxRepairs && actions.length > 0) {
         const sim = toSimObstacles(actions.map((a) => ({ t: a.t, type: 'obstacle', kind: a.kind })));
-        const verdict = validatePlayability(sim, speed, { toleranceS: profile.toleranceS });
+        const verdict = validatePlayability(sim, speed, { toleranceS: profile.toleranceS, modes: simModes });
         if (verdict.ok) break;
         repaired++;
         const i = verdict.index;
@@ -477,7 +531,8 @@ function repairUnplayable(actions, ctx) {
         }
         const weight = (a) => a.score + (a.forced ? 10 : 0);
         const victim = i > 0 && weight(actions[i - 1]) < weight(hit) ? i - 1 : i;
-        actions.splice(victim, 1);
+        const removed = actions.splice(victim, 1)[0];
+        if (removed.type === 'flip') assignFlipKinds(actions, ctx);
     }
     return repaired;
 }

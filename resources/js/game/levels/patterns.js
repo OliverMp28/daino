@@ -24,6 +24,16 @@
 //   5. CABE: cada acción respeta el hueco mínimo con sus vecinas para ese par
 //      de acciones, a la velocidad de ese momento y con la tolerancia de la
 //      dificultad. Los huecos salen de medir la física (ver PAIR_GAP).
+//
+// Modos de movimiento (Ola 6): cada hueco pertenece al modo que rige en su
+// instante (levels/modePlan.js). En antigravedad la única acción es invertir la
+// gravedad; los portales dejan sin acciones los instantes a su alrededor, y las
+// frases solo se repiten dentro del mismo modo.
+
+import { MODE_RULES } from './modePlan.js';
+
+/** Separación de las primeras acciones de un modo la primera vez que aparece. */
+const MODE_INTRO_GAP_S = MODE_RULES.introGapS;
 
 /**
  * Hueco mínimo entre dos acciones consecutivas, medido con el simulador de
@@ -31,9 +41,10 @@
  * 300-720 px/s y ±35-90 ms de error (Sep 2026):
  *
  *   salto → salto        0.67 (±35) · 0.70 (±50) · 0.74 (±70) · 0.78 (±90) s, sin depender de la velocidad
- *   salto → agachado     0.49 a 300 px/s … 0.24 a 720 px/s (fast-fall + agachado)
+ *   salto → agachado     0.49 a 300 px/s … 0.24 a 720 px/s … 0.26-0.28 a 850 px/s con ±70-90 ms (fast-fall + agachado)
  *   agachado → salto     0.59-0.65 a 300 px/s … 0.48-0.53 a 720 px/s
  *   agachado → agachado  0.10-0.18 s (se sigue agachado)
+ *   inversión → inversión (suelo, techo, suelo…) 0.27-0.30 a 300 px/s · 0.23-0.28 a 450 · 0.21-0.28 a 650-850, con ±35-90 ms (Ola 6)
  *
  * Las fórmulas quedan por ENCIMA de lo medido en todo el rango (margen de
  * 0-80 ms): el validador final comprueba cada chart de verdad, así que aquí
@@ -41,20 +52,36 @@
  */
 export const PAIR_GAP = Object.freeze({
     jumpJump: (_speed, tol) => 0.60 + 2 * tol,
-    jumpDuck: (speed, tol) => 155 / speed + 0.7 * tol + 0.03,
+    jumpDuck: (speed, tol) => 155 / speed + 0.7 * tol + 0.045,
     duckJump: (speed, tol) => 0.40 + 55 / speed + 0.9 * tol,
     duckDuck: (_speed, tol) => 0.20 + tol,
+    flipFlip: (speed, tol) => 0.16 + 1.2 * tol + 36 / speed,
 });
 
 /**
- * @param {'jump'|'duck'} a  Acción anterior.
- * @param {'jump'|'duck'} b  Acción siguiente.
+ * Inversiones seguidas sin combinaciones desbloqueadas: por la física cabrían a
+ * un cuarto de segundo, pero leer suelo-techo-suelo a esa velocidad es cosa de
+ * los tramos donde la dificultad permite combinaciones. Antes, como mucho, una
+ * por beat a 125 BPM.
+ */
+const FLIP_CALM_GAP_S = 0.48;
+
+/**
+ * @param {'jump'|'duck'|'flip'} a  Acción anterior.
+ * @param {'jump'|'duck'|'flip'} b  Acción siguiente.
  * @param {number} speed     Velocidad del mundo cuando llega la siguiente.
  * @param {{ toleranceS: number, minGapS: number }} profile
- * @param {boolean} combos   ¿Se permiten combinaciones rápidas salto↔agachado?
+ * @param {boolean} combos   ¿Se permiten combinaciones rápidas (salto↔agachado, inversiones seguidas)?
  */
 export function pairGap(a, b, speed, profile, combos) {
     const tol = profile.toleranceS;
+    if (a === 'flip' || b === 'flip') {
+        // Una de correr y otra de antigravedad solo son vecinas a través de un
+        // portal, y alrededor del portal ya no hay acciones (modePlan.js).
+        if (a !== b) return profile.minGapS;
+        const flips = PAIR_GAP.flipFlip(speed, tol);
+        return Math.max(combos ? flips : Math.max(flips, FLIP_CALM_GAP_S), profile.minGapS);
+    }
     const jj = PAIR_GAP.jumpJump(speed, tol);
     let gap;
     if (a === 'jump' && b === 'jump') gap = jj;
@@ -113,22 +140,22 @@ export function signatureSimilarity(a, b) {
 }
 
 export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}) {
-    /** @type {Array<{ bar: number, signature: number[], level: number, target: number, picks: Array<{ si: number, type: string, event: object }> }>} */
+    /** @type {Array<{ bar: number, signature: number[], level: number, target: number, mode: string, picks: Array<{ si: number, type: string, event: object }> }>} */
     const entries = [];
     return {
         /**
-         * Compás anterior más parecido con el mismo tamaño y un nivel del arco a
-         * ±1. A igual parecido, el que buscaba el mismo número de acciones (en
-         * un tramo que alterna 2-3-2-3, el de hace dos compases) y, después, el
-         * más reciente.
+         * Compás anterior más parecido con el mismo tamaño, el mismo modo de
+         * movimiento y un nivel del arco a ±1. A igual parecido, el que buscaba
+         * el mismo número de acciones (en un tramo que alterna 2-3-2-3, el de
+         * hace dos compases) y, después, el más reciente.
          */
-        find(barIndex, signature, level, target) {
+        find(barIndex, signature, level, target, mode = 'run') {
             let best = null;
             let bestScore = minSimilarity;
             for (let i = entries.length - 1; i >= 0; i--) {
                 const e = entries[i];
                 if (barIndex - e.bar > maxAgeBars) break;
-                if (Math.abs(e.level - level) > 1 || e.signature.length !== signature.length) continue;
+                if (e.mode !== mode || Math.abs(e.level - level) > 1 || e.signature.length !== signature.length) continue;
                 const score = signatureSimilarity(e.signature, signature) + (e.target === target ? 0.01 : 0);
                 if (score > bestScore + 1e-9) {
                     bestScore = score;
@@ -137,9 +164,9 @@ export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}
             }
             return best;
         },
-        remember(barIndex, signature, level, target, picks) {
+        remember(barIndex, signature, level, target, picks, mode = 'run') {
             if (picks.length === 0) return;
-            entries.push({ bar: barIndex, signature, level, target, picks });
+            entries.push({ bar: barIndex, signature, level, target, mode, picks });
         },
     };
 }
@@ -149,7 +176,7 @@ export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}
 /**
  * @typedef {Object} ChartAction
  * @property {number} t
- * @property {'jump'|'duck'} type
+ * @property {'jump'|'duck'|'flip'} type
  * @property {import('./musicModel.js').GridSlot} slot
  * @property {number} score        Importancia musical (decide qué se sacrifica al reparar).
  * @property {boolean} forced      Drop o primeras acciones: se conservan antes que nada.
@@ -171,7 +198,7 @@ export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}
  * @param {number} ctx.target                  Acciones que se buscan.
  * @param {ChartAction[]} ctx.placed           Acciones ya fijadas, ordenadas (compases anteriores).
  * @param {(t: number) => number} ctx.speedAt
- * @param {(t: number, type: 'jump'|'duck') => boolean} [ctx.readerOk]  ¿Se lee bien una acción ahí? (alrededor de un cambio de velocidad)
+ * @param {(t: number, type: 'jump'|'duck'|'flip') => boolean} [ctx.readerOk]  ¿Se lee bien una acción ahí? (alrededor de un cambio de velocidad)
  * @param {object} ctx.profile                 Perfil de dificultad.
  * @param {(mechanic: string, t: number) => boolean} ctx.unlocked
  * @param {number} ctx.tMin
@@ -184,17 +211,22 @@ export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}
  * @param {Set<number> | null} ctx.previousPositions  Posiciones elegidas en el compás anterior del mismo tramo.
  * @param {{ airDucks: number, airTotal: number }} ctx.segmentCounts
  * @param {number} ctx.introActions            Acciones de "tutorial" que quedan (solo saltos en el pulso, espaciados).
+ * @param {ReturnType<import('./modePlan.js').createModeGuide>} [ctx.modes]  Modo de cada instante y portales.
+ * @param {number} [ctx.modeIntroLeft]         Acciones de estreno que quedan en el tramo de modo de este compás.
  * @returns {ChartAction[]}
  */
 export function chooseBarActions(ctx) {
     const { bar, arcBar, tMin, tMax } = ctx;
+    ctx = { ...ctx, modes: ctx.modes ?? NO_MODES, modeIntroLeft: ctx.modeIntroLeft ?? 0 };
     const candidates = barCandidates(ctx);
     if (candidates.length === 0) return [];
-    ctx = { ...ctx, reserved: reservedDownbeat(ctx) };
+    ctx.reserved = reservedDownbeat(ctx);
 
+    const barMode = ctx.modes.modeAt(bar.t0);
     const signature = barSignature(bar, ctx.threshold);
     const chosen = [];
-    const echo = ctx.introActions > 0 ? null : ctx.memory.find(bar.index, signature, arcBar.level, ctx.target);
+    const tutorial = ctx.introActions > 0 || ctx.modeIntroLeft > 0;
+    const echo = tutorial ? null : ctx.memory.find(bar.index, signature, arcBar.level, ctx.target, barMode);
 
     const tryAdd = (cand, type, echoEvent) => {
         if (cand.slot.t < tMin || cand.slot.t > tMax) return false;
@@ -230,6 +262,8 @@ export function chooseBarActions(ctx) {
         if (chosen.some((c) => c.slot === cand.slot)) continue;
         const preferred = preferredType(cand, ctx, chosen);
         if (tryAdd(cand, preferred, null)) continue;
+        // En antigravedad solo hay una acción.
+        if (preferred === 'flip') continue;
         // No cabe como lo pide el sonido: probar la otra acción si está permitida
         // (un agachado encaja a menos distancia de un salto que otro salto).
         const alt = preferred === 'jump' ? 'duck' : 'jump';
@@ -261,12 +295,15 @@ export function chooseBarActions(ctx) {
         si: bar.slots.indexOf(a.slot),
         type: a.type,
         event: a,
-    })));
+    })), barMode);
     return chosen;
 }
 
+/** Sin plan de modos: se corre de principio a fin. */
+const NO_MODES = Object.freeze({ constant: true, modeAt: () => 'run', allows: () => true, spanAt: () => null });
+
 function barCandidates(ctx) {
-    const { bar, nextBar, arcBar, segment, unlocked, tMin, tMax } = ctx;
+    const { bar, nextBar, arcBar, segment, unlocked, tMin, tMax, modes } = ctx;
     const out = [];
     const dropBar = segment.drop && bar.index === segment.bar0;
     let dropForced = false;
@@ -274,8 +311,13 @@ function barCandidates(ctx) {
     for (let si = 0; si < bar.slots.length; si++) {
         const slot = bar.slots[si];
         if (slot.t < tMin || slot.t > tMax) continue;
+        // Alrededor de un portal no hay acciones (modePlan.js).
+        if (!modes.allows(slot.t)) continue;
+        const mode = modes.modeAt(slot.t);
 
         if (ctx.introActions > 0 && (!slot.onBeat || slot.metric < 0.8)) continue;
+        // Estreno de un modo: sus primeras acciones, en el pulso.
+        if (mode !== 'run' && ctx.modeIntroLeft > 0 && !slot.onBeat) continue;
 
         if (!slot.onBeat) {
             if (arcBar.level < 2 || !unlocked('offbeat', slot.t)) continue;
@@ -296,7 +338,7 @@ function barCandidates(ctx) {
         // "bum . bum". Medido sin esto: a 128-160 BPM el bombo ganaba siempre y
         // los estribillos salían solo con saltos. En estrofas no aplica: la
         // calma también es no mezclar acciones.
-        if (arcBar.level >= 3 && slot.onBeat && slot.metric < 1 && unlocked('duck', slot.t) && isBright(slot, ctx)) {
+        if (mode === 'run' && arcBar.level >= 3 && slot.onBeat && slot.metric < 1 && unlocked('duck', slot.t) && isBright(slot, ctx)) {
             score += 0.12 * (arcBar.level - 2);
         }
 
@@ -318,13 +360,15 @@ function reservedDownbeat(ctx) {
     const next = ctx.nextBar;
     if (next === null || ctx.nextArcBar === null || ctx.nextArcBar.level < 1) return null;
     const slot = next.slots[0];
-    if (slot === undefined || slot.t < ctx.tMin || slot.t > ctx.tMax) return null;
+    if (slot === undefined || slot.t < ctx.tMin || slot.t > ctx.tMax || !ctx.modes.allows(slot.t)) return null;
     if (slot.strength === 0 && ctx.energyMean(slot.t - 0.3, slot.t + 0.3) < 0.06) return null;
-    return { t: slot.t, type: 'jump', score: Math.pow(slot.strength, 0.8) + 0.22 };
+    const type = ctx.modes.modeAt(slot.t) === 'flip' ? 'flip' : 'jump';
+    return { t: slot.t, type, score: Math.pow(slot.strength, 0.8) + 0.22 };
 }
 
 function preferredType(cand, ctx, chosen) {
     const { slot } = cand;
+    if (ctx.modes.modeAt(slot.t) === 'flip') return 'flip';
     if (cand.forced || slot.metric >= 1) return 'jump';
     if (!canDuck(cand, ctx, chosen)) return 'jump';
     const duck = slot.onBeat ? isBright(slot, ctx) : !(ctx.hasColor && slot.low > 0.5);
@@ -342,11 +386,14 @@ function isBright(slot, ctx) {
 
 /** Tipo de una acción copiada de la memoria, si sigue permitido aquí. */
 function allowedType(type, cand, ctx) {
+    if (ctx.modes.modeAt(cand.slot.t) === 'flip') return 'flip';
+    if (type === 'flip') return preferredType(cand, ctx, []);
     return type === 'duck' && !canDuck(cand, ctx, []) ? 'jump' : type;
 }
 
 function canDuck(cand, ctx, chosen) {
     if (!ctx.unlocked('duck', cand.slot.t) || ctx.introActions > 0) return false;
+    if (ctx.modes.modeAt(cand.slot.t) !== 'run') return false;
     const ducks = ctx.segmentCounts.airDucks + chosen.filter((a) => a.type === 'duck').length;
     const total = ctx.segmentCounts.airTotal + chosen.length;
     // Cuota proporcional con al menos uno: como fracción pura, la primera acción
@@ -370,7 +417,8 @@ function fits(action, chosen, ctx) {
     let next = neighborAfter(action.t, chosen);
     if (next === null && ctx.reserved !== null && action.score <= ctx.reserved.score + 0.1) next = ctx.reserved;
     const combos = ctx.unlocked('combo', action.t);
-    const introGap = ctx.introActions > 0 ? 1.1 : 0;
+    // Tutorial del principio (saltos) o estreno de un modo (sus primeras acciones).
+    const introGap = ctx.introActions > 0 ? 1.1 : (action.type === 'flip' && ctx.modeIntroLeft > 0 ? MODE_INTRO_GAP_S : 0);
 
     if (prev !== null) {
         const need = Math.max(introGap, pairGap(prev.type, action.type, speedAt(action.t), profile, combos));

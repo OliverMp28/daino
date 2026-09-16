@@ -15,6 +15,8 @@
 //   CACTUS_SMALL — saguaro alto/angosto, apoyado en el suelo.
 //   CACTUS_WIDE  — cluster de 3 cactus, bajo/ancho, apoyado en el suelo.
 //   PTERO        — pterodáctilo volador (altitude > 0): se pasa agachándose.
+//   CRYSTAL_*    — cristales de la antigravedad (Ola 6a), en el suelo o
+//                  colgando del techo (el mismo sprite reflejado).
 
 import { Container, Sprite } from 'pixi.js';
 import { OBSTACLE_KIND, OBSTACLE_ANIM_PERIOD_S } from '../config.js';
@@ -47,13 +49,15 @@ export class Obstacle extends Container {
         this._flapT = 0;
         this._fadeT = FADE_IN_S;
 
-        // Anclado a la base-centro para que el rebote al beat escale desde el
-        // suelo (un cactus no despega). La caja lógica (x, y, w, h) no cambia:
-        // el hitbox lo calcula physics.js con `def`, no con el sprite.
+        // Anclado a la base-centro para que el rebote al beat escale desde la
+        // superficie (un cactus no despega). Lo que cuelga del techo es el mismo
+        // sprite reflejado, con la base arriba. La caja lógica (x, y, w, h) no
+        // cambia: el hitbox lo calcula physics.js con `def`, no con el sprite.
+        this._ySign = def.surface === 'ceiling' ? -1 : 1;
         this._sprite = new Sprite(getTexture(this._frames[0]));
         this._sprite.anchor.set(0.5, 1);
-        this._sprite.position.set(def.w / 2, def.h);
-        this._sprite.scale.set(PIXEL_SCALE);
+        this._sprite.position.set(def.w / 2, this._ySign > 0 ? def.h : 0);
+        this._sprite.scale.set(PIXEL_SCALE, PIXEL_SCALE * this._ySign);
         this.addChild(this._sprite);
         this._beat = 0;
 
@@ -68,7 +72,7 @@ export class Obstacle extends Container {
     setBeat(pulse) {
         if (Math.abs(pulse - this._beat) < 0.01) return;
         this._beat = pulse;
-        this._sprite.scale.set(PIXEL_SCALE * (1 - 0.04 * pulse), PIXEL_SCALE * (1 + 0.09 * pulse));
+        this._sprite.scale.set(PIXEL_SCALE * (1 - 0.04 * pulse), PIXEL_SCALE * (1 + 0.09 * pulse) * this._ySign);
     }
 
     /**
@@ -93,7 +97,7 @@ export class Obstacle extends Container {
      * @param {number} x        Borde izquierdo en coordenadas de stage.
      * @param {number} groundY  Suelo actual — se relee cada frame, así que un
      *                          resize a mitad de partida recoloca también los
-     *                          obstáculos ya en pantalla.
+     *                          obstáculos ya en pantalla (los del techo, con él).
      */
     placeAt(x, groundY) {
         this.x = x;

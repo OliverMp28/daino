@@ -25,6 +25,13 @@
 //      caía en el primer tiempo del drop y quien juega con la vista pulsaba esa
 //      acción 41-58 ms tarde (playability.readerOffsetS).
 //
+// Ola 6a — tras el siguiente playtest ("un poquito, pero no tanto"): con la vista
+// del mundo escalada, el techo de 690 px/s daba ≥ 1.26 s de lectura en cualquier
+// pantalla y el nivel más largo llegaba a ×1.55. Ahora las marchas y el clímax
+// suben más, las marchas llegan antes (cada ~32 s) y el techo pasa a 820 px/s
+// (≥ 1.0 s de lectura; el legacy acababa en 0.74 s). Los huecos mínimos entre
+// acciones se volvieron a medir hasta 900 px/s (patterns.PAIR_GAP).
+//
 // La sincronía no depende de nada de esto: cada obstáculo cruza al Dino en su
 // instante musical con cualquier perfil (speedProfile.js). La velocidad solo
 // decide a qué distancia se ven los obstáculos, cuánto margen da cada salto (a
@@ -41,23 +48,24 @@ import { READER_ADAPT_S } from '../systems/playability.js';
  */
 export const SPEED_RULES = Object.freeze({
     /** Una marcha por cada tantos segundos de canción entre el arranque y el clímax. */
-    gearEveryS: 36,
+    gearEveryS: 32,
     maxGears: 3,
     /** Subida de cada marcha, × `speedAmp` de la dificultad. */
-    gearBoost: 0.08,
+    gearBoost: 0.11,
     /**
      * Subida por nivel del arco (reposo, calma, groove, empuje, clímax), ×
      * `speedAmp`. Solo acelera: a menos velocidad el margen de cada salto se
      * ESTRECHA (hallazgo de la Ola 2), así que frenar por debajo de la base
      * volvería la calma más difícil.
      */
-    levelBoost: Object.freeze([0, 0, 0, 0.06, 0.18]),
+    levelBoost: Object.freeze([0, 0, 0, 0.08, 0.24]),
     /**
-     * Techo de velocidad. A 690 px/s un móvil apaisado de 844 px ve cada
-     * obstáculo 1 s antes de que llegue; y los huecos mínimos entre acciones
-     * (patterns.PAIR_GAP) se midieron hasta 720 px/s.
+     * Techo de velocidad. Con la vista del mundo escalada (WORLD_VIEW.minWidth
+     * 1000) toda pantalla apaisada ve cada obstáculo ≥ 1.0 s antes de que llegue
+     * a 820 px/s; y los huecos mínimos entre acciones (patterns.PAIR_GAP) se
+     * midieron hasta 900 px/s.
      */
-    maxSpeedPxS: 690,
+    maxSpeedPxS: 820,
     /** Un tramo más corto que esto no sube por su nivel (salvo el clímax): un portal cada pocos segundos marea. */
     minLevelSegmentS: 8,
     /** Marchas separadas al menos esto, y del arranque y del clímax. */

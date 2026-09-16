@@ -30,17 +30,17 @@ test('acelerones: solo las subidas que se notan, con el primer tiempo que las mo
     ]));
     assert.deepEqual(cues.ups.map((u) => [u.t, u.at]), [[19.75, 20], [59.5, 60], [90.3, 90.3]]);
     // ×1.10, ×1.35 y ×1.30 sobre la velocidad de arranque.
-    assert.deepEqual(cues.ups.map((u) => u.gear), [1, 3, 2]);
+    assert.deepEqual(cues.ups.map((u) => u.gear), [1, 2, 2]);
     assert.equal(cues.warnS, Math.max(SPEED_CUES.warnMinS, SPEED_CUES.warnBeats * 0.5));
 });
 
 test('marchas del HUD: escalones sobre la velocidad de arranque', () => {
     const cues = createSpeedCues(chart([
-        { t: 10, speedPxS: 424, rampS: 0 },   // ×1.06
-        { t: 20, speedPxS: 472, rampS: 0 },   // ×1.18
-        { t: 30, speedPxS: 528, rampS: 0 },   // ×1.32
-        { t: 40, speedPxS: 584, rampS: 0 },   // ×1.46
-        { t: 50, speedPxS: 700, rampS: 0 },
+        { t: 10, speedPxS: 432, rampS: 0 },   // ×1.08
+        { t: 20, speedPxS: 496, rampS: 0 },   // ×1.24
+        { t: 30, speedPxS: 568, rampS: 0 },   // ×1.42
+        { t: 40, speedPxS: 648, rampS: 0 },   // ×1.62
+        { t: 50, speedPxS: 760, rampS: 0 },
     ]));
     assert.deepEqual([5, 10, 20, 30, 40, 55].map((t) => cues.gearAt(t)), [0, 1, 2, 3, 4, 4]);
     assert.equal(cues.linesAt(5), 0, 'a la velocidad de arranque, sin líneas');
@@ -49,7 +49,7 @@ test('marchas del HUD: escalones sobre la velocidad de arranque', () => {
 });
 
 test('aviso: nada lejos del acelerón, crece en su ventana y señala la marcha que viene', () => {
-    const cues = createSpeedCues(chart([{ t: 20, speedPxS: 480, rampS: 0 }]));
+    const cues = createSpeedCues(chart([{ t: 20, speedPxS: 520, rampS: 0 }]));
     assert.deepEqual(cues.aheadAt(10), { ahead: 0, next: cues.ups[0] });
     const early = cues.aheadAt(20 - cues.warnS + 0.5).ahead;
     const late = cues.aheadAt(19.9).ahead;

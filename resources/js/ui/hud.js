@@ -30,6 +30,9 @@ let progressBarEl = null;
 let progressFgEl = null;
 let roadEl = null;
 let gearEl = null;
+let modeEl = null;
+let modeLabelEl = null;
+let modeHintEl = null;
 let chevEls = [];
 let bannerEl = null;
 let controlsEl = null;
@@ -39,6 +42,7 @@ let lastScore = -1;
 let lastTimeKey = '';
 let lastRatio = -1;
 let lastGearKey = '';
+let lastModeKey = '';
 
 /** Marchas que caben en el indicador (speedCues.SPEED_CUES.gearThresholds). */
 const GEAR_SLOTS = 4;
@@ -119,8 +123,21 @@ export function createHud(_unused) {
     progressFgEl.className = 'daino-hud__progress-fg';
     progressBar.appendChild(roadEl);
     progressBar.appendChild(progressFgEl);
+    // Modo de movimiento (Ola 6a): avisa del portal que viene y nombra el modo
+    // mientras dura. La primera vez que alguien lo juega, además dice cómo.
+    modeEl = document.createElement('div');
+    modeEl.className = 'daino-hud__mode';
+    modeEl.dataset.state = '';
+    modeEl.setAttribute('role', 'status');
+    modeLabelEl = document.createElement('span');
+    modeLabelEl.className = 'daino-hud__mode-label';
+    modeHintEl = document.createElement('span');
+    modeHintEl.className = 'daino-hud__mode-hint';
+    modeEl.append(modeLabelEl, modeHintEl);
+
     centerBox.appendChild(timerRow);
     centerBox.appendChild(progressBar);
+    centerBox.appendChild(modeEl);
 
     const songBox = document.createElement('div');
     songBox.className = 'daino-hud__song';
@@ -212,6 +229,12 @@ function resetState() {
         delete chev.dataset.next;
     }
     if (controlsEl) controlsEl.dataset.shown = 'false';
+    if (modeEl) {
+        modeEl.dataset.state = '';
+        modeLabelEl.textContent = '';
+        modeHintEl.textContent = '';
+    }
+    lastModeKey = '';
     if (bannerEl) {
         bannerEl.textContent = '';
         bannerEl.dataset.shown = 'false';
@@ -275,9 +298,10 @@ const api = {
      * tramo con su intensidad, el clímax resaltado y una marca en cada
      * acelerón. Se llama una vez al empezar la partida.
      *
-     * @param {{ durationSec: number, sections: Array<{ t: number, level: number, climax?: boolean }>, speedUps: number[] }} road
+     * @param {{ durationSec: number, sections: Array<{ t: number, level: number, climax?: boolean }>,
+     *           speedUps: number[], modes?: Array<{ t0: number, t1: number, color: number }> }} road
      */
-    setRoadmap({ durationSec, sections, speedUps }) {
+    setRoadmap({ durationSec, sections, speedUps, modes = [] }) {
         if (!roadEl || !(durationSec > 0)) return;
         const pct = (t) => `${(Math.max(0, Math.min(1, t / durationSec)) * 100).toFixed(3)}%`;
         const nodes = [];
@@ -292,6 +316,16 @@ const api = {
             seg.style.left = pct(s.t);
             seg.style.width = `${((Math.min(end, durationSec) - s.t) / durationSec * 100).toFixed(3)}%`;
             nodes.push(seg);
+        }
+        // Tramos con otras reglas (Ola 6a): una banda del color del modo.
+        for (const m of modes) {
+            if (m.t1 <= m.t0) continue;
+            const band = document.createElement('i');
+            band.className = 'daino-hud__road-mode';
+            band.style.left = pct(m.t0);
+            band.style.width = `${((Math.min(m.t1, durationSec) - m.t0) / durationSec * 100).toFixed(3)}%`;
+            band.style.background = `#${m.color.toString(16).padStart(6, '0')}`;
+            nodes.push(band);
         }
         for (const t of speedUps) {
             const tick = document.createElement('b');
@@ -325,6 +359,23 @@ const api = {
             else delete chevEls[i].dataset.next;
         }
     },
+    /**
+     * Modo de movimiento (Ola 6a): 'warn' antes de su portal, 'on' mientras dura
+     * y '' corriendo. `hint` explica los controles las primeras veces.
+     *
+     * @param {{ state: '' | 'warn' | 'on', label: string, color?: number, hint?: string }} mode
+     */
+    setMode({ state, label, color, hint = '' }) {
+        if (!modeEl) return;
+        const key = `${state}|${label}|${hint}`;
+        if (key === lastModeKey) return;
+        lastModeKey = key;
+        modeEl.dataset.state = state;
+        modeLabelEl.textContent = label;
+        modeHintEl.textContent = hint;
+        if (color !== undefined) modeEl.style.setProperty('--daino-mode-color', `#${color.toString(16).padStart(6, '0')}`);
+    },
+
     /** Destello del indicador al entrar una marcha. */
     bumpGear() {
         if (!gearEl) return;
@@ -348,6 +399,9 @@ const api = {
         progressBarEl = null;
         roadEl = null;
         gearEl = null;
+        modeEl = null;
+        modeLabelEl = null;
+        modeHintEl = null;
         chevEls = [];
     },
 };

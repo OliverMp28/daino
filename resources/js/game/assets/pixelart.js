@@ -46,6 +46,15 @@ const PALETTE = {
     // Nube
     c: '#262c4e', // silueta nube
     l: '#39416e', // luz superior nube
+    // Antigravedad (Ola 6): cristales y techo en el violeta del modo (MODE_COLORS.flip)
+    V: '#c08bff', // cristal
+    v: '#7d4fd6', // sombra cristal
+    Y: '#f3e6ff', // brillo cristal
+    U: '#b58cff', // línea del techo
+    // Portal: en grises para teñirlo con el color de cada modo (Sprite.tint)
+    O: '#ffffff', // aro
+    o: '#a6a6a6', // aro interior
+    q: '#5c5c5c', // destellos del interior
 };
 
 // --------------------------- Sprites ---------------------------
@@ -258,11 +267,83 @@ const dot = [
     'WW',
 ];
 
+// --------------------------- Antigravedad (Ola 6a) ---------------------------
+
+// Grupo de cristales de neón, apoyado en su base. Grid 13×16 → 52×64 px. El del
+// techo es el mismo sprite reflejado (Obstacle.js): otra forma, otras reglas.
+const crystal = [
+    '......Y......',
+    '.....YV......',
+    '.....VVv.....',
+    '....YVVv.....',
+    '....VVVv..Y..',
+    '....VVVv.YVv.',
+    '.Y..VVVv.VVv.',
+    'YV..VVVv.VVv.',
+    'VVv.VVVVvVVv.',
+    'VVvYVVVVvVVv.',
+    'VVvVVVVVvVVVv',
+    'VVVVVVVVVVVVv',
+    '.VVVVVVVVVVv.',
+    '.vVVVVVVVVVv.',
+    '..vvVVVVVvv..',
+    '...vvvvvvv...',
+];
+
+// Franja del techo: la tira del suelo reflejada, con su línea en el violeta del
+// modo. La fila 10 es la línea; la 11, los bultos que cuelgan hacia el pasillo.
+const ceiling = ground.slice().reverse().map((row) => row.replaceAll('E', 'U'));
+
+/**
+ * Portal: un óvalo alto de doble aro con destellos dentro, en grises (se tiñe
+ * con el color del modo). Se genera en vez de dibujarse a mano: 81 filas de
+ * elipse escritas a mano serían ilegibles en un diff y cualquier retoque de
+ * tamaño obligaría a redibujarlo.
+ *
+ * @param {number} w  Celdas de ancho.
+ * @param {number} h  Celdas de alto.
+ * @param {number} phase  0/1: los destellos interiores alternan entre dos frames.
+ */
+function portalRows(w, h, phase) {
+    const rows = [];
+    const cx = w / 2;
+    const cy = h / 2;
+    for (let y = 0; y < h; y++) {
+        let row = '';
+        for (let x = 0; x < w; x++) {
+            const dx = (x + 0.5 - cx) / (w / 2);
+            const dy = (y + 0.5 - cy) / (h / 2);
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 1) row += '.';
+            else if (d > 0.86) row += 'O';
+            else if (d > 0.72) row += 'o';
+            else row += (x + y * 3 + phase * 2) % 7 === 0 && (y + phase) % 4 === 0 ? 'q' : '.';
+        }
+        rows.push(row);
+    }
+    return rows;
+}
+
+// Alto: del suelo a un poco por encima del techo del pasillo (FLIP_MODE.ceilingAbovePx).
+const portalA = portalRows(14, 82, 0);
+const portalB = portalRows(14, 82, 1);
+
+// Flechas del portal (se tiñen): hacia arriba y hacia abajo. Grid 9×5 → 36×20 px.
+const chevronUp = [
+    '....O....',
+    '...OOO...',
+    '..OOoOO..',
+    '.OOo.oOO.',
+    'OOo...oOO',
+];
+const chevronDown = chevronUp.slice().reverse();
+
 const DEFS = {
     dinoRunA, dinoRunB, dinoJump, dinoDead, dinoDuckA, dinoDuckB,
     cactusSmall, cactusWide,
     pteroA, pteroB,
     ground, cloud, dot,
+    crystal, ceiling, portalA, portalB, chevronUp, chevronDown,
 };
 
 // --------------------------- Skins (palette-swap) ---------------------------

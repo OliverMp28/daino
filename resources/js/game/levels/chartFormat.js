@@ -43,11 +43,22 @@
 //   - eventos `section` (nivel e intensidad de cada tramo) y `fx` (drops).
 // Un chart de formato 1 se sigue leyendo igual: sin cambios de velocidad ni
 // pulso propio.
+//
+// Formato 3 (Ola 6)
+// -----------------
+// Eventos `{ t, type: 'mode', mode }`: en `t` un portal cruza al Dino y cambian
+// las reglas del cuerpo (systems/modes/). Todo nivel empieza corriendo. Cambia la
+// semántica, así que sube la versión mayor: un cliente de formato 2 no sabría
+// jugar los cristales de la antigravedad y se niega a cargar el chart en vez de
+// jugar un nivel distinto. Un obstáculo de un modo que no rige en su instante se
+// descarta con aviso (sería imposible de superar).
 
 import { OBSTACLE_KIND } from '../config.js';
+import { isMovementMode } from '../systems/modes/index.js';
+import { createModeTimeline } from '../systems/modeTimeline.js';
 
 /** Versión mayor del formato que este cliente sabe interpretar (y la que genera). */
-export const CHART_FORMAT_VERSION = 2;
+export const CHART_FORMAT_VERSION = 3;
 
 /**
  * Versión del algoritmo de charting de este cliente. Súbela cuando cambie
@@ -57,9 +68,10 @@ export const CHART_FORMAT_VERSION = 2;
  *
  * 3: charter musical (Ola 5). 4: marchas de velocidad hacia el clímax, en la
  * anacrusa, y validación también para quien juega con la vista (afinado de
- * velocidad). El formato no cambia: solo los eventos y la velocidad generados.
+ * velocidad). 5: modos de movimiento con portales (antigravedad) y progresión de
+ * velocidad más marcada (Ola 6a).
  */
-export const CHARTER_VERSION = 4;
+export const CHARTER_VERSION = 5;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */
@@ -149,9 +161,10 @@ export function normalizeChart(raw) {
         throw new ChartError(`Demasiados eventos (${raw.events.length} > ${MAX_EVENTS}).`);
     }
 
-    const events = [];
+    let events = [];
     let droppedKinds = 0;
     let droppedMalformed = 0;
+    let droppedModes = 0;
     for (const e of raw.events) {
         if (e === null || typeof e !== 'object' || !isFiniteNumber(e.t) || typeof e.type !== 'string') {
             droppedMalformed++;
@@ -167,6 +180,12 @@ export function normalizeChart(raw) {
                 continue;
             }
             events.push({ t: e.t, type: 'obstacle', kind: e.kind });
+        } else if (e.type === 'mode') {
+            if (!isMovementMode(e.mode)) {
+                droppedModes++;
+                continue;
+            }
+            events.push({ t: e.t, type: 'mode', mode: e.mode });
         } else {
             // Tipo futuro: se conserva tal cual (copia superficial) para no
             // perder información si este chart se reenvía o se reguarda.
@@ -175,10 +194,19 @@ export function normalizeChart(raw) {
     }
     if (droppedKinds > 0) warnings.push(`${droppedKinds} obstáculo(s) de tipo desconocido descartados.`);
     if (droppedMalformed > 0) warnings.push(`${droppedMalformed} evento(s) mal formados descartados.`);
+    if (droppedModes > 0) warnings.push(`${droppedModes} cambio(s) a un modo desconocido descartados.`);
 
     // Orden estable por t: `Array.prototype.sort` es estable desde ES2019,
     // así que eventos simultáneos conservan su orden relativo.
     events.sort((a, b) => a.t - b.t);
+
+    // Cada obstáculo pertenece a un modo: fuera de él no se puede superar.
+    const modes = createModeTimeline(events);
+    const inMode = events.filter((e) => e.type !== 'obstacle' || (OBSTACLE_KIND[e.kind].mode ?? 'run') === modes.modeAt(e.t));
+    if (inMode.length < events.length) {
+        warnings.push(`${events.length - inMode.length} obstáculo(s) fuera de su modo de movimiento descartados.`);
+        events = inMode;
+    }
 
     const bpm = isFiniteNumber(raw.music?.bpm) && raw.music.bpm > 0 ? raw.music.bpm : 120;
     const beatPeriodS = isFiniteNumber(raw.music?.beatPeriodS) && raw.music.beatPeriodS > 0

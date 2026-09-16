@@ -479,11 +479,16 @@ export function setMusicState(s) {
  * de velocidad y, en un acelerón, su ráfaga. GameSession lo empuja desde
  * `systems/speedCues.js`. Sin efecto con reduced motion.
  *
- * @param {{ level?: number, burst?: boolean }} s
+ * `clearAbove` (Ola 6a) sube la franja libre sobre el suelo mientras el pasillo
+ * de un modo está en pantalla: una raya a la altura del techo se leería como un
+ * obstáculo. 0 vuelve a la de siempre.
+ *
+ * @param {{ level?: number, burst?: boolean, clearAbove?: number }} s
  */
 export function setSpeedFx(s) {
     if (!speedLines) return;
     if (s.level !== undefined) speedLines.setLevel(s.level);
+    if (s.clearAbove !== undefined) speedLines.setClearance(s.clearAbove);
     if (s.burst) speedLines.burst();
 }
 

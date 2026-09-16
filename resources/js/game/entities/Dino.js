@@ -1,19 +1,20 @@
-// Entidad protagonista. Salta y se AGACHA (rediseño Jul 2026 — antes solo
-// salto). Su X es fija (`DINO_X`); la Y la mueve `physics.js` cada frame
-// integrando gravedad y clampeando al suelo. Aquí vive el estado (vy,
-// grounded, ducking, timers de coyote/buffer), el visual pixel-art animado
-// y las acciones `jump()/duckStart()/duckEnd()`. Mantener separación
-// entidad/sistema: la integración NO ocurre aquí.
+// Entidad protagonista: el cuerpo del Dino y su visual pixel-art animado. Su X es
+// fija (`DINO_X`); la Y la mueve la física (systems/physics.js) con las reglas del
+// MODO DE MOVIMIENTO vigente (Ola 6: correr, antigravedad…). Aquí vive el estado
+// físico (los campos de `modes/body.js`) y lo que se VE de cada gesto. Mantener la
+// separación entidad/sistema: la integración NO ocurre aquí.
 //
-// Contrato de coordenadas (igual que Bloque 5): (this.x, this.y) es la esquina
-// superior-izquierda del box LÓGICO DE PIE (DINO_SIZE), también agachado —
-// physics.js hace `dino.y = groundY - DINO_SIZE.h` sin excepciones. Agacharse
-// solo cambia el hitbox y el visual, nunca la física vertical.
+// Contrato de coordenadas: (this.x, this.y) es la esquina superior-izquierda del
+// box LÓGICO DE PIE (DINO_SIZE), también agachado y cabeza abajo. Agacharse solo
+// cambia el hitbox y el visual; en antigravedad el box se apoya en el techo.
 
 import { Container, Sprite } from 'pixi.js';
-import { DINO_X, DINO_SIZE, COYOTE_TIME_S, RUN_ANIM } from '../config.js';
+import { DINO_X, DINO_SIZE, RUN_ANIM } from '../config.js';
 import { getTexture, normalizeSkinId, PIXEL_SCALE } from '../assets/pixelart.js';
-import { applyJump, applyDuckStart, applyDuckEnd, dinoHitbox } from '../systems/physics.js';
+import { applyInput, bodyHitbox, bodyState } from '../systems/physics.js';
+
+/** Velocidad (1/s) con la que el sprite gira hacia la gravedad nueva: ~0.1 s de volteo. */
+const FLIP_VISUAL_RATE = 26;
 
 export class Dino extends Container {
     /**
@@ -27,24 +28,10 @@ export class Dino extends Container {
         /** Variante de paleta con la que se resuelven TODOS los frames. */
         this.skinId = normalizeSkinId(opts.skinId ?? 'classic');
 
+        // --- Estado físico (lo leen y escriben physics.js y sus modos) ---
+        Object.assign(this, bodyState(DINO_SIZE.h));
         this.x = DINO_X;
         this.y = 0;
-
-        // --- Estado físico (lo lee/escribe physics.js) ---
-        this.vy = 0;
-        this.grounded = true;
-        /** true mientras el jugador mantiene ↓ (visual + hitbox bajos si grounded). */
-        this.ducking = false;
-        /** true si pulsó ↓ estando en el aire — physics aplica gravedad extra. */
-        this.fastFall = false;
-        /** true mientras el botón de salto sigue pulsado — soltar corta el salto. */
-        this.jumpHeld = false;
-        /** Segundos restantes de coyote time (se recarga en el suelo). */
-        this.coyoteT = COYOTE_TIME_S;
-        /** Segundos restantes del jump buffer (salto pedido justo antes de aterrizar). */
-        this.jumpBufferT = 0;
-        /** true tras chocar — congela la animación en la pose de muerte. */
-        this.dead = false;
 
         // --- Visual ---
         // Sprite anclado a la BASE-CENTRO del box lógico: el squash & stretch
@@ -60,41 +47,42 @@ export class Dino extends Container {
         this._runFrame = 0;    // 0 = A, 1 = B
         this._squashX = 1;     // squash & stretch actual (converge a 1)
         this._squashY = 1;
+        /** Orientación visual [-1, 1]: sigue a `gravityDir` con un volteo rápido. */
+        this._upright = 1;
     }
 
     /**
-     * Aplica el impulso de salto si está en el suelo o dentro del coyote time.
-     * Saltar levanta al Dino aunque estuviera agachado (el salto gana).
-     * @returns {boolean} true si el salto se ejecutó.
+     * Aplica una entrada cruda del jugador ('jump', 'jumpEnd', 'duckStart',
+     * 'duckEnd') con las reglas del modo vigente y reacciona visualmente al gesto.
+     * @returns {string | null} El gesto que produjo.
      */
-    jump() {
-        // Las reglas físicas (coyote, impulso, cancelar agachado) viven en
-        // physics.js para que el simulador de jugabilidad use las mismas.
-        if (!applyJump(this)) return false;
-        // Stretch vertical al despegar — el lerp de tickVisual lo devuelve a 1.
-        this._squashX = 0.82;
-        this._squashY = 1.22;
-        return true;
+    input(action) {
+        const gesture = applyInput(this, action);
+        if (gesture !== null) this.onGesture(gesture);
+        return gesture;
     }
 
-    /** El jugador soltó el botón de salto — physics corta la subida. */
-    jumpEnd() {
-        this.jumpHeld = false;
-    }
-
-    /** Mantener ↓: agachado en suelo, fast-fall en el aire (y agachado al caer). */
-    duckStart() {
-        const wasStanding = applyDuckStart(this);
-        if (wasStanding && this.grounded) {
-            // Squash rápido al tirarse al suelo — vende el gesto.
-            this._squashX = 1.12;
-            this._squashY = 0.82;
+    /** Lo que se ve de cada gesto (también de uno guardado que dispara al aterrizar). */
+    onGesture(gesture) {
+        switch (gesture) {
+            case 'jump':
+                // Stretch vertical al despegar — el lerp de tickVisual lo devuelve a 1.
+                this._squashX = 0.82;
+                this._squashY = 1.22;
+                break;
+            case 'duck':
+                // Squash rápido al tirarse al suelo — vende el gesto.
+                this._squashX = 1.12;
+                this._squashY = 0.82;
+                break;
+            case 'flip':
+                // Se estira hacia donde cae; el volteo lo hace `_upright`.
+                this._squashX = 0.86;
+                this._squashY = 1.18;
+                break;
+            default:
+                break;
         }
-    }
-
-    /** Soltar ↓. */
-    duckEnd() {
-        applyDuckEnd(this);
     }
 
     /** Pose de muerte (ojo en X). La llama GameSession al chocar. */
@@ -104,8 +92,8 @@ export class Dino extends Container {
     }
 
     /**
-     * Aterrizaje detectado por GameSession (transición grounded false→true).
-     * Squash horizontal — se recupera solo en tickVisual.
+     * Aterrizaje detectado por la física (BODY_EVENT.LANDED), en el suelo o en
+     * el techo. Squash horizontal — se recupera solo en tickVisual.
      */
     onLand() {
         this._squashX = 1.18;
@@ -113,8 +101,8 @@ export class Dino extends Container {
     }
 
     /**
-     * Avanza la animación y el squash & stretch. La llama GameSession cada
-     * frame DESPUÉS de integrar física (para leer grounded/ducking frescos).
+     * Avanza la animación, el volteo y el squash & stretch. La llama GameSession
+     * cada frame DESPUÉS de integrar física (para leer grounded/ducking frescos).
      *
      * @param {number} dt         Delta en segundos.
      * @param {number} gameSpeed  px/s del scroll — escala el ciclo de carrera.
@@ -139,19 +127,26 @@ export class Dino extends Container {
             }
         }
 
+        // Volteo hacia la gravedad: la escala vertical pasa por 0 (una carta que
+        // gira) y los pies acaban contra la superficie de destino.
+        this._upright += (this.gravityDir - this._upright) * (1 - Math.exp(-FLIP_VISUAL_RATE * dt));
+        if (Math.abs(this.gravityDir - this._upright) < 1e-3) this._upright = this.gravityDir;
+
         // Squash & stretch converge a 1 con lerp exponencial frame-rate-independent.
         const k = 1 - Math.exp(-14 * dt);
         this._squashX += (1 - this._squashX) * k;
         this._squashY += (1 - this._squashY) * k;
-        this._sprite.scale.set(PIXEL_SCALE * this._squashX, PIXEL_SCALE * this._squashY);
+        // Con el ancla en los pies, la posición recorre el box: pies abajo (1) o arriba (−1).
+        this._sprite.position.y = DINO_SIZE.h * (1 + this._upright) / 2;
+        this._sprite.scale.set(PIXEL_SCALE * this._squashX, PIXEL_SCALE * this._squashY * this._upright);
     }
 
     /**
-     * Rectángulo de colisión en coordenadas del stage. La geometría vive en
-     * `physics.dinoHitbox` — la comparte el simulador de jugabilidad.
+     * Rectángulo de colisión en coordenadas del stage, según modo y postura. La
+     * geometría vive en physics.js — la comparte el simulador de jugabilidad.
      * @returns {{ x: number, y: number, w: number, h: number }}
      */
     getHitbox() {
-        return dinoHitbox(this);
+        return bodyHitbox(this);
     }
 }

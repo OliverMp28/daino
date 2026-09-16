@@ -108,6 +108,51 @@ export const COYOTE_TIME_S = 0.09;
 /** Si pulsas saltar un pelín antes de aterrizar, el salto se guarda y dispara al tocar suelo. */
 export const JUMP_BUFFER_S = 0.12;
 
+// --------------------------- Modos de movimiento (Ola 6) ---------------------------
+// Cada modo cambia las reglas del cuerpo durante un tramo de la canción y entra y
+// sale por un portal (systems/modes/). Correr (salto + agacharse) es el de siempre.
+
+/**
+ * Antigravedad: un pasillo con techo; cualquier pulsación invierte la gravedad
+ * y el Dino cae hacia la otra superficie. Los cristales del suelo obligan a
+ * subir y los del techo a bajar.
+ *
+ *   ceilingAbovePx  Del suelo a la superficie del techo. Con el alto mínimo de la
+ *                   vista (WORLD_VIEW.minHeight) el techo y su franja caben bajo el HUD.
+ *   gravity         Aceleración hacia la superficie de destino (px/s²).
+ *   kickPxS         Velocidad inicial al invertir: despega en seco en vez de
+ *                   quedarse pegado a la superficie los primeros frames.
+ *   maxSpeedPxS     Tope de velocidad vertical.
+ *   leadMarginS     Adelanto del chart más allá de lo que tarda en despejar un
+ *                   cristal (ver modes/flip.js: `leadS`).
+ */
+export const FLIP_MODE = Object.freeze({
+    ceilingAbovePx: 300,
+    gravity: 5200,
+    kickPxS: 450,
+    maxSpeedPxS: 1500,
+    leadMarginS: 0.24,
+});
+
+/** Color de cada modo: su portal, su franja en el mapa de la canción y su aviso. */
+export const MODE_COLORS = Object.freeze({ run: 0x7fe6ff, flip: 0xc08bff });
+
+/**
+ * Lo que rodea a un cambio de modo en la partida (solo visual).
+ *   warnBeats/warnMinS  Cuándo empieza el aviso del HUD antes del portal.
+ *   strength            Fuerza del momento al cruzarlo (ver DROP_FX).
+ *   hintRuns            Partidas con este modo en las que se explican sus controles.
+ *   linesClearPx        Franja sobre el suelo sin líneas de velocidad mientras el
+ *                       pasillo está en pantalla (una raya dentro se leería como obstáculo).
+ */
+export const MODE_FX = Object.freeze({
+    warnBeats: 8,
+    warnMinS: 2.5,
+    strength: 0.7,
+    hintRuns: 3,
+    linesClearPx: 360,
+});
+
 // --------------------------- Animación ---------------------------
 
 /**
@@ -143,19 +188,26 @@ export const MAX_BURST_PARTICLES = 140;
  *                  >0 = volador (se pasa agachándose o con salto preciso).
  *   sprites        Frames de animación (1 entrada = estático).
  *   animPeriodS    Segundos por frame cuando hay >1 sprite.
+ *   mode           Modo de movimiento en el que existe (Ola 6): 'run' o 'flip'.
+ *   surface        'floor' (se apoya en el suelo) o 'ceiling' (cuelga del techo
+ *                  del modo; altitude se mide desde el techo hacia abajo).
+ *   action         Qué hace el jugador para superarlo: 'jump', 'duck' o 'flip'.
  *   role           Papel musical en el charter (Ola 5):
  *                    'jump'    salto normal, un golpe del pulso;
  *                    'accent'  salto que exige precisión, reservado a los
  *                              golpes fuertes (primer tiempo, drops);
  *                    'duck'    agacharse, para los sonidos brillantes y los
- *                              contratiempos.
+ *                              contratiempos;
+ *                    'flip'    invertir la gravedad (el charter alterna suelo y techo).
  *   weight         Peso relativo entre kinds del MISMO papel (variedad
  *                  determinista con la seed del nivel).
  */
 export const OBSTACLE_KIND = Object.freeze({
-    CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], role: 'jump', weight: 1 },
-    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], role: 'accent', weight: 1 },
-    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, role: 'duck', weight: 1 },
+    CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], mode: 'run', surface: 'floor', action: 'jump', role: 'jump', weight: 1 },
+    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', weight: 1 },
+    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, mode: 'run', surface: 'floor', action: 'duck', role: 'duck', weight: 1 },
+    CRYSTAL_FLOOR: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'floor', action: 'flip', role: 'flip', weight: 1 },
+    CRYSTAL_CEIL: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'ceiling', action: 'flip', role: 'flip', weight: 1 },
 });
 
 /** Padding del hitbox del obstacle (más ajustado que el del Dino). */
