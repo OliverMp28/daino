@@ -767,9 +767,17 @@ export class GameSession {
         }
 
         const box = bodyHitbox(dino, this._hitbox);
-        if (this.spawner.collisionAt(box, t, groundY) !== null) return true;
-        // Muros del túnel del vuelo, con la anchura del hitbox (flightCourse.js).
-        return !this._course.empty && this._course.collisionAt(box, t, groundY, this._speed.speedAt(t));
+        const hit = this.spawner.collisionAt(box, t, groundY) !== null
+            // Muros del túnel del vuelo, con la anchura del hitbox (flightCourse.js).
+            || (!this._course.empty && this._course.collisionAt(box, t, groundY, this._speed.speedAt(t)));
+        // Herramienta de dev (ui/devTools.js, solo en `import.meta.env.DEV`): con
+        // el interruptor activo el choque igual se detecta (el destello y el
+        // resto de feedback de "en el golpe" siguen vivos) pero no corta la
+        // partida — así se puede probar un nivel entero sin que la primera
+        // colisión lo corte. Se lee en vivo, así el panel puede activarlo o
+        // desactivarlo a mitad de partida sin tocar GameSession.
+        if (hit && window.__daino?.godMode === true) return false;
+        return hit;
     }
 
     /** Impacto: congela el mundo, corta el audio en seco y arma el juice. */

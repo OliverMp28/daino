@@ -2789,3 +2789,82 @@ dialog.daino-rotate p { margin: 0 0 1.2rem; line-height: 1.45; color: color-mix(
 @media (prefers-reduced-motion: reduce) {
     .daino-rotate__phone { animation: none; transform: rotate(-90deg); }
 }
+
+/* ---------------------------------------------------------------------------
+ * Panel flotante de herramientas de dev — SOLO se monta en `bun run dev`
+ * (`ui/devTools.js`). Esquina inferior-izquierda (libre: el HUD usa arriba,
+ * el menú el centro, el chip de auth arriba-der). Colapsado por defecto para
+ * no estorbar la vista; z-index por debajo de un `<dialog>` (top layer manda
+ * igualmente) pero por encima del HUD, así siempre es alcanzable en partida.
+ * ------------------------------------------------------------------------- */
+
+.daino-devtools {
+    position: fixed;
+    left: max(0.6rem, var(--safe-left));
+    bottom: max(0.6rem, var(--safe-bottom));
+    z-index: 45;
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    gap: 0.4rem;
+    font-family: inherit;
+}
+
+.daino-devtools__handle {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
+    background: color-mix(in oklch, var(--color-daino-bg-lifted) 55%, transparent);
+    color: var(--color-daino-fg);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.55;
+    backdrop-filter: blur(6px);
+    transition: opacity 150ms, background 150ms, border-color 150ms;
+}
+
+.daino-devtools__handle:hover { opacity: 1; }
+
+.daino-devtools[data-godmode="on"] .daino-devtools__handle {
+    opacity: 0.9;
+    border-color: color-mix(in oklch, var(--color-daino-beat) 70%, transparent);
+    color: var(--color-daino-beat);
+}
+
+.daino-devtools__panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.6rem 0.75rem;
+    min-width: 9.5rem;
+    border-radius: 0.6rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
+    background: color-mix(in oklch, var(--color-daino-bg-deep) 92%, transparent);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 0.4rem 1rem rgba(0, 0, 0, 0.35);
+}
+
+.daino-devtools__heading {
+    margin: 0 0 0.1rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: color-mix(in oklch, var(--color-daino-fg) 55%, transparent);
+}
+
+.daino-devtools__row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.82rem;
+    color: var(--color-daino-fg);
+    cursor: pointer;
+}
+
+.daino-devtools__row input { accent-color: var(--color-daino-beat); cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-devtools__handle { transition: none; }
+}

@@ -43,6 +43,15 @@ async function boot() {
     // fadeToBlack, vuelta al menú. Sustituye la lógica que vivía aquí en B5.
     appController.start({ engine: engineApi });
 
+    // Panel flotante de herramientas de dev (p. ej. "sin colisiones" para
+    // probar un nivel entero). El `if` es una constante en build time: Vite
+    // lo sustituye por `false` en producción y el bundler descarta la rama
+    // entera, `import()` incluido — no pesa nada fuera de `bun run dev`.
+    if (import.meta.env.DEV) {
+        const { mountDevTools } = await import('@/ui/devTools.js');
+        mountDevTools();
+    }
+
     if (engineApi.reducedMotion) {
         console.info('[daino] prefers-reduced-motion: shader desactivado, fallback CSS estático');
     }
