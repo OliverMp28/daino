@@ -41,16 +41,18 @@ test('la celda del arte ocupa siempre un número entero de píxeles de dispositi
     }
 });
 
-test('en pantalla apaisada nunca se ve menos del mínimo: a la velocidad máxima hay ≥ 1.0 s para ver venir cada obstáculo', () => {
-    // Ola 6a: el techo pasó de 690 a 820 px/s (la velocidad se notaba poco). El
-    // legacy acababa sus canciones con 0.74 s de lectura.
+test('en pantalla apaisada nunca se ve menos del mínimo: a la velocidad máxima hay ≥ 0.85 s para ver venir cada obstáculo', () => {
+    // Ola 6a: el techo pasó de 690 a 820 px/s (la velocidad se notaba poco). Tras
+    // el playtest de la 6b ("en lo difícil no se siente emoción"), a 1000 px/s, el
+    // de Extremo: 0.87-0.98 s en pantallas 16:10-16:9. El legacy acababa sus
+    // canciones con 0.74 s de lectura.
     for (const [name, width, height, dpr] of LANDSCAPE) {
         const v = computeWorldView({ width, height, dpr });
         assert.ok(v.width >= WORLD_VIEW.minWidth - 1e-6, `${name}: ancho ${v.width.toFixed(0)}`);
         assert.ok(v.height >= WORLD_VIEW.minHeight - 1e-6, `${name}: alto ${v.height.toFixed(0)}`);
         assert.ok(v.width <= WORLD_VIEW.maxWidth * 1.08, `${name}: ancho ${v.width.toFixed(0)} (no se diluye)`);
         const read = readAheadS(v, SPEED_RULES.maxSpeedPxS);
-        assert.ok(read >= 1.0, `${name}: ${read.toFixed(2)} s a ${SPEED_RULES.maxSpeedPxS}/s`);
+        assert.ok(read >= 0.85, `${name}: ${read.toFixed(2)} s a ${SPEED_RULES.maxSpeedPxS}/s`);
     }
 });
 

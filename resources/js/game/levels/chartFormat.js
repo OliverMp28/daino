@@ -85,9 +85,11 @@ export const CHART_FORMAT_VERSION = 4;
  * velocidad más marcada (Ola 6a). 6: reparto de modos por el carácter de cada
  * tramo, cada modo una vez como mucho, y vuelo con notas mantenidas (Ola 6b).
  * 7: tramos en los cambios que se oyen (songChanges.js), clímax desde su drop y
- * modos que entran y salen con la música (tras el playtest de la 6b).
+ * modos que entran y salen con la música (tras el playtest de la 6b). 8: más
+ * densidad, menos silencios de juego, más velocidad y techo por dificultad (la
+ * dificultad que se siente, tras el mismo playtest).
  */
-export const CHARTER_VERSION = 7;
+export const CHARTER_VERSION = 8;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */

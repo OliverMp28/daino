@@ -16,6 +16,9 @@
 //     tolerancia de su dificultad; nunca por encima del techo de la canción.
 //   - Progresión: las mecánicas se estrenan en su momento del arco.
 //   - Justicia: 0 patrones imposibles en las 8 canciones reales × 5 dificultades.
+//   - Emoción (playtest de la 6b): mientras la música suena no hay silencios de
+//     juego más largos que el máximo de su dificultad, y What's Up Danger en
+//     Extremo es denso y rápido de verdad.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -219,6 +222,80 @@ test('silencio: donde la música calla no hay acciones', () => {
         const { chart } = buildChart(analysis, { seed: 1, difficulty });
         const inside = obstacles(chart).filter((e) => e.t > silent.startSec + 0.3 && e.t < silent.endSec - 0.3);
         assert.equal(inside.length, 0, `dificultad ${difficulty}: ${inside.length} acciones en el silencio`);
+    }
+});
+
+/**
+ * Huecos entre acciones mientras la música suena, fuera de lo que se deja libre a
+ * propósito: el tutorial, los portales y el estreno de cada modo, el vuelo (sus
+ * notas no son obstáculos), la vuelta a leer la velocidad tras un acelerón, el
+ * final y los silencios de verdad. Cada uno con el máximo de su dificultad.
+ */
+function playedRests(analysis, chart, profile) {
+    const model = buildMusicModel(analysis);
+    const acts = chart.events.filter((e) => e.type === 'obstacle').map((e) => e.t);
+    const portals = chart.events.filter((e) => e.type === 'mode');
+    const secs = sections(chart);
+    const speedChanges = chart.world.speedChanges.map((c) => c.t);
+    const out = [];
+    for (let i = CHARTER_RULES.introActions; i < acts.length; i++) {
+        const a = acts[i - 1];
+        const b = acts[i];
+        const debut = portals.some((p) => p.mode !== 'run' && a < p.t + 2.5 && acts.filter((t) => t >= p.t).indexOf(b) <= 1);
+        if (debut || portals.some((p) => p.t > a - 2.5 && p.t < b + 2.5)) continue;
+        if (portals.some((p, k) => p.mode === 'fly' && a < (portals[k + 1]?.t ?? Infinity) && b > p.t)) continue;
+        if (speedChanges.some((t) => t > a - 1.5 && t < b + 1.5)) continue;
+        if (b > chart.audio.durationSec - 10 || model.energyMean(a, b) < 0.12) continue;
+        const level = secs.filter((s) => s.t <= (a + b) / 2).at(-1)?.level ?? 2;
+        out.push({ a, gap: b - a, max: profile.maxRestS * (level === 0 ? CHARTER_RULES.restLevelFactor : 1) });
+    }
+    return out;
+}
+
+test('silencios de juego: mientras la música suena, ningún hueco pasa del máximo de su dificultad', () => {
+    // Tras el playtest de la 6b: con 4.5-8 s de máximo, en canciones de 60-95 BPM
+    // era normal un compás entero sin nada que hacer ("1 o casi 3 segundos en los
+    // que no salto nada"). Ahora de 3.2 s (Relajado) a 1.4 s (Extremo).
+    for (const bpm of [90, 120, 150]) {
+        const analysis = makeSyntheticSong({ bpm });
+        for (const difficulty of [1, 2, 3, 4, 5]) {
+            const { chart, report } = buildChart(analysis, { seed: 1, difficulty });
+            const profile = DIFFICULTY_PROFILES[report.difficulty];
+            const rests = playedRests(analysis, chart, profile);
+            assert.ok(rests.length >= 10, `${bpm} BPM d${report.difficulty}: ${rests.length} huecos medidos`);
+            const over = rests.filter((r) => r.gap > r.max + 0.02);
+            assert.deepEqual(over.map((r) => `${r.a.toFixed(1)}+${r.gap.toFixed(2)}`), [], `${bpm} BPM d${report.difficulty}: huecos por encima de ${profile.maxRestS} s`);
+        }
+    }
+});
+
+test('regresión del playtest de la 6b: What\'s Up Danger en Extremo es denso y rápido, y cada dificultad más que la anterior', async () => {
+    // "En lo difícil no se siente emoción": el nivel más difícil tenía 177
+    // acciones, 85 por minuto en la zona roja a 665 px/s y 31 huecos de 1.5 s o
+    // más. Se mide lo que se juega; la sensación la dirá el siguiente playtest.
+    const baked = JSON.parse(await readFile(path.join(ROOT, 'database/seeds/official/baked/whats-up-danger.json'), 'utf8'));
+    const { analysis } = baked;
+    const byDifficulty = [3, 4, 5].map((difficulty) => ({ difficulty, ...buildChart(analysis, { sha256: baked.audio.sha256, difficulty }) }));
+    const extreme = byDifficulty.at(-1);
+    const { chart, report } = extreme;
+    const actionsIn = (t0, t1) => chart.events.filter((e) => (e.type === 'obstacle' || e.type === 'hold') && e.t >= t0 && e.t < t1).length;
+
+    const climaxApm = (actionsIn(report.climax.t0, report.climax.t1) / (report.climax.t1 - report.climax.t0)) * 60;
+    assert.ok(climaxApm >= 110, `zona roja: ${climaxApm.toFixed(0)} acciones/min`);
+    assert.ok(report.topSpeedPxS >= 950, `zona roja a ${report.topSpeedPxS} px/s`);
+    const speed = speedProfileOf(chart);
+    assert.equal(speed.speedAt((report.climax.t0 + report.climax.t1) / 2), report.topSpeedPxS, 'la zona roja es lo más rápido');
+    const first = chart.events.find((e) => e.type === 'obstacle').t;
+    const meanApm = (actionsIn(first, report.climax.t1) / (report.climax.t1 - first)) * 60;
+    assert.ok(meanApm >= 65, `media hasta el final del clímax: ${meanApm.toFixed(0)}/min`);
+    const over = playedRests(analysis, chart, DIFFICULTY_PROFILES[5]).filter((r) => r.gap > r.max + 0.02);
+    assert.deepEqual(over.map((r) => `${r.a.toFixed(1)}+${r.gap.toFixed(2)}`), [], 'huecos de más de 1.4 s mientras suena la música');
+
+    for (let i = 1; i < byDifficulty.length; i++) {
+        const [easier, harder] = [byDifficulty[i - 1], byDifficulty[i]];
+        assert.ok(obstacles(harder.chart).length > obstacles(easier.chart).length, `d${harder.difficulty}: más acciones que d${easier.difficulty}`);
+        assert.ok(harder.report.topSpeedPxS > easier.report.topSpeedPxS, `d${harder.difficulty}: más rápido que d${easier.difficulty}`);
+        assert.ok(harder.chart.world.speedPxS > easier.chart.world.speedPxS, `d${harder.difficulty}: empieza más rápido`);
     }
 });
 

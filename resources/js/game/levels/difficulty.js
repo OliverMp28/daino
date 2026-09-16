@@ -10,7 +10,8 @@
 //   - QUÉ se juega y DESDE CUÁNDO: agacharse, cactus anchos, contratiempos y
 //     combinaciones rápidas salto→agachado se desbloquean en momentos del arco
 //     (primer groove, primer empuje, clímax). Más difícil = antes y más.
-//   - CUÁNTO acelera el mundo en los tramos intensos.
+//   - A QUÉ VELOCIDAD se juega: la base (más difícil, más rápido desde el
+//     principio), cuánto acelera en las marchas y el clímax, y hasta dónde.
 //   - QUÉ MODOS de movimiento existen y cuántos momentos caben (Ola 6); dónde
 //     van lo decide la canción (modePlan.js).
 //
@@ -40,9 +41,19 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  * @property {number[]} apm         Acciones por minuto por nivel del arco (0 reposo … 4 clímax).
  * @property {number} toleranceS    Error humano con el que el chart debe superarse.
  * @property {number} minGapS       Hueco mínimo entre dos acciones cualesquiera.
- * @property {number} maxRestS      Silencio de juego máximo mientras la música suena.
+ * @property {number} maxRestS      Silencio de juego máximo mientras la música suena (en un tramo de reposo, × CHARTER_RULES.restLevelFactor).
  * @property {{ duck: number, wide: number, offbeat: number, combo: number }} unlock  Etapa (STAGE).
- * @property {number} speedAmp      Cuánto de la aceleración por intensidad se aplica.
+ * @property {number} speedAmp      Cuánto de la aceleración por marchas e intensidad se aplica.
+ * @property {number} baseSpeed     Multiplica la velocidad base que sale del tempo.
+ * @property {number} maxSpeedPxS   Techo de velocidad de la dificultad (nunca por encima de SPEED_RULES.maxSpeedPxS).
+ * @property {{ strength: number, ratio: number }} offbeat
+ *           Un contratiempo con acción necesita un golpe de al menos `strength` y
+ *           `ratio` veces el de sus vecinos del pulso (una síncopa de verdad).
+ * @property {number} calmBeatStrength  En calma, un tiempo débil (2 y 4) necesita al menos este golpe.
+ * @property {{ strength: number, energy: number } | null} climaxOffbeat
+ *           En el clímax, un contratiempo también se juega con un golpe de al menos
+ *           `strength` o con la música a `energy` o más alrededor: en un muro de
+ *           guitarras la subdivisión se oye aunque el detector no marque el golpe.
  * @property {number} airShare      Cuota máxima de obstáculos voladores por tramo.
  * @property {Record<string, { climax: boolean }>} modes
  *           Modos de movimiento que existen en esta dificultad y si el clímax
@@ -52,28 +63,48 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  *           aparece como mucho una vez; el reparto decide cuáles y dónde.
  */
 
-/** @type {Record<number, DifficultyProfile>} */
+/**
+ * Tras el playtest de la 6b ("en lo difícil no se siente emoción", "los niveles
+ * están demasiado fáciles") se midió What's Up Danger en Extremo: 52 acciones/min
+ * de media, 85 en el clímax, 31 silencios de juego de 1.5 s o más (16 de 2 s o
+ * más: compases enteros con un solo salto) y el clímax a 665 px/s, 1.4 s para ver
+ * venir cada obstáculo. Todas las densidades suben, la base de la velocidad
+ * depende de la dificultad, las marchas y el clímax aceleran más y cada
+ * dificultad tiene su techo. Relajado sigue siendo para empezar.
+ *
+ * @type {Record<number, DifficultyProfile>}
+ */
 export const DIFFICULTY_PROFILES = Object.freeze({
     1: Object.freeze({
         level: 1,
-        apm: [0, 12, 20, 27, 34],
+        apm: [0, 16, 26, 34, 42],
         toleranceS: 0.08,
-        minGapS: 1.15,
-        maxRestS: 8,
+        minGapS: 1,
+        maxRestS: 3.2,
         unlock: { duck: STAGE.FIRST_DRIVE, wide: STAGE.NEVER, offbeat: STAGE.NEVER, combo: STAGE.NEVER },
-        speedAmp: 0.55,
+        speedAmp: 0.6,
+        baseSpeed: 0.9,
+        maxSpeedPxS: 660,
+        offbeat: Object.freeze({ strength: 0.4, ratio: 0.85 }),
+        calmBeatStrength: 0.5,
+        climaxOffbeat: null,
         airShare: 0.25,
         modes: Object.freeze({}),
         moments: Object.freeze([]),
     }),
     2: Object.freeze({
         level: 2,
-        apm: [6, 18, 30, 40, 50],
+        apm: [8, 26, 42, 54, 66],
         toleranceS: 0.065,
-        minGapS: 0.9,
-        maxRestS: 7,
-        unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.CLIMAX, offbeat: STAGE.CLIMAX, combo: STAGE.NEVER },
-        speedAmp: 0.8,
+        minGapS: 0.72,
+        maxRestS: 2.6,
+        unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.FIRST_DRIVE, offbeat: STAGE.CLIMAX, combo: STAGE.NEVER },
+        speedAmp: 0.9,
+        baseSpeed: 0.97,
+        maxSpeedPxS: 760,
+        offbeat: Object.freeze({ strength: 0.4, ratio: 0.85 }),
+        calmBeatStrength: 0.5,
+        climaxOffbeat: null,
         airShare: 0.34,
         // Fácil: una sola mecánica nueva, la de pulsar (el vuelo pide mantener).
         modes: Object.freeze({ flip: Object.freeze({ climax: false }) }),
@@ -81,12 +112,17 @@ export const DIFFICULTY_PROFILES = Object.freeze({
     }),
     3: Object.freeze({
         level: 3,
-        apm: [8, 24, 40, 54, 68],
+        apm: [12, 34, 52, 68, 84],
         toleranceS: 0.055,
         minGapS: 0,
-        maxRestS: 6,
-        unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.FIRST_DRIVE, offbeat: STAGE.FIRST_DRIVE, combo: STAGE.CLIMAX },
-        speedAmp: 1,
+        maxRestS: 2,
+        unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_DRIVE, combo: STAGE.FIRST_DRIVE },
+        speedAmp: 1.1,
+        baseSpeed: 1.06,
+        maxSpeedPxS: 860,
+        offbeat: Object.freeze({ strength: 0.35, ratio: 0.75 }),
+        calmBeatStrength: 0.45,
+        climaxOffbeat: null,
         airShare: 0.5,
         // Normal: los dos modos, pero el clímax se corre a toda velocidad.
         modes: Object.freeze({ flip: Object.freeze({ climax: false }), fly: Object.freeze({ climax: false }) }),
@@ -94,25 +130,35 @@ export const DIFFICULTY_PROFILES = Object.freeze({
     }),
     4: Object.freeze({
         level: 4,
-        apm: [10, 30, 50, 68, 86],
+        apm: [16, 46, 68, 88, 110],
         toleranceS: 0.047,
         minGapS: 0,
-        maxRestS: 5,
-        unlock: { duck: STAGE.START, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_DRIVE },
-        speedAmp: 1.2,
-        airShare: 0.5,
+        maxRestS: 1.8,
+        unlock: { duck: STAGE.START, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_GROOVE },
+        speedAmp: 1.3,
+        baseSpeed: 1.14,
+        maxSpeedPxS: 940,
+        offbeat: Object.freeze({ strength: 0.3, ratio: 0.65 }),
+        calmBeatStrength: 0.35,
+        climaxOffbeat: Object.freeze({ strength: 0.18, energy: 2 }),
+        airShare: 0.55,
         modes: Object.freeze({ flip: Object.freeze({ climax: true }), fly: Object.freeze({ climax: true }) }),
         moments: Object.freeze([60, 120]),
     }),
     5: Object.freeze({
         level: 5,
-        apm: [14, 36, 60, 82, 104],
+        apm: [22, 58, 84, 108, 136],
         toleranceS: 0.04,
         minGapS: 0,
-        maxRestS: 4.5,
-        unlock: { duck: STAGE.START, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_GROOVE },
-        speedAmp: 1.4,
-        airShare: 0.5,
+        maxRestS: 1.4,
+        unlock: { duck: STAGE.START, wide: STAGE.START, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.START },
+        speedAmp: 1.5,
+        baseSpeed: 1.24,
+        maxSpeedPxS: 1000,
+        offbeat: Object.freeze({ strength: 0.25, ratio: 0.55 }),
+        calmBeatStrength: 0.3,
+        climaxOffbeat: Object.freeze({ strength: 0.08, energy: 0.8 }),
+        airShare: 0.6,
         modes: Object.freeze({ flip: Object.freeze({ climax: true }), fly: Object.freeze({ climax: true }) }),
         moments: Object.freeze([60, 120]),
     }),

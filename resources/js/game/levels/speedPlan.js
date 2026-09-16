@@ -50,22 +50,28 @@ export const SPEED_RULES = Object.freeze({
     /** Una marcha por cada tantos segundos de canción entre el arranque y el clímax. */
     gearEveryS: 32,
     maxGears: 3,
-    /** Subida de cada marcha, × `speedAmp` de la dificultad. */
-    gearBoost: 0.11,
+    /**
+     * Subida de cada marcha, × `speedAmp` de la dificultad. Tras el playtest de
+     * la 6b ("los cambios de velocidad se sienten poco, la zona roja no parece
+     * zona roja"): 0.11 → 0.14, y el clímax de 0.24 a 0.34. En What's Up Danger
+     * (Extremo) los escalones pasan de +15/+23/+27 % a +21/+32/+34 %.
+     */
+    gearBoost: 0.14,
     /**
      * Subida por nivel del arco (reposo, calma, groove, empuje, clímax), ×
      * `speedAmp`. Solo acelera: a menos velocidad el margen de cada salto se
      * ESTRECHA (hallazgo de la Ola 2), así que frenar por debajo de la base
      * volvería la calma más difícil.
      */
-    levelBoost: Object.freeze([0, 0, 0, 0.08, 0.24]),
+    levelBoost: Object.freeze([0, 0, 0, 0.12, 0.34]),
     /**
-     * Techo de velocidad. Con la vista del mundo escalada (WORLD_VIEW.minWidth
-     * 1000) toda pantalla apaisada ve cada obstáculo ≥ 1.0 s antes de que llegue
-     * a 820 px/s; y los huecos mínimos entre acciones (patterns.PAIR_GAP) se
-     * midieron hasta 900 px/s.
+     * Techo absoluto; cada dificultad tiene el suyo por debajo
+     * (`DifficultyProfile.maxSpeedPxS`: de 660 en Relajado a 1000 en Extremo).
+     * A 1000 px/s toda pantalla apaisada ve cada obstáculo ≥ 0.83 s antes de que
+     * llegue (el legacy acababa en 0.74 s), y los huecos mínimos entre acciones
+     * (patterns.PAIR_GAP) se midieron hasta 1100 px/s.
      */
-    maxSpeedPxS: 820,
+    maxSpeedPxS: 1000,
     /** Un tramo más corto que esto no sube por su nivel (salvo el clímax): un portal cada pocos segundos marea. */
     minLevelSegmentS: 8,
     /** Marchas separadas al menos esto, y del arranque y del clímax. */
@@ -76,6 +82,13 @@ export const SPEED_RULES = Object.freeze({
     phraseBars: 8,
     /** Un cambio de menos de esto no se hace: no se nota y exige respirar alrededor. */
     minStepRatio: 0.03,
+    /**
+     * Si el techo de la dificultad obliga a comprimir las subidas, cada marcha
+     * tiene que subir al menos esto (×); si no llega, se ponen menos marchas y más
+     * grandes. Tres subidas del 8-10 % no se notan (Running With the Wolves en
+     * Normal, comprimida contra el techo); dos del 13 % y del 35 %, sí.
+     */
+    minGearStepRatio: 1.12,
     /**
      * Antelación mínima del acelerón respecto al primer tiempo que abre el
      * tramo: la de la vista (READER_ADAPT_S). Con menos, la acción de ese
@@ -106,8 +119,8 @@ export const SPEED_RULES = Object.freeze({
  * @param {object} p
  * @param {ReturnType<import('./songArc.js').buildSongArc>} p.arc
  * @param {ReturnType<import('./musicModel.js').buildMusicModel>} p.model
- * @param {{ speedAmp: number }} p.profile     Perfil de dificultad.
- * @param {number} p.tempoSpeed                Velocidad del pulso de la canción (sin aceleración).
+ * @param {{ speedAmp: number, maxSpeedPxS?: number }} p.profile  Perfil de dificultad.
+ * @param {number} p.tempoSpeed                Velocidad base: la del pulso de la canción por la de la dificultad.
  * @param {number} p.tStart                    Desde cuándo se reparten las marchas.
  * @returns {{ base: number, changes: Array<{ t: number, speedPxS: number, rampS: number }>, transitions: SpeedTransition[], gears: number[] }}
  *          `gears`: primer tiempo de cada marcha que acelera, en orden.
@@ -117,15 +130,26 @@ export function planSpeed({ arc, model, profile, tempoSpeed, tStart }) {
     const segs = arc.segments;
     if (segs.length === 0 || model.bars.length === 0) return { base: tempoSpeed, changes: [], transitions: [], gears: [] };
 
-    const amp = profile.speedAmp;
     const climax = arc.climax >= 0 ? segs[arc.climax] : null;
-    const gearBars = placeGears(arc, model, tStart, climax);
+    let plan = null;
+    for (let count = R.maxGears; count >= 1; count--) {
+        const tried = planWithGears({ arc, model, profile, tempoSpeed, climax, gearBars: placeGears(arc, model, tStart, climax, count) });
+        plan = tried.plan;
+        if (!tried.compressed) break;
+        const gearUps = plan.transitions.filter((tr) => tr.gear && tr.kind === 'up');
+        if (gearUps.every((tr) => tr.to >= tr.from * R.minGearStepRatio - 1e-9)) break;
+    }
+    return plan;
+}
+
+/** Plan de velocidad con las marchas en esos compases, y si hubo que comprimirlo contra el techo. */
+function planWithGears({ arc, model, profile, tempoSpeed, climax, gearBars }) {
+    const R = SPEED_RULES;
+    const segs = arc.segments;
+    const amp = profile.speedAmp;
+    const cap = Math.min(R.maxSpeedPxS, profile.maxSpeedPxS ?? R.maxSpeedPxS);
 
     const levelBoostOf = (seg) => (seg.t1 - seg.t0 >= R.minLevelSegmentS || seg.climax ? R.levelBoost[seg.level] : 0);
-    const speedOf = (gear, levelBoost) => Math.round(Math.min(
-        Math.max(tempoSpeed, R.maxSpeedPxS),
-        tempoSpeed * (1 + amp * (R.gearBoost * gear + levelBoost)),
-    ));
 
     // Compases donde puede cambiar algo: inicio de cada tramo y de cada marcha.
     const points = [...new Set([...segs.map((s) => s.bar0), ...gearBars])].sort((a, b) => a - b);
@@ -137,12 +161,10 @@ export function planSpeed({ arc, model, profile, tempoSpeed, tStart }) {
     // caía en una estrofa, pedía menos que el tramo inicial y desaparecía, así
     // que el nivel solo aceleraba en el clímax. Tras el clímax, un único
     // frenazo: el nivel vuelve al del tramo de después y sigue el trinquete.
+    const steps = [];
     let level = levelBoostOf(segs[0]);
-    const base = speedOf(0, level);
-    let current = base;
+    const baseBoost = level;
     let released = false;
-    const changes = [];
-    const transitions = [];
     for (const bar of points) {
         if (bar === 0) continue;
         const seg = segs.find((s) => bar >= s.bar0 && bar < s.bar1);
@@ -153,7 +175,24 @@ export function planSpeed({ arc, model, profile, tempoSpeed, tStart }) {
         } else {
             level = Math.max(level, levelBoostOf(seg));
         }
-        const target = speedOf(gear, level);
+        steps.push({ bar, boost: R.gearBoost * gear + level });
+    }
+
+    // Si lo más rápido del nivel (el clímax) pasaría del techo, todas las subidas
+    // se comprimen en la misma proporción: el clímax llega justo al techo y sigue
+    // siendo una marcha más. Solo recortando, una canción rápida en Extremo
+    // tocaba el techo antes del clímax y el clímax ya no aceleraba.
+    const topBoost = Math.max(baseBoost, ...steps.map((st) => st.boost));
+    const reach = cap / tempoSpeed - 1;
+    const effAmp = topBoost > 0 && tempoSpeed * (1 + amp * topBoost) > cap ? Math.max(0, reach / topBoost) : amp;
+    const speedOf = (boost) => Math.round(Math.min(Math.max(tempoSpeed, cap), tempoSpeed * (1 + effAmp * boost)));
+
+    const base = speedOf(baseBoost);
+    let current = base;
+    const changes = [];
+    const transitions = [];
+    for (const { bar, boost } of steps) {
+        const target = speedOf(boost);
         if (Math.abs(target - current) < current * R.minStepRatio) continue;
 
         const at = model.bars[bar].t0;
@@ -169,7 +208,7 @@ export function planSpeed({ arc, model, profile, tempoSpeed, tStart }) {
     // una subida por debajo de `minStepRatio`, una marcha no cambia nada y no
     // se cuenta.
     const gears = transitions.filter((tr) => tr.gear && tr.kind === 'up').map((tr) => tr.at);
-    return { base, changes, transitions, gears };
+    return { plan: { base, changes, transitions, gears }, compressed: effAmp < amp - 1e-9 };
 }
 
 /**
@@ -178,11 +217,11 @@ export function planSpeed({ arc, model, profile, tempoSpeed, tStart }) {
  * en el compás candidato más cercano a su reparto: el que abre un tramo o,
  * con una pequeña penalización, el que abre una frase dentro de un tramo largo.
  */
-function placeGears(arc, model, tStart, climax) {
+function placeGears(arc, model, tStart, climax, maxCount = SPEED_RULES.maxGears) {
     const R = SPEED_RULES;
     if (climax === null) return [];
     const span = climax.t0 - tStart;
-    const count = Math.min(R.maxGears, Math.floor(span / R.gearEveryS));
+    const count = Math.min(maxCount, R.maxGears, Math.floor(span / R.gearEveryS));
     if (count <= 0) return [];
 
     const candidates = [];

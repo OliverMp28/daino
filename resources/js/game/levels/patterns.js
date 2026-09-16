@@ -37,22 +37,23 @@ const MODE_INTRO_GAP_S = MODE_RULES.introGapS;
 
 /**
  * Hueco mínimo entre dos acciones consecutivas, medido con el simulador de
- * física (playability.validatePlayability) barriendo huecos de 0.10 a 2.0 s a
- * 300-720 px/s y ±35-90 ms de error (Sep 2026):
+ * física (playability.validatePlayability) barriendo huecos de 0.05 a 2.0 s a
+ * 300-1100 px/s y ±40-80 ms de error (re-medido al subir el techo a 1000 px/s,
+ * tras el playtest de la 6b):
  *
- *   salto → salto        0.67 (±35) · 0.70 (±50) · 0.74 (±70) · 0.78 (±90) s, sin depender de la velocidad
- *   salto → agachado     0.49 a 300 px/s … 0.24 a 720 px/s … 0.26-0.28 a 850 px/s con ±70-90 ms (fast-fall + agachado)
- *   agachado → salto     0.59-0.65 a 300 px/s … 0.48-0.53 a 720 px/s
- *   agachado → agachado  0.10-0.18 s (se sigue agachado)
- *   inversión → inversión (suelo, techo, suelo…) 0.27-0.30 a 300 px/s · 0.23-0.28 a 450 · 0.21-0.28 a 650-850, con ±35-90 ms (Ola 6)
+ *   salto → salto        0.68 (±40) · 0.70 (±47) · 0.71 (±55) · 0.73 (±65) · 0.76 (±80) s, sin depender de la velocidad
+ *   salto → agachado     0.48 a 300 px/s · 0.26-0.30 a 600 · 0.23-0.27 a 900 · 0.22-0.26 a 1100 (fast-fall + agachado)
+ *   agachado → salto     0.60-0.64 a 300 px/s · 0.50-0.54 a 600 · 0.46-0.50 a 1100
+ *   agachado → agachado  0.06-0.17 s (se sigue agachado)
+ *   inversión → inversión (suelo, techo, suelo…) 0.27-0.30 a 300 px/s · 0.22-0.26 a 450 · 0.21-0.26 a 600-1100
  *
  * Las fórmulas quedan por ENCIMA de lo medido en todo el rango (margen de
  * 0-80 ms): el validador final comprueba cada chart de verdad, así que aquí
  * basta con que casi nunca tenga que reparar.
  */
 export const PAIR_GAP = Object.freeze({
-    jumpJump: (_speed, tol) => 0.60 + 2 * tol,
-    jumpDuck: (speed, tol) => 155 / speed + 0.7 * tol + 0.045,
+    jumpJump: (_speed, tol) => 0.61 + 2 * tol,
+    jumpDuck: (speed, tol) => 150 / speed + tol + 0.05,
     duckJump: (speed, tol) => 0.40 + 55 / speed + 0.9 * tol,
     duckDuck: (_speed, tol) => 0.20 + tol,
     flipFlip: (speed, tol) => 0.16 + 1.2 * tol + 36 / speed,
@@ -299,6 +300,9 @@ export function chooseBarActions(ctx) {
     return chosen;
 }
 
+/** Síncopa de verdad: un golpe fuerte y claramente por encima del pulso que lo rodea. */
+const DEFAULT_OFFBEAT = Object.freeze({ strength: 0.4, ratio: 0.85 });
+
 /** Sin plan de modos: se corre de principio a fin. */
 const NO_MODES = Object.freeze({ constant: true, modeAt: () => 'run', allows: () => true, spanAt: () => null });
 
@@ -322,8 +326,16 @@ function barCandidates(ctx) {
         if (!slot.onBeat) {
             if (arcBar.level < 2 || !unlocked('offbeat', slot.t)) continue;
             const neighbor = Math.max(bar.slots[si - 1]?.strength ?? 0, bar.slots[si + 1]?.strength ?? nextBar?.slots[0]?.strength ?? 0);
-            if (slot.strength < 0.4 || slot.strength < 0.85 * neighbor) continue;
-        } else if (arcBar.level <= 1 && slot.metric < 0.8 && slot.strength < 0.5) {
+            const rule = ctx.profile.offbeat ?? DEFAULT_OFFBEAT;
+            const syncopation = slot.strength >= rule.strength && slot.strength >= rule.ratio * neighbor;
+            // En el clímax de las dificultades altas se juega la subdivisión:
+            // contratiempos con golpe, aunque no sea una síncopa, o con la
+            // música a tope alrededor.
+            const climax = ctx.profile.climaxOffbeat ?? null;
+            const subdivision = climax !== null && arcBar.level === 4
+                && (slot.strength >= climax.strength || ctx.energyMean(slot.t - 0.15, slot.t + 0.15) >= climax.energy);
+            if (!syncopation && !subdivision) continue;
+        } else if (arcBar.level <= 1 && slot.metric < 0.8 && slot.strength < (ctx.profile.calmBeatStrength ?? 0.5)) {
             continue;
         }
 

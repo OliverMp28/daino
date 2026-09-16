@@ -85,6 +85,8 @@ export const CHARTER_RULES = Object.freeze({
     // La aceleración del mundo vive en speedPlan.js (SPEED_RULES).
     /** Un cactus de acento solo si su margen de error supera N veces la tolerancia. */
     accentWindowFactor: 2.4,
+    /** En un tramo de reposo, el silencio de juego máximo (`maxRestS`) se alarga tanto. */
+    restLevelFactor: 1.6,
     /** Techo de reparaciones del validador (defensa ante bucles). */
     maxRepairs: 400,
 });
@@ -141,7 +143,7 @@ export function buildChart(analysis, opts = {}) {
     const model = buildMusicModel(analysis);
     const arc = buildSongArc(model);
 
-    const tempoSpeed = speedFromBpm(gameplayTempo(model.bpm));
+    const tempoSpeed = speedFromBpm(gameplayTempo(model.bpm)) * (profile.baseSpeed ?? 1);
     const speedPlanOut = planSpeed({ arc, model, profile, tempoSpeed, tStart: CHARTER_RULES.firstActionMinS });
     const baseSpeed = speedPlanOut.base;
     const speedChanges = speedPlanOut.changes;
@@ -332,7 +334,11 @@ function chartActions(ctx) {
                 levelApm += (profile.apm[upcoming.level] - levelApm) * k;
             }
         }
-        const apm = levelApm * (1 + clamp((arcBar.intensity - seg.intensity) * 1.2, -0.25, 0.25));
+        // Modulación por lo lleno que suena el compás, en décimas: el ruido de la
+        // energía entre dos compases de un mismo riff no debe cambiar cuántas
+        // acciones lleva cada uno (con más densidad por compás, un ±2 % cruzaba el
+        // redondeo a cuartos y la frase dejaba de repetirse).
+        const apm = levelApm * (1 + Math.round(clamp((arcBar.intensity - seg.intensity) * 1.2, -0.25, 0.25) * 10) / 10);
         const exact = (apm * (bar.t1 - bar.t0)) / 60;
         // Reparto periódico de la parte decimal (Bresenham) por posición en el
         // tramo, con la fracción llevada a cuartos: 2.5 acciones por compás dan
@@ -395,24 +401,39 @@ function chartActions(ctx) {
 }
 
 /**
- * Corta los silencios de juego demasiado largos mientras la música suena: un
- * salto en el tiempo fuerte con más golpe cerca del centro del hueco. Donde la
+ * Corta los silencios de juego demasiado largos mientras la música suena: una
+ * acción en el tiempo con más golpe cerca del centro del hueco (un salto o, si no
+ * cabe entre sus vecinas y la dificultad lo permite, un agachado). Donde la
  * música calla de verdad (un break en silencio), el nivel también calla.
+ *
+ * Tras el playtest de la 6b: con silencios de hasta 4.5-8 s por dificultad, un
+ * compás entero sin nada que hacer era lo normal en las canciones de 60-95 BPM
+ * (What's Up Danger en Extremo: 16 huecos de 2 s o más). Ahora el máximo va de
+ * 3.2 s (Relajado) a 1.4 s (Extremo), algo más en los tramos de reposo.
  */
 function fillLongRests(actions, ctx) {
-    const { model, profile, speed, readerOk, tMin, tMax, unlocked, modes } = ctx;
+    const { model, arc, profile, speed, readerOk, tMin, tMax, unlocked, modes } = ctx;
     const out = actions.slice();
-    for (let guard = 0; guard < 1000; guard++) {
+    // El estreno de cada modo (sus primeras acciones, espaciadas) no se rellena.
+    const debutEnd = new Map();
+    for (const span of modes.plan) {
+        const own = actions.filter((x) => x.t >= span.tIn && x.t < span.tOut);
+        debutEnd.set(span, own[MODE_RULES.introActions - 1]?.t ?? span.tOut);
+    }
+    for (let guard = 0; guard < 2000; guard++) {
         let inserted = false;
-        for (let i = -1; i < out.length; i++) {
+        // Tampoco el tutorial del principio: sus saltos van espaciados a propósito.
+        for (let i = CHARTER_RULES.introActions - 1; i < out.length; i++) {
             const a = i >= 0 ? out[i] : null;
             const b = i + 1 < out.length ? out[i + 1] : null;
             const rest = longestRest(a !== null ? a.t : tMin, b !== null ? b.t : tMax, modes.freeSpans);
-            if (rest === null || rest.to - rest.from <= profile.maxRestS) continue;
+            if (rest === null) continue;
             const { from, to } = rest;
+            const mid = (from + to) / 2;
+            const resting = arc.bars[barAt(model, mid)]?.level === 0;
+            if (to - from <= profile.maxRestS * (resting ? CHARTER_RULES.restLevelFactor : 1)) continue;
             if (model.energyMean(from, to) < 0.12) continue;
 
-            const mid = (from + to) / 2;
             let best = null;
             let bestType = 'jump';
             let bestScore = -Infinity;
@@ -420,17 +441,24 @@ function fillLongRests(actions, ctx) {
                 if (bar.t1 < from || bar.t0 > to) continue;
                 for (const slot of bar.slots) {
                     if (!slot.onBeat || slot.t < tMin || slot.t > tMax || !modes.allows(slot.t)) continue;
-                    // El relleno es la acción básica de cada modo: saltar o invertir.
-                    const type = modes.modeAt(slot.t) === 'flip' ? 'flip' : 'jump';
-                    if (!readerOk(slot.t, type)) continue;
-                    if (a !== null && slot.t - a.t < pairGap(a.type, type, speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1) continue;
-                    if (b !== null && b.t - slot.t < pairGap(type, b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1) continue;
                     if (a === null && slot.t < from) continue;
-                    const score = slot.strength + 0.3 * slot.metric - (0.4 * Math.abs(slot.t - mid)) / (to - from);
-                    if (score > bestScore) {
-                        bestScore = score;
-                        best = slot;
-                        bestType = type;
+                    const span = modes.spanAt(slot.t);
+                    if (span !== null && slot.t <= debutEnd.get(span)) continue;
+                    // El relleno es la acción básica de cada modo: saltar o invertir; al
+                    // correr, agacharse si un salto no cabe.
+                    const flip = modes.modeAt(slot.t) === 'flip';
+                    const types = flip ? ['flip'] : unlocked('duck', slot.t) ? ['jump', 'duck'] : ['jump'];
+                    for (const type of types) {
+                        if (!readerOk(slot.t, type)) continue;
+                        if (a !== null && slot.t - a.t < pairGap(a.type, type, speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1) continue;
+                        if (b !== null && b.t - slot.t < pairGap(type, b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1) continue;
+                        const score = slot.strength + 0.3 * slot.metric - (0.4 * Math.abs(slot.t - mid)) / (to - from) - (type === 'duck' ? 0.2 : 0);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            best = slot;
+                            bestType = type;
+                        }
+                        break;
                     }
                 }
             }
@@ -445,6 +473,19 @@ function fillLongRests(actions, ctx) {
         if (!inserted) break;
     }
     return out;
+}
+
+/** Compás que contiene `t` (el último si `t` pasa del final). */
+function barAt(model, t) {
+    const bars = model.bars;
+    let lo = 0;
+    let hi = bars.length - 1;
+    while (lo < hi) {
+        const m = (lo + hi + 1) >> 1;
+        if (bars[m].t0 <= t) lo = m;
+        else hi = m - 1;
+    }
+    return lo;
 }
 
 /**

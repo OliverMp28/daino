@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música). Pendientes: Ola 6c y Ola 7.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad). Pendientes: Ola 6c y Ola 7.
 
 ---
 
@@ -1274,6 +1274,99 @@ Cambian también niveles que no se jugaron: en Running With the Wolves la antigr
 - Calibrado con los 8 oficiales y lo que se oyó en tres de ellos. Los umbrales están en tablas: `CHANGE_RULES` (songChanges.js), `ARC_RULES` (songArc.js, ahora exportado), `CHARACTER_RULES.arrivalFull`, `MODE_RULES` (`maxS`, `minGapS`, `climaxBonus`) y `MODE_CASTING.event`.
 - La antigravedad de Time entra con encaje 0.526 (mínimo 0.5): un tema así de sostenido está en el borde, y un análisis algo distinto podría dejarlo sin momento.
 - Momentos más largos (hasta 40 s): si 35 s de antigravedad en el clímax de Extremo se hacen largos, lo dirá el siguiente playtest.
+
+#### La dificultad que se siente (tras el mismo playtest) ✅ (Sep 2026)
+
+> **Lo que se jugó.** Tras los ajustes anteriores, los tres niveles "se sienten un poquito mejor". Pero un compañero jugó What's Up Danger, el nivel más difícil, y dijo que **"no se siente emoción en lo difícil"**: la sincronía no le dio problemas, pero no le pareció difícil. El propietario coincide: nos centramos tanto en que todo cayera con la música que se descuidó la dificultad. En la zona roja **no se nota que acelere**, los cambios de velocidad se sienten poco y **se siente muy fácil**, y eso en el nivel más difícil lo vuelve aburrido. Además, **momentos de 1 a casi 3 segundos sin nada que saltar** que se repiten por todo el nivel, no solo en pausas de la canción. Pidió que el más difícil sea difícil de verdad (no imposible), que los niveles en general dejen de ser tan fáciles y que todo siga sincronizado con la música.
+
+**Lo que se midió** en What's Up Danger (Extremo, charter 7):
+
+- **177 acciones**, 52 por minuto de media y **85 en la zona roja**.
+- **31 huecos de 1.5 s o más** entre acciones, 16 de ellos de 2 s o más: compases enteros (2.5 s a 95 BPM) con una sola acción.
+- La velocidad arrancaba a **370 px/s** y subía +15 %, +23 % y +27 % hasta **665 px/s** en la zona roja, con 1.4 s para ver venir cada obstáculo.
+
+Las causas:
+
+1. **Tablas de densidad bajas.** En Extremo un groove pedía 60 acciones por minuto, que a 95 BPM son 1.6 por compás, y el reparto dejaba compases de una sola acción.
+2. **Silencio de juego máximo de 4.5 s en Extremo y 8 s en Relajado.** El relleno casi nunca actuaba.
+3. **Contratiempos solo en síncopas fuertes**, un golpe muy por encima del pulso. En un muro de guitarras casi no hay, así que la zona roja (antigravedad) se quedaba en un cristal por beat.
+4. **La velocidad base solo dependía del tempo**, igual en Normal que en Extremo, con marchas pequeñas y un techo único de 820 px/s.
+
+**Qué cambió** (`CHARTER_VERSION = 8`, formato de chart igual, analizador igual):
+
+- **Densidad** (`difficulty.js`, acciones por minuto por nivel del arco: reposo · calma · groove · empuje · clímax):
+
+  | Dificultad | Antes | Ahora | Silencio máximo |
+  |---|---|---|---|
+  | Relajado | 0 · 12 · 20 · 27 · 34 | 0 · 16 · 26 · 34 · 42 | 8 → **3.2 s** |
+  | Fácil | 6 · 18 · 30 · 40 · 50 | 8 · 26 · 42 · 54 · 66 | 7 → **2.6 s** |
+  | Normal | 8 · 24 · 40 · 54 · 68 | 12 · 34 · 52 · 68 · 84 | 6 → **2.0 s** |
+  | Difícil | 10 · 30 · 50 · 68 · 86 | 16 · 46 · 68 · 88 · 110 | 5 → **1.8 s** |
+  | Extremo | 14 · 36 · 60 · 82 · 104 | 22 · 58 · 84 · 108 · 136 | 4.5 → **1.4 s** |
+
+  Además:
+  - Contratiempos más fáciles de jugar cuanto más difícil (`offbeat`: golpe mínimo de 0.40 a 0.25).
+  - Tiempos débiles en calma (`calmBeatStrength`).
+  - En el clímax de Difícil y Extremo **se juega la subdivisión** (`climaxOffbeat`): un contratiempo con golpe aunque no sea una síncopa o, en Extremo, con la música a tope alrededor.
+  - Combinaciones y cactus anchos antes en el arco.
+  - Hueco mínimo de Relajado de 1.15 a 1.0 s y de Fácil de 0.9 a 0.72 s: a 80 BPM, Fácil no podía saltar en beats seguidos.
+  - Cuota de agachados 0.55-0.6 en Difícil y Extremo.
+- **El relleno de silencios** (`charter.js::fillLongRests`):
+  - Pone un agachado si un salto no cabe.
+  - En los tramos de reposo el máximo se alarga ×1.6 (`restLevelFactor`).
+  - Nunca rellena el tutorial del principio ni el estreno de un modo.
+  - Donde la música calla de verdad (energía < 0.12), el nivel sigue callando.
+- **Velocidad:**
+  - **Base por dificultad** (`baseSpeed`, ×0.90 en Relajado … ×1.24 en Extremo).
+  - Marcha +0.14 y clímax +0.34 (antes 0.11 y 0.24), empuje +0.12.
+  - Amplitud de 0.60 a 1.5.
+  - **Techo por dificultad** (`maxSpeedPxS`: 660, 760, 860, 940 y 1000 px/s). Si el clímax pasaría del techo, **todas las subidas se comprimen en la misma proporción** y el clímax llega justo al techo sin dejar de ser la marcha más alta. Solo recortando, una canción rápida en Extremo tocaba el techo antes del clímax.
+  - Si al comprimir una marcha sube menos de un 12 % (`minGearStepRatio`), se ponen menos marchas y más grandes: en Running With the Wolves (Normal) pasan de cuatro escalones del 8-10 % a dos del 13 % y del 35 %.
+- **Huecos físicos re-medidos hasta 1100 px/s** con el simulador (`PAIR_GAP`). Salto→salto pasa a 0.61 + 2·tolerancia y salto→agachado a 150/velocidad + tolerancia + 0.05; a 1000-1100 px/s la fórmula anterior quedaba hasta 20 ms por debajo.
+- La modulación de densidad por lo lleno que suena cada compás va **en décimas**: con más acciones por compás, el ruido de la energía cruzaba el redondeo y un riff dejaba de repetir su patrón.
+- **Dificultad medida recalibrada** (`chartStats.DIFFICULTY_THRESHOLDS`: 43, 61, 86 y 108; antes 33, 47, 66 y 82). En los 8 oficiales, las estrellas medidas coinciden con las del manifiesto salvo HOPE (Fácil, medida 3★).
+
+**Los 8 oficiales**, dificultad del manifiesto, charter 7 → 8:
+
+| Oficial (dificultad) | Acciones | Acciones/min · pico | Velocidad base → máxima | Huecos ≥ 1.5 s (≥ 2 s) |
+|---|---|---|---|---|
+| Sugar Red (Normal) | 26 → 33 | 44 · 48 → **56 · 60** | 472→585 → 500→687 | 15 (2) → **7 (0)** |
+| Last Christmas (Relajado) | 12 → 21 | 22 · 21 → **37 · 39** | 394→446 → 355→427 | 12 (11) → **9 (8)** |
+| HOPE (Fácil) | 36 → 60 | 32 · 36 → **50 · 66** | 500→596 → 485→633 | 28 (8) → **21 (3)** |
+| Running With the Wolves (Normal) | 103 → 136 (+3 notas) | 41 · 57 → **53 · 63** | 508→797 → 538→822 | 24 (23) → **10 (9)** |
+| Time (Fácil) | 85 → 113 | 34 · 48 → **45 · 63** | 432→629 → 419→705 | 54 (10) → **35 (6)** |
+| Mi Fiesta (Difícil) | 171 → 228 | 58 · 81 → **74 · 102** | 389→655 → 443→881 | 5 (4) → **11 (1)** |
+| Dawn of Faith (Difícil) | 119 → 174 (+8 notas) | 43 · 63 → **62 · 114** | 440→741 → 502→940 | 37 (11) → **7 (5)** |
+| What's Up Danger (Extremo) | 177 → **255** (+4 notas) | 52 · 93 → **75 · 138** | 370→665 → **459→982** | 31 (16) → **8 (5)** |
+
+En What's Up Danger la zona roja pasa de 85 a **122 acciones/min** y de 665 a **982 px/s**: en un 16:9 se ven venir los obstáculos 0.95 s antes, frente a 1.4 s. Las marchas suben **+21 %, +32 % y +34 %**. Los huecos que quedan están en portales, en el estreno de un modo, en el vuelo o en la outro.
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **250 JS** (+2: silencios de juego por dificultad en canciones sintéticas; **What's Up Danger en Extremo como regresión**: zona roja ≥ 110 acciones/min y ≥ 950 px/s, media ≥ 65, ningún hueco de más de 1.4 s mientras suena la música, y cada dificultad con más acciones, más base y más velocidad máxima que la anterior; y techo de cada dificultad en los 8 oficiales), **70 PHP**, **104 Python** |
+| 8 oficiales × 5 dificultades | jugables con la tolerancia de su dificultad (el validador repara 1 acción en Running With the Wolves Difícil), en la rejilla y con un clímax |
+| Lectura a velocidad máxima | 1000 px/s: 0.87-0.98 s en pantallas 16:10-16:9 (el test de la vista pasa de exigir ≥ 1.0 s a 820 px/s a ≥ 0.85 s a 1000); el legacy acababa en 0.74 s |
+| E2E What's Up Danger (Extremo, 1280×720, bot con pulsaciones fechadas, colisiones activas) | el cliente carga el chart 8: 255 obstáculos y 4 notas; a las 2:00 corriendo a 734 px/s, a las 2:45 antigravedad en la zona roja a 982 px/s; **victoria al 100 %**; 12 884 frames en 3:36 (~60 FPS) |
+| Consola | 0 errores de JS (solo el 401 del arranque anónimo y el favicon) |
+| Oficiales y comunidad | re-horneados y re-sembrados; los 3 de la comunidad, re-charteados (`--charter-below=8`) |
+| Bundle | **188.49 KB gzip** (+0.63) |
+
+**Decisiones (vinculantes):**
+
+- **La dificultad se siente en densidad y en velocidad, no solo en tolerancia.** Cada dificultad tiene su base de velocidad, su amplitud y su techo.
+- **Mientras suena la música no hay silencios de juego largos**: de 3.2 s en Relajado a 1.4 s en Extremo. Callan solo los silencios de la canción, los portales, el estreno de un modo y el tutorial.
+- **En el clímax de Difícil y Extremo se juega la subdivisión**, siempre en la rejilla de la canción.
+- **Si el techo aprieta, se comprime la subida entera y el clímax sigue siendo la marcha más alta**; y mejor pocas marchas que se notan que muchas que no.
+- **Todo sigue en la rejilla de la canción y validado jugando** con la tolerancia de su dificultad.
+
+**Limitaciones que quedan:**
+
+- **La sensación la dirá el próximo playtest.** Esto se midió; que Extremo sea difícil pero no frustrante, y Relajado accesible, solo lo dice jugarlo. Todo está en tablas: `DIFFICULTY_PROFILES` (densidades, silencios, contratiempos, velocidad), `SPEED_RULES` y `CHARTER_RULES.restLevelFactor`.
+- **La antigravedad es más permisiva que correr**: cualquier pulsación invierte, con 0.3 s o más de margen por cristal. Su dificultad sale de la densidad y la velocidad.
+- **En Fácil, a 63-80 BPM, siguen los huecos de 1.5-1.9 s** (dos beats): es el ritmo de la canción en esa dificultad. Bajar más su silencio máximo pondría una acción en cada beat.
+- **En pantallas 16:10 (iPad, 720p) la velocidad máxima de Extremo da 0.87 s de lectura.**
 
 ---
 

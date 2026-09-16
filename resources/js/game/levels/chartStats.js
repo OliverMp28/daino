@@ -44,13 +44,15 @@ export const DIFFICULTY_MAX = 5;
 
 /**
  * Límite inferior de la puntuación para 2★, 3★, 4★ y 5★. Escala ABSOLUTA, no
- * relativa al catálogo. Recalibrada con el charter musical (Ola 5): los 8
- * oficiales generados en cada dificultad puntúan Relajado 22-31, Fácil 34-46,
- * Normal 48-71, Difícil 59-79 y Extremo 83-93; los umbrales caen entre las
- * medianas de cada grupo. Una canción densa en Normal puede medir 4★: la
- * etiqueta que se enseña es la dificultad elegida, esto es la comprobación.
+ * relativa al catálogo. Recalibrada al subir la dificultad tras el playtest de
+ * la 6b: los 8 oficiales generados en cada dificultad puntúan Relajado 28-39
+ * (mediana 35), Fácil 42-68 (50), Normal 57-87 (71), Difícil 90-106 (101) y
+ * Extremo 104-131 (115); los umbrales caen entre las medianas de cada grupo
+ * (antes, con el charter de la Ola 5: 33, 47, 66, 82). Una canción densa en
+ * Normal puede medir 4★: la etiqueta que se enseña es la dificultad elegida,
+ * esto es la comprobación.
  */
-export const DIFFICULTY_THRESHOLDS = Object.freeze([33, 47, 66, 82]);
+export const DIFFICULTY_THRESHOLDS = Object.freeze([43, 61, 86, 108]);
 
 /** Margen de error a partir del cual una acción ya no suma exigencia. */
 const COMFORTABLE_WINDOW_S = 0.35;

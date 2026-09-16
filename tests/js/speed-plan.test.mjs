@@ -23,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildChart } from '../../resources/js/game/levels/charter.js';
+import { DIFFICULTY_PROFILES } from '../../resources/js/game/levels/difficulty.js';
 import { SPEED_RULES, pickupTime } from '../../resources/js/game/levels/speedPlan.js';
 import { buildMusicModel } from '../../resources/js/game/levels/musicModel.js';
 import { buildSongArc } from '../../resources/js/game/levels/songArc.js';
@@ -166,11 +167,17 @@ test('escalada según la canción: una corta apenas acelera, una larga sube de m
     assert.equal(l.gears, SPEED_RULES.maxGears, `canción de ${long.durationSec.toFixed(0)} s con todas las marchas`);
     assert.ok(l.top > s.top + 0.15, `la larga escala más: ×${l.top.toFixed(2)} frente a ×${s.top.toFixed(2)}`);
 
-    let prev = 1;
+    // Más difícil, más rápido: la base (profile.baseSpeed) y lo más rápido del
+    // nivel suben con la dificultad. La proporción no siempre: el techo de cada
+    // dificultad comprime las subidas de las más rápidas.
+    let prevTop = 0;
+    let prevBase = 0;
     for (const difficulty of [1, 2, 3, 4, 5]) {
-        const r = ratio(long, difficulty);
-        assert.ok(r.top >= prev - 1e-9, `d${difficulty}: ×${r.top.toFixed(2)} por debajo de la dificultad anterior`);
-        prev = r.top;
+        const { chart, report } = buildChart(long, { seed: 1, difficulty });
+        assert.ok(report.topSpeedPxS > prevTop, `d${difficulty}: techo ${report.topSpeedPxS} ≤ ${prevTop}`);
+        assert.ok(chart.world.speedPxS > prevBase, `d${difficulty}: base ${chart.world.speedPxS} ≤ ${prevBase}`);
+        prevTop = report.topSpeedPxS;
+        prevBase = chart.world.speedPxS;
     }
     assert.ok(ratio(long, 5).top > ratio(long, 1).top + 0.15, 'Extremo acelera claramente más que Relajado');
 });
@@ -214,6 +221,7 @@ test('los 8 oficiales × 5 dificultades: las canciones de más de 2:30 aceleran 
             const speed = speedProfileOf(chart);
             assert.ok(speed.speedAt(report.climax.t0 + 0.5) > speed.speedAt(report.climax.t0 - 1), `${label}: el clímax acelera`);
             assert.ok(report.topSpeedPxS <= SPEED_RULES.maxSpeedPxS);
+            assert.ok(report.topSpeedPxS <= DIFFICULTY_PROFILES[report.difficulty].maxSpeedPxS, `${label}: ${report.topSpeedPxS} por encima del techo de su dificultad`);
         }
     }
 });
