@@ -40,12 +40,14 @@ export const RUN_MODE = Object.freeze({
     id: 'run',
     label: 'Correr',
     color: MODE_COLORS.run,
+    hint: Object.freeze({ keys: 'Espacio: saltar · ↓: agacharse', touch: 'Toca a la izquierda para saltar y mantén la derecha para agacharte' }),
     actions: Object.freeze(['jump', 'duck']),
     /** Tras entrar, cuánto tarda en poder actuar con garantías: caer desde el techo de otro modo. */
     settleS: 0.45,
 
     enter(body) {
         body.jumpBufferT = 0;
+        body.flyHeld = 0;
         if (body.gravityDir < 0) {
             // Se sale cabeza abajo: vuelve la gravedad de siempre y el Dino cae
             // al suelo con impulso y fast-fall (~0.2 s desde el techo), no con la

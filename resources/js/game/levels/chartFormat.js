@@ -52,13 +52,26 @@
 // jugar los cristales de la antigravedad y se niega a cargar el chart en vez de
 // jugar un nivel distinto. Un obstáculo de un modo que no rige en su instante se
 // descarta con aviso (sería imposible de superar).
+//
+// Formato 4 (Ola 6b)
+// ------------------
+// El modo `fly` (vuelo) y sus eventos:
+//   - `{ t, type: 'mode', mode: 'fly', margin }`  el portal lleva la holgura del
+//     túnel en unidades de mundo (FLY_MARGIN_RANGE; sin ella, la máxima).
+//   - `{ t, type: 'hold', until }`  una nota mantenida: de `t` a `until` el Dino
+//     sube. El túnel entero se deriva de estas notas (systems/flightCourse.js).
+//     Una nota fuera de un tramo de vuelo, que se solapa con la anterior o que
+//     sigue tras el portal de salida se descarta con aviso.
+// Un modo desconocido ya NO se descarta: el tramo se jugaría con otras reglas y
+// sería otro nivel (o uno imposible). Un chart así lanza ChartError.
 
 import { OBSTACLE_KIND } from '../config.js';
 import { isMovementMode } from '../systems/modes/index.js';
 import { createModeTimeline } from '../systems/modeTimeline.js';
+import { FLY_MARGIN_RANGE } from '../systems/flightCourse.js';
 
 /** Versión mayor del formato que este cliente sabe interpretar (y la que genera). */
-export const CHART_FORMAT_VERSION = 3;
+export const CHART_FORMAT_VERSION = 4;
 
 /**
  * Versión del algoritmo de charting de este cliente. Súbela cuando cambie
@@ -69,9 +82,10 @@ export const CHART_FORMAT_VERSION = 3;
  * 3: charter musical (Ola 5). 4: marchas de velocidad hacia el clímax, en la
  * anacrusa, y validación también para quien juega con la vista (afinado de
  * velocidad). 5: modos de movimiento con portales (antigravedad) y progresión de
- * velocidad más marcada (Ola 6a).
+ * velocidad más marcada (Ola 6a). 6: reparto de modos por el carácter de cada
+ * tramo, cada modo una vez como mucho, y vuelo con notas mantenidas (Ola 6b).
  */
-export const CHARTER_VERSION = 5;
+export const CHARTER_VERSION = 6;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */
@@ -164,7 +178,7 @@ export function normalizeChart(raw) {
     let events = [];
     let droppedKinds = 0;
     let droppedMalformed = 0;
-    let droppedModes = 0;
+    let clampedMargins = 0;
     for (const e of raw.events) {
         if (e === null || typeof e !== 'object' || !isFiniteNumber(e.t) || typeof e.type !== 'string') {
             droppedMalformed++;
@@ -182,10 +196,25 @@ export function normalizeChart(raw) {
             events.push({ t: e.t, type: 'obstacle', kind: e.kind });
         } else if (e.type === 'mode') {
             if (!isMovementMode(e.mode)) {
-                droppedModes++;
+                throw new ChartError(`Modo de movimiento desconocido en t=${e.t}: ${String(e.mode)}.`);
+            }
+            const mode = { t: e.t, type: 'mode', mode: e.mode };
+            if (e.mode === 'fly' && e.margin !== undefined) {
+                if (!isFiniteNumber(e.margin)) {
+                    droppedMalformed++;
+                    continue;
+                }
+                const margin = Math.min(FLY_MARGIN_RANGE.max, Math.max(FLY_MARGIN_RANGE.min, e.margin));
+                if (margin !== e.margin) clampedMargins++;
+                mode.margin = margin;
+            }
+            events.push(mode);
+        } else if (e.type === 'hold') {
+            if (!isFiniteNumber(e.until) || e.until <= e.t || e.until > durationSec) {
+                droppedMalformed++;
                 continue;
             }
-            events.push({ t: e.t, type: 'mode', mode: e.mode });
+            events.push({ t: e.t, type: 'hold', until: e.until });
         } else {
             // Tipo futuro: se conserva tal cual (copia superficial) para no
             // perder información si este chart se reenvía o se reguarda.
@@ -194,7 +223,7 @@ export function normalizeChart(raw) {
     }
     if (droppedKinds > 0) warnings.push(`${droppedKinds} obstáculo(s) de tipo desconocido descartados.`);
     if (droppedMalformed > 0) warnings.push(`${droppedMalformed} evento(s) mal formados descartados.`);
-    if (droppedModes > 0) warnings.push(`${droppedModes} cambio(s) a un modo desconocido descartados.`);
+    if (clampedMargins > 0) warnings.push(`${clampedMargins} holgura(s) de túnel fuera de rango ajustadas.`);
 
     // Orden estable por t: `Array.prototype.sort` es estable desde ES2019,
     // así que eventos simultáneos conservan su orden relativo.
@@ -206,6 +235,11 @@ export function normalizeChart(raw) {
     if (inMode.length < events.length) {
         warnings.push(`${events.length - inMode.length} obstáculo(s) fuera de su modo de movimiento descartados.`);
         events = inMode;
+    }
+    const holdsOk = validHolds(events, modes);
+    if (holdsOk.length < events.length) {
+        warnings.push(`${events.length - holdsOk.length} nota(s) mantenida(s) fuera de un tramo de vuelo o solapadas descartadas.`);
+        events = holdsOk;
     }
 
     const bpm = isFiniteNumber(raw.music?.bpm) && raw.music.bpm > 0 ? raw.music.bpm : 120;
@@ -250,6 +284,23 @@ export function normalizeChart(raw) {
 }
 
 /** Lista de instantes estrictamente creciente dentro de la canción, o [] con aviso. */
+/**
+ * Eventos sin las notas mantenidas que no se pueden jugar: fuera de un tramo de
+ * vuelo, terminando tras su portal de salida o empezando antes de que acabe la
+ * anterior. Los eventos llegan ordenados por t.
+ */
+function validHolds(events, modes) {
+    const flights = modes.segmentsOf('fly');
+    let lastUntil = -Infinity;
+    return events.filter((e) => {
+        if (e.type !== 'hold') return true;
+        const span = flights.find((s) => e.t >= s.t0 && e.t < s.t1);
+        if (span === undefined || e.until > span.t1 || e.t < lastUntil) return false;
+        lastUntil = e.until;
+        return true;
+    });
+}
+
 function timeList(raw, durationSec, name, warnings) {
     if (raw === undefined || raw === null) return [];
     if (!Array.isArray(raw) || raw.length > MAX_BEATS) {

@@ -8,7 +8,7 @@ import {
     DINO_X,
     DINO_SIZE,
     DINO_HITBOX_PADDING,
-    FLIP_MODE,
+    CORRIDOR_HEIGHT_PX,
     GROUND_OFFSET_PX,
     OBSTACLE_HITBOX_PADDING,
 } from '../config.js';
@@ -21,9 +21,9 @@ export function computeGroundY(viewportHeight) {
     return viewportHeight - GROUND_OFFSET_PX;
 }
 
-/** Superficie del techo de los modos que lo tienen (antigravedad). */
+/** Superficie del techo de los modos que lo tienen (antigravedad, vuelo). */
 export function ceilingYOf(groundY) {
-    return groundY - FLIP_MODE.ceilingAbovePx;
+    return groundY - CORRIDOR_HEIGHT_PX;
 }
 
 /**

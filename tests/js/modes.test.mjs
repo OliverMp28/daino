@@ -1,4 +1,4 @@
-// Modos de movimiento (Ola 6a): antigravedad, portales y su sitio en la canción.
+// Modos de movimiento (Olas 6a-6b): antigravedad, portales y el reparto de modos.
 //
 // Se protege:
 //   - La física de la antigravedad: cualquier pulsación invierte la gravedad y
@@ -10,10 +10,13 @@
 //     patrones apretados; aporrear no sirve.
 //   - Los portales: rigen en su instante (partida, simulador y formato leen la
 //     misma línea de modos) y el validador detecta una acción pegada a un portal.
-//   - El charter: qué dificultades cambian de modo, cuántas veces, dónde (tramos
-//     con cuerpo, frases completas de 12-24 s, la anacrusa del primer compás), el
-//     estreno espaciado, los cristales alternando, la vuelta del modo con su
-//     material, la memoria de frases dentro del modo y los 8 oficiales jugables.
+//   - El formato 4: portales, notas mantenidas y lo que se descarta o se rechaza.
+//   - El reparto (Ola 6b): cada modo en el momento que suena como él, qué modos
+//     tiene cada dificultad, una canción sin contraste sin momentos, cada modo una
+//     vez, el presupuesto por duración, dónde van (tramo del arco, anacrusa,
+//     separados), el estreno espaciado, los cristales alternando, la memoria de
+//     frases dentro del modo y los 8 oficiales jugables y distintos entre sí.
+//   El vuelo (física, túnel, notas) tiene su archivo: flight.test.mjs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,15 +35,16 @@ import { simulateRun, timingWindowS, toSimObstacles, validateChart, validatePlay
 import { virtualPlayerScript } from '../../resources/js/game/systems/virtualPlayer.js';
 import { createSpeedProfile } from '../../resources/js/game/systems/speedProfile.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
-import { CHART_FORMAT_VERSION, normalizeChart } from '../../resources/js/game/levels/chartFormat.js';
-import { MODE_RULES } from '../../resources/js/game/levels/modePlan.js';
+import { CHART_FORMAT_VERSION, ChartError, normalizeChart } from '../../resources/js/game/levels/chartFormat.js';
+import { MODE_RULES, momentBudget } from '../../resources/js/game/levels/modePlan.js';
+import { FLY_MARGIN_RANGE } from '../../resources/js/game/systems/flightCourse.js';
 import { PAIR_GAP } from '../../resources/js/game/levels/patterns.js';
 import { pickupTime } from '../../resources/js/game/levels/speedPlan.js';
 import { buildMusicModel } from '../../resources/js/game/levels/musicModel.js';
 import { buildSongArc } from '../../resources/js/game/levels/songArc.js';
 import { DIFFICULTY_PROFILES } from '../../resources/js/game/levels/difficulty.js';
 import { chartStats } from '../../resources/js/game/levels/chartStats.js';
-import { makeSyntheticSong } from './helpers/synthetic-audio.mjs';
+import { CONTRAST_SONG_SECTIONS, makeSyntheticSong } from './helpers/synthetic-audio.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GROUND = 1000;
@@ -226,9 +230,9 @@ test('jugador virtual: salta y se agacha como siempre, e invierte ante cada cris
     assert.deepEqual(script.filter((s) => s.input === 'jump').map((s) => s.at), [3, 6, 6.5]);
 });
 
-test('formato 3: los portales se conservan; un modo desconocido o un cristal fuera de su modo se descartan con aviso', () => {
+test('formato 4: portales y notas se conservan; cristal fuera de su modo, nota fuera del vuelo o solapada se descartan con aviso; un modo desconocido no se juega', () => {
     const base = {
-        formatVersion: CHART_FORMAT_VERSION, charter: { name: 'x', version: 5 }, seed: 1,
+        formatVersion: CHART_FORMAT_VERSION, charter: { name: 'x', version: 6 }, seed: 1,
         audio: { durationSec: 60, sampleRate: 44100 }, music: { bpm: 120 }, world: { speedPxS: 450 },
     };
     const { chart, warnings } = normalizeChart({
@@ -239,49 +243,123 @@ test('formato 3: los portales se conservan; un modo desconocido o un cristal fue
             { t: 20, type: 'mode', mode: 'run' },
             { t: 21, type: 'obstacle', kind: 'CRYSTAL_CEIL' },      // fuera de su modo
             { t: 22, type: 'obstacle', kind: 'CACTUS_SMALL' },
-            { t: 30, type: 'mode', mode: 'nave' },                   // desconocido
+            { t: 23, type: 'hold', until: 23.5 },                    // fuera del vuelo
+            { t: 30, type: 'mode', mode: 'fly', margin: 500 },       // holgura fuera de rango
+            { t: 31, type: 'hold', until: 31.6 },
+            { t: 31.4, type: 'hold', until: 32 },                    // solapada con la anterior
+            { t: 33, type: 'hold', until: 33 },                      // mal formada
+            { t: 39.8, type: 'hold', until: 40.5 },                  // sigue tras el portal de salida
+            { t: 40, type: 'mode', mode: 'run' },
         ],
     });
-    assert.equal(CHART_FORMAT_VERSION, 3);
-    assert.deepEqual(chart.events.map((e) => e.kind ?? e.mode), ['flip', 'CRYSTAL_FLOOR', 'run', 'CACTUS_SMALL']);
-    assert.equal(warnings.length, 2, JSON.stringify(warnings));
-    assert.throws(() => normalizeChart({ ...base, formatVersion: 4, events: [] }), /formato 4/);
+    assert.equal(CHART_FORMAT_VERSION, 4);
+    assert.deepEqual(chart.events.map((e) => e.kind ?? e.mode ?? `hold→${e.until}`),
+        ['flip', 'CRYSTAL_FLOOR', 'run', 'CACTUS_SMALL', 'fly', 'hold→31.6', 'run']);
+    assert.equal(chart.events[4].margin, FLY_MARGIN_RANGE.max, 'la holgura se ajusta a su rango');
+    assert.equal(warnings.length, 4, JSON.stringify(warnings));
+
+    // Un modo desconocido cambiaría las reglas de un tramo entero: no se juega otro nivel.
+    assert.throws(() => normalizeChart({ ...base, events: [{ t: 10, type: 'mode', mode: 'nave' }] }), (e) => e instanceof ChartError && /nave/.test(e.message));
+    assert.throws(() => normalizeChart({ ...base, formatVersion: 5, events: [] }), /formato 5/);
 });
 
-test('estadísticas: los cristales cuentan como acciones con su margen, no como voladores', () => {
-    const chart = { world: { speedPxS: 450 }, events: [{ t: 3, type: 'mode', mode: 'flip' }, ...zigzag(5, 0.6, 20)] };
+test('estadísticas: los cristales y las notas del vuelo cuentan como acciones con su margen, no como voladores', () => {
+    const chart = {
+        world: { speedPxS: 450 },
+        events: [
+            { t: 3, type: 'mode', mode: 'flip' }, ...zigzag(5, 0.6, 20),
+            { t: 20, type: 'mode', mode: 'fly', margin: 60 },
+            { t: 21, type: 'hold', until: 21.5 }, { t: 23, type: 'hold', until: 23.4 },
+            { t: 30, type: 'mode', mode: 'run' },
+        ],
+    };
     const stats = chartStats(chart);
-    assert.equal(stats.actions, 20);
+    assert.equal(stats.actions, 22);
     assert.equal(stats.airShare, 0);
     assert.ok(stats.meanWindowS > 0.3);
 });
 
-// --------------------------- Charter ---------------------------
+// --------------------------- Charter: el reparto de modos ---------------------------
 
-test('dificultad: Relajado no cambia de reglas; Fácil una vez; Normal hasta dos y nunca en el clímax; Extremo también en el clímax', () => {
-    const analysis = makeSyntheticSong({ bpm: 120 });
-    const spans = (d) => buildChart(analysis, { seed: 1, difficulty: d }).report;
-    assert.deepEqual(spans(1).modes, []);
-    assert.equal(spans(2).modes.length, 1);
-    const normal = spans(3);
-    assert.equal(normal.modes.length, 2);
-    for (const m of normal.modes) assert.ok(m.t1 <= normal.climax.t0 || m.t0 >= normal.climax.t1, 'Normal corre el clímax');
-    const extreme = spans(5);
-    assert.equal(extreme.modes.length, 3);
-    assert.ok(extreme.modes.some((m) => m.t0 < extreme.climax.t0 && m.t1 > extreme.climax.t0), 'Extremo invierte la gravedad en el clímax');
-    for (const d of [1, 2, 3, 4, 5]) {
-        assert.ok(DIFFICULTY_PROFILES[d].modes !== undefined, `d${d} declara sus modos`);
+/** Canción con un break de batería y un puente sostenido (helpers/synthetic-audio.mjs). */
+const contrastSong = (bpm) => makeSyntheticSong({ bpm, sections: CONTRAST_SONG_SECTIONS });
+/** Canción en la que solo el clímax (percusivo y rotundo) suena distinto. */
+const climaxSong = () => makeSyntheticSong({
+    bpm: 120,
+    sections: [
+        { bars: 8, energy: 0.3, hits: 0.35, role: 'intro', cluster: 'A' },
+        { bars: 16, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+        { bars: 8, energy: 0.6, hits: 0.6, role: 'chorus', cluster: 'C' },
+        { bars: 16, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+        { bars: 8, energy: 0.6, hits: 0.6, role: 'chorus', cluster: 'C' },
+        { bars: 8, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+        { bars: 8, energy: 0.95, hits: 1, role: 'chorus', cluster: 'F', perc: 0.9 },
+        { bars: 6, energy: 0.3, hits: 0.3, role: 'outro', cluster: 'A' },
+    ],
+});
+const startOf = (analysis, role) => analysis.sections.find((s) => s.role === role).startSec;
+
+test('reparto: cada modo va al momento que suena como él — antigravedad en el break de batería, vuelo en el puente sostenido', () => {
+    for (const bpm of [90, 120, 150]) {
+        const analysis = contrastSong(bpm);
+        const { report } = buildChart(analysis, { seed: 1, difficulty: 5 });
+        const beat = 60 / bpm;
+        assert.deepEqual(report.modes.map((m) => m.mode), ['flip', 'fly'], `${bpm} BPM`);
+        // El portal va en la anacrusa: como mucho un beat antes del primer tiempo del tramo.
+        const opens = (m, role) => m.t0 < startOf(analysis, role) && startOf(analysis, role) - m.t0 <= beat + 1e-6;
+        assert.ok(opens(report.modes[0], 'break'), `${bpm} BPM: la antigravedad abre el break`);
+        assert.ok(opens(report.modes[1], 'bridge'), `${bpm} BPM: el vuelo abre el puente`);
+        for (const m of report.modes) assert.ok(m.score >= MODE_RULES.minScore, `${bpm} BPM: encaje ${m.score}`);
     }
 });
 
-test('dónde: tramos con cuerpo, frases completas de 12-24 s, portales en la anacrusa y separados; el modo vuelve con su material', () => {
-    for (const bpm of [80, 120, 150]) {
-        const analysis = makeSyntheticSong({ bpm });
+test('dificultad: Relajado corre entero; Fácil solo antigravedad; Normal y más, los dos; el clímax, solo desde Difícil', () => {
+    const analysis = contrastSong(120);
+    const modesOf = (a, d) => buildChart(a, { seed: 1, difficulty: d }).report.modes.map((m) => m.mode);
+    assert.deepEqual(modesOf(analysis, 1), []);
+    assert.deepEqual(modesOf(analysis, 2), ['flip'], 'el vuelo pide mantener: no en Fácil');
+    assert.deepEqual(modesOf(analysis, 3), ['flip', 'fly']);
+    assert.deepEqual(modesOf(analysis, 5), ['flip', 'fly']);
+
+    // Si lo único distinto es el clímax, Normal lo corre y Difícil lo cambia.
+    const climax = climaxSong();
+    assert.deepEqual(modesOf(climax, 3), [], 'Normal corre el clímax');
+    const hard = buildChart(climax, { seed: 1, difficulty: 4 }).report;
+    assert.equal(hard.modes.length, 1);
+    assert.ok(hard.modes[0].t0 < hard.climax.t0 && hard.modes[0].t1 > hard.climax.t0, 'Difícil cambia de modo en el clímax');
+
+    assert.deepEqual(Object.keys(DIFFICULTY_PROFILES[1].modes), []);
+    assert.deepEqual(Object.keys(DIFFICULTY_PROFILES[2].modes), ['flip']);
+    for (const d of [3, 4, 5]) assert.deepEqual(Object.keys(DIFFICULTY_PROFILES[d].modes).sort(), ['flip', 'fly']);
+});
+
+test('una canción que suena igual de principio a fin no tiene momentos; cada modo, como mucho una vez; el presupuesto crece con la duración', () => {
+    const uniform = makeSyntheticSong({ bpm: 120, sections: [{ bars: 80, energy: 0.6, hits: 0.6, role: 'verse', cluster: 'A' }] });
+    for (const d of [1, 2, 3, 4, 5]) assert.deepEqual(buildChart(uniform, { seed: 1, difficulty: d }).report.modes, [], `d${d}`);
+
+    assert.equal(momentBudget(DIFFICULTY_PROFILES[1], 400), 0);
+    assert.deepEqual([50, 80, 160].map((s) => momentBudget(DIFFICULTY_PROFILES[3], s)), [0, 1, 2]);
+    assert.deepEqual([50, 80, 160].map((s) => momentBudget(DIFFICULTY_PROFILES[2], s)), [0, 1, 1]);
+    // 2:20 a 150 BPM: en Normal cabe un momento (el de mejor encaje); en Difícil, dos.
+    const short = contrastSong(150);
+    assert.deepEqual(buildChart(short, { seed: 1, difficulty: 3 }).report.modes.map((m) => m.mode), ['flip']);
+    assert.equal(buildChart(short, { seed: 1, difficulty: 4 }).report.modes.length, 2);
+
+    for (const analysis of [contrastSong(100), climaxSong(), makeSyntheticSong({ bpm: 128 })]) {
+        for (const d of [2, 3, 4, 5]) {
+            const ids = buildChart(analysis, { seed: 3, difficulty: d }).report.modes.map((m) => m.mode);
+            assert.equal(new Set(ids).size, ids.length, `d${d}: ${ids.join(' ')}`);
+        }
+    }
+});
+
+test('dónde: un tramo del arco entero o sus frases, de 10-24 s, portales en la anacrusa, nunca al arranque y separados', () => {
+    for (const analysis of [contrastSong(90), contrastSong(128), climaxSong(), makeSyntheticSong({ bpm: 150 })]) {
         const model = buildMusicModel(analysis);
         const arc = buildSongArc(model);
         for (const d of [2, 3, 4, 5]) {
             const { chart, report } = buildChart(analysis, { seed: 2, difficulty: d });
-            const label = `${bpm} BPM d${d}`;
+            const label = `${analysis.bpm} BPM d${d}`;
             const portals = chart.events.filter((e) => e.type === 'mode');
             assert.equal(portals.length, report.modes.length * 2, label);
             for (const m of report.modes) {
@@ -289,52 +367,51 @@ test('dónde: tramos con cuerpo, frases completas de 12-24 s, portales en la ana
                 const bar1 = model.bars.findIndex((b) => b.t0 > m.t1 + 1e-6);
                 const dur = model.bars[bar1].t0 - model.bars[bar0].t0;
                 assert.ok(dur >= MODE_RULES.minS - 1e-6 && dur <= MODE_RULES.maxS + 1e-6, `${label}: tramo de ${dur.toFixed(1)} s`);
-                assert.equal((bar1 - bar0) % MODE_RULES.phraseBars, 0, `${label}: frases completas`);
+                const seg = arc.segments.find((s) => s.bar0 === bar0);
+                assert.ok(seg !== undefined && seg.level >= 1, `${label}: empieza con un tramo del arco`);
+                assert.ok(bar1 === seg.bar1 || (bar1 - bar0) % 2 === 0, `${label}: el tramo entero o frases completas`);
                 assert.equal(m.t0, Math.round(pickupTime(model, bar0) * 1000) / 1000, `${label}: entrada en la anacrusa`);
                 assert.equal(m.t1, Math.round(pickupTime(model, bar1) * 1000) / 1000, `${label}: salida en la anacrusa`);
-                const seg = arc.segments.find((s) => s.bar0 === bar0);
-                assert.ok(seg !== undefined && seg.level >= 2, `${label}: empieza con un tramo con cuerpo`);
-                assert.ok(m.t0 >= MODE_RULES.minStartS - 1, `${label}: no en el arranque`);
+                assert.ok(model.bars[bar0].t0 >= Math.max(MODE_RULES.minStartS, analysis.durationSec * MODE_RULES.minStartFraction) - 1e-6, `${label}: no en el arranque`);
             }
             for (let i = 1; i < report.modes.length; i++) {
-                assert.ok(report.modes[i].t0 - report.modes[i - 1].t1 >= MODE_RULES.minGapS - 1e-6, `${label}: se corre entre dos tramos`);
+                assert.ok(report.modes[i].t0 - report.modes[i - 1].t1 >= MODE_RULES.minGapS - 1e-6, `${label}: se corre entre dos momentos`);
             }
             assert.deepEqual(normalizeChart(chart).warnings, [], label);
         }
     }
-    // Normal en la canción por defecto: los dos estribillos que no son el clímax.
-    const analysis = makeSyntheticSong({ bpm: 120 });
-    const { report } = buildChart(analysis, { seed: 1, difficulty: 3 });
-    const choruses = analysis.sections.filter((s) => s.role === 'chorus').map((s) => s.startSec);
-    assert.equal(report.modes.length, 2);
-    report.modes.forEach((m, i) => assert.ok(Math.abs(m.t0 - choruses[i]) < 0.6, `el modo ${i} abre el estribillo ${choruses[i]}`));
 });
 
-test('alrededor de un portal no hay acciones; el estreno espera y va espaciado; los cristales alternan desde el suelo', () => {
+test('alrededor de un portal no hay acciones; el estreno espera y va espaciado; los cristales alternan desde el suelo; en el vuelo no hay obstáculos', () => {
     for (const bpm of [90, 128]) {
-        const analysis = makeSyntheticSong({ bpm });
+        const analysis = contrastSong(bpm);
         for (const d of [2, 3, 5]) {
             const { chart, report } = buildChart(analysis, { seed: 4, difficulty: d });
             const label = `${bpm} BPM d${d}`;
             const beat = 60 / bpm;
             const runLead = actionLeadS(OBSTACLE_KIND.CACTUS_SMALL);
             const flipLead = actionLeadS(OBSTACLE_KIND.CRYSTAL_FLOOR);
-            report.modes.forEach((m, i) => {
+            for (const m of report.modes) {
                 const inside = obstacles(chart).filter((e) => e.t >= m.t0 && e.t < m.t1);
-                assert.ok(inside.length >= 4, `${label}: tramo ${i} con ${inside.length} acciones`);
-                assert.ok(inside.every((e) => OBSTACLE_KIND[e.kind].mode === 'flip'), `${label}: dentro, solo cristales`);
-                inside.forEach((e, k) => assert.equal(e.kind, k % 2 === 0 ? 'CRYSTAL_FLOOR' : 'CRYSTAL_CEIL', `${label}: alternan en ${e.t}`));
                 const before = obstacles(chart).filter((e) => e.t < m.t0).at(-1);
                 if (before) assert.ok(m.t0 - before.t >= runLead + MODE_RULES.exitClearS - 1e-3, `${label}: acción de correr en ${before.t} pegada al portal ${m.t0}`);
-                assert.ok(inside[0].t - m.t0 >= (i === 0 ? MODE_RULES.introBeats * beat - 0.03 : MOVEMENT_MODES.flip.settleS - 1e-3), `${label}: primera inversión en ${inside[0].t}`);
-                assert.ok(m.t1 - inside.at(-1).t >= flipLead + MODE_RULES.exitClearS - 1e-3, `${label}: última inversión pegada a la salida`);
                 const after = obstacles(chart).find((e) => e.t >= m.t1);
                 if (after) assert.ok(after.t - m.t1 >= MOVEMENT_MODES.run.settleS - 1e-3, `${label}: primera acción al volver a correr`);
-                if (i === 0) {
-                    assert.ok(inside[1].t - inside[0].t >= MODE_RULES.introGapS - 1e-3, `${label}: estreno espaciado`);
-                    assert.ok(analysis.beats.some((b) => Math.abs(b - inside[0].t) < 0.002), `${label}: estreno en el pulso`);
+                if (m.mode === 'fly') {
+                    assert.deepEqual(inside, [], `${label}: el vuelo no tiene obstáculos sueltos`);
+                    continue;
                 }
-            });
+                assert.ok(inside.length >= 4, `${label}: ${inside.length} acciones`);
+                assert.ok(inside.every((e) => OBSTACLE_KIND[e.kind].mode === 'flip'), `${label}: dentro, solo cristales`);
+                inside.forEach((e, k) => assert.equal(e.kind, k % 2 === 0 ? 'CRYSTAL_FLOOR' : 'CRYSTAL_CEIL', `${label}: alternan en ${e.t}`));
+                // Cada modo aparece una vez: siempre es su estreno.
+                assert.ok(inside[0].t - m.t0 >= MODE_RULES.introBeats * beat - 0.03, `${label}: primera inversión en ${inside[0].t}`);
+                assert.ok(inside[1].t - inside[0].t >= MODE_RULES.introGapS - 1e-3, `${label}: estreno espaciado`);
+                assert.ok(analysis.beats.some((b) => Math.abs(b - inside[0].t) < 0.002), `${label}: estreno en el pulso`);
+                assert.ok(m.t1 - inside.at(-1).t >= flipLead + MODE_RULES.exitClearS - 1e-3, `${label}: última inversión pegada a la salida`);
+            }
+            const holds = chart.events.filter((e) => e.type === 'hold');
+            for (const h of holds) assert.ok(report.modes.some((m) => m.mode === 'fly' && h.t >= m.t0 && h.until <= m.t1), `${label}: nota en ${h.t} fuera del vuelo`);
             const v = validateChart(chart, { toleranceS: DIFFICULTY_PROFILES[report.difficulty].toleranceS });
             assert.ok(v.ok, `${label}: injugable en ${v.t} (${v.pattern})`);
         }
@@ -381,25 +458,33 @@ test('determinismo con modos: mismo análisis, seed y dificultad ⇒ mismo chart
     }
 });
 
-test('los 8 oficiales × 5 dificultades: con los portales, jugables; las canciones largas cambian de modo desde Fácil', async () => {
+test('los 8 oficiales × 5 dificultades: jugables, con momentos contados y distintos de una canción a otra', async () => {
     const dir = path.join(ROOT, 'database/seeds/official/baked');
     const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
-    let longWithModes = 0;
-    let long = 0;
+    const signatures = new Set();
     for (const file of files) {
         const baked = JSON.parse(await readFile(path.join(dir, file), 'utf8'));
         for (const d of [1, 2, 3, 4, 5]) {
             const { chart, report } = buildChart(baked.analysis, { sha256: baked.audio.sha256, difficulty: d });
             const label = `${file} d${d}`;
-            const v = validateChart(chart, { toleranceS: DIFFICULTY_PROFILES[report.difficulty].toleranceS });
+            const profile = DIFFICULTY_PROFILES[report.difficulty];
+            const v = validateChart(chart, { toleranceS: profile.toleranceS });
             assert.ok(v.ok, `${label}: injugable en ${v.t} (${v.pattern})`);
-            if (report.difficulty === 1) assert.deepEqual(report.modes, [], `${label}: Relajado corre`);
-            for (const m of report.modes) assert.ok(m.t1 - m.t0 <= MODE_RULES.maxS + 2, `${label}: tramo de ${(m.t1 - m.t0).toFixed(1)} s`);
-            if (d === 3 && chart.audio.durationSec >= 150) {
-                long++;
-                if (report.modes.length > 0) longWithModes++;
+
+            const ids = report.modes.map((m) => m.mode);
+            assert.ok(ids.length <= momentBudget(profile, chart.audio.durationSec), `${label}: ${ids.length} momentos`);
+            assert.equal(new Set(ids).size, ids.length, `${label}: cada modo una vez`);
+            assert.ok(ids.every((id) => profile.modes[id] !== undefined), `${label}: ${ids.join(' ')} fuera de su dificultad`);
+            for (const m of report.modes) {
+                assert.ok(m.t1 - m.t0 <= MODE_RULES.maxS + 2, `${label}: tramo de ${(m.t1 - m.t0).toFixed(1)} s`);
+                const inClimax = report.climax !== null && m.t0 < report.climax.t1 && m.t1 > report.climax.t0;
+                if (inClimax) assert.ok(profile.modes[m.mode].climax, `${label}: ${m.mode} en el clímax`);
             }
+            if (report.difficulty === 5 || (report.difficulty === 4 && d === 5)) signatures.add(ids.join('+') || 'ninguno');
+            // Lo que pidió el playtest de la 6a: en What's Up Danger, uno o dos momentos, no tres.
+            if (file.startsWith('whats-up-danger')) assert.ok(ids.length <= 2, `${label}: ${ids.length} momentos`);
         }
     }
-    assert.equal(longWithModes, long, `${longWithModes}/${long} canciones de más de 2:30 en Normal con antigravedad`);
+    // Cada canción es un mundo: en la dificultad máxima hay niveles sin modos, con uno y con los dos.
+    assert.ok(signatures.has('ninguno') && [...signatures].some((s) => s.includes('fly')) && [...signatures].some((s) => s.includes('flip')), [...signatures].join(' | '));
 });

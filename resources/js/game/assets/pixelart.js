@@ -51,6 +51,8 @@ const PALETTE = {
     v: '#7d4fd6', // sombra cristal
     Y: '#f3e6ff', // brillo cristal
     U: '#b58cff', // línea del techo
+    // Vuelo (Ola 6b): techo en el oro del modo (MODE_COLORS.fly)
+    F: '#ffd166', // línea del techo
     // Portal: en grises para teñirlo con el color de cada modo (Sprite.tint)
     O: '#ffffff', // aro
     o: '#a6a6a6', // aro interior
@@ -293,6 +295,8 @@ const crystal = [
 // Franja del techo: la tira del suelo reflejada, con su línea en el violeta del
 // modo. La fila 10 es la línea; la 11, los bultos que cuelgan hacia el pasillo.
 const ceiling = ground.slice().reverse().map((row) => row.replaceAll('E', 'U'));
+// El del vuelo, igual con la línea en oro.
+const ceilingFly = ground.slice().reverse().map((row) => row.replaceAll('E', 'F'));
 
 /**
  * Portal: un óvalo alto de doble aro con destellos dentro, en grises (se tiñe
@@ -324,7 +328,7 @@ function portalRows(w, h, phase) {
     return rows;
 }
 
-// Alto: del suelo a un poco por encima del techo del pasillo (FLIP_MODE.ceilingAbovePx).
+// Alto: del suelo a un poco por encima del techo del pasillo (CORRIDOR_HEIGHT_PX).
 const portalA = portalRows(14, 82, 0);
 const portalB = portalRows(14, 82, 1);
 
@@ -343,7 +347,7 @@ const DEFS = {
     cactusSmall, cactusWide,
     pteroA, pteroB,
     ground, cloud, dot,
-    crystal, ceiling, portalA, portalB, chevronUp, chevronDown,
+    crystal, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
 };
 
 // --------------------------- Skins (palette-swap) ---------------------------

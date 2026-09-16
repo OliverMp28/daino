@@ -16,6 +16,9 @@ import { applyInput, bodyHitbox, bodyState } from '../systems/physics.js';
 /** Velocidad (1/s) con la que el sprite gira hacia la gravedad nueva: ~0.1 s de volteo. */
 const FLIP_VISUAL_RATE = 26;
 
+/** Vuelo (Ola 6b): inclinación del sprite al subir y al bajar (radianes) y su velocidad (1/s). */
+const FLY_TILT = Object.freeze({ climb: -0.24, dive: 0.18, rate: 16 });
+
 export class Dino extends Container {
     /**
      * @param {{ skinId?: string }} [opts]  Skin del registro DINO_SKINS
@@ -49,6 +52,8 @@ export class Dino extends Container {
         this._squashY = 1;
         /** Orientación visual [-1, 1]: sigue a `gravityDir` con un volteo rápido. */
         this._upright = 1;
+        /** Inclinación visual en vuelo: morro arriba al subir, abajo al bajar. */
+        this._tilt = 0;
     }
 
     /**
@@ -79,6 +84,11 @@ export class Dino extends Container {
                 // Se estira hacia donde cae; el volteo lo hace `_upright`.
                 this._squashX = 0.86;
                 this._squashY = 1.18;
+                break;
+            case 'climb':
+                // Impulso al empezar a subir; la inclinación la lleva `_tilt`.
+                this._squashX = 0.9;
+                this._squashY = 1.12;
                 break;
             default:
                 break;
@@ -131,6 +141,14 @@ export class Dino extends Container {
         // gira) y los pies acaban contra la superficie de destino.
         this._upright += (this.gravityDir - this._upright) * (1 - Math.exp(-FLIP_VISUAL_RATE * dt));
         if (Math.abs(this.gravityDir - this._upright) < 1e-3) this._upright = this.gravityDir;
+
+        // En vuelo el morro sigue la dirección: sube, baja o se endereza en el
+        // suelo y pegado al techo (donde la física deja vy a 0).
+        const tiltTarget = this.mode === 'fly' && !this.dead
+            ? (this.vy < 0 ? FLY_TILT.climb : this.vy > 0 ? FLY_TILT.dive : 0)
+            : 0;
+        this._tilt += (tiltTarget - this._tilt) * (1 - Math.exp(-FLY_TILT.rate * dt));
+        this._sprite.rotation = this._tilt;
 
         // Squash & stretch converge a 1 con lerp exponencial frame-rate-independent.
         const k = 1 - Math.exp(-14 * dt);

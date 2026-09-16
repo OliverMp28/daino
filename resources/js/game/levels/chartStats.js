@@ -26,8 +26,12 @@
 // dificultad declarada. Con densidad variable, la media sola engaña (un nivel
 // con clímax tiene la misma media que uno plano y es más exigente), así que la
 // puntuación mezcla la densidad media con la del tramo más denso.
+//
+// Ola 6b: una nota mantenida del vuelo cuenta como una acción, con el margen de
+// error que le deja la holgura de su túnel.
 
-import { OBSTACLE_KIND } from '../config.js';
+import { FLY_MODE, OBSTACLE_KIND } from '../config.js';
+import { createFlightCourse } from '../systems/flightCourse.js';
 import { actionLeadS } from '../systems/physics.js';
 import { timingWindowS } from '../systems/playability.js';
 import { speedProfileOf } from '../systems/speedProfile.js';
@@ -53,7 +57,7 @@ const COMFORTABLE_WINDOW_S = 0.35;
 
 /**
  * @typedef {Object} ChartStats
- * @property {number} actions            Obstáculos del chart.
+ * @property {number} actions            Obstáculos y notas mantenidas del chart.
  * @property {number} activeSpanS        Del primer al último instante de acción.
  * @property {number} actionsPerMin      Densidad media en el tramo jugado.
  * @property {number} peakActionsPerMin  Densidad de los 20 s más densos.
@@ -67,23 +71,31 @@ const COMFORTABLE_WINDOW_S = 0.35;
  * @returns {ChartStats}
  */
 export function chartStats(chart) {
-    const obstacles = chart.events.filter((e) => e.type === 'obstacle' && OBSTACLE_KIND[e.kind] !== undefined);
-    const actions = obstacles.length;
+    const speed = speedProfileOf(chart);
+    const obstacles = chart.events
+        .filter((e) => e.type === 'obstacle' && OBSTACLE_KIND[e.kind] !== undefined)
+        // Cada acción se mide a la velocidad a la que su obstáculo cruza al Dino.
+        .map((e) => ({ t: e.t, air: OBSTACLE_KIND[e.kind].altitude > 0, windowS: timingWindowS(e.kind, speed.speedAt(e.t + actionLeadS(OBSTACLE_KIND[e.kind]))) }));
+    // Una nota del vuelo admite el error que su túnel absorbe: la holgura cubre
+    // tres veces lo que el Dino se desvía por segundo de error (flightCourse.js).
+    const course = createFlightCourse(chart.events);
+    const rate = Math.max(FLY_MODE.climbPxS, FLY_MODE.divePxS);
+    const holds = course.spans.flatMap((s) => s.holds.map((h) => ({ t: h.t, air: false, windowS: (2 * s.margin) / (3 * rate) })));
+    const list = [...obstacles, ...holds].sort((a, b) => a.t - b.t);
+    const actions = list.length;
     if (actions < 2) {
         return { actions, activeSpanS: 0, actionsPerMin: 0, peakActionsPerMin: 0, tightGapS: 0, airShare: 0, meanWindowS: 0 };
     }
 
-    // Cada acción se mide a la velocidad a la que su obstáculo cruza al Dino.
-    const speed = speedProfileOf(chart);
-    const activeSpanS = obstacles[actions - 1].t - obstacles[0].t;
+    const activeSpanS = list[actions - 1].t - list[0].t;
     const gaps = [];
     let air = 0;
     let windowSum = 0;
     for (let i = 0; i < actions; i++) {
-        const o = obstacles[i];
-        if (i > 0) gaps.push(o.t - obstacles[i - 1].t);
-        if (OBSTACLE_KIND[o.kind].altitude > 0) air++;
-        windowSum += timingWindowS(o.kind, speed.speedAt(o.t + actionLeadS(OBSTACLE_KIND[o.kind])));
+        const o = list[i];
+        if (i > 0) gaps.push(o.t - list[i - 1].t);
+        if (o.air) air++;
+        windowSum += o.windowS;
     }
     gaps.sort((a, b) => a - b);
 
@@ -93,7 +105,7 @@ export function chartStats(chart) {
     if (window > 0) {
         let j = 0;
         for (let i = 0; i < actions; i++) {
-            while (j < actions && obstacles[j].t < obstacles[i].t + window) j++;
+            while (j < actions && list[j].t < list[i].t + window) j++;
             peak = Math.max(peak, ((j - i - 1) / window) * 60);
         }
     }

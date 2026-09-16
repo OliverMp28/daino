@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { computeWorldView, readAheadS, sameView } from '../../resources/js/game/systems/worldView.js';
-import { WORLD_VIEW, GROUND_OFFSET_PX, PIXEL_SCALE, DINO_SIZE, JUMP_VELOCITY, GRAVITY, FLIP_MODE } from '../../resources/js/game/config.js';
+import { WORLD_VIEW, GROUND_OFFSET_PX, PIXEL_SCALE, DINO_SIZE, JUMP_VELOCITY, GRAVITY, CORRIDOR_HEIGHT_PX } from '../../resources/js/game/config.js';
 import { SPEED_RULES } from '../../resources/js/game/levels/speedPlan.js';
 import { ceilingYOf } from '../../resources/js/game/systems/geometry.js';
 
@@ -87,7 +87,7 @@ test('el pasillo de la antigravedad y la franja de su techo caben siempre bajo e
         const railTop = ceilingYOf(v.groundY) - RAIL_WORLD;
         assert.ok(railTop > HUD_CSS_PX / v.scale, `${name}: la franja del techo (${railTop.toFixed(0)}) queda bajo el HUD (${(HUD_CSS_PX / v.scale).toFixed(0)})`);
     }
-    assert.ok(FLIP_MODE.ceilingAbovePx - DINO_SIZE.h > 180, 'el Dino tiene recorrido de sobra entre suelo y techo');
+    assert.ok(CORRIDOR_HEIGHT_PX - DINO_SIZE.h > 180, 'el Dino tiene recorrido de sobra entre suelo y techo');
 });
 
 test('en un móvil apaisado el mundo se reduce en vez de recortarse: más lectura que antes', () => {

@@ -11,7 +11,8 @@
 //     combinaciones rápidas salto→agachado se desbloquean en momentos del arco
 //     (primer groove, primer empuje, clímax). Más difícil = antes y más.
 //   - CUÁNTO acelera el mundo en los tramos intensos.
-//   - QUÉ MODOS de movimiento aparecen, cuántas veces y desde cuándo (Ola 6).
+//   - QUÉ MODOS de movimiento existen y cuántos momentos caben (Ola 6); dónde
+//     van lo decide la canción (modePlan.js).
 //
 // El techo (difficultyCeiling.js) dice hasta dónde admite la MÚSICA: una balada
 // no ofrece Extremo porque no hay golpes que lo justifiquen.
@@ -43,9 +44,12 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  * @property {{ duck: number, wide: number, offbeat: number, combo: number }} unlock  Etapa (STAGE).
  * @property {number} speedAmp      Cuánto de la aceleración por intensidad se aplica.
  * @property {number} airShare      Cuota máxima de obstáculos voladores por tramo.
- * @property {Record<string, { from: number, segments: number, climax: boolean }>} modes
- *           Modos de movimiento (Ola 6): desde qué etapa del arco, cuántos tramos
- *           como mucho y si el clímax puede ser uno (levels/modePlan.js).
+ * @property {Record<string, { climax: boolean }>} modes
+ *           Modos de movimiento que existen en esta dificultad y si el clímax
+ *           puede ser uno de sus momentos (levels/modePlan.js).
+ * @property {number[]} moments
+ *           Duración mínima de la canción para 1, 2… momentos de modo. Cada modo
+ *           aparece como mucho una vez; el reparto decide cuáles y dónde.
  */
 
 /** @type {Record<number, DifficultyProfile>} */
@@ -60,6 +64,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         speedAmp: 0.55,
         airShare: 0.25,
         modes: Object.freeze({}),
+        moments: Object.freeze([]),
     }),
     2: Object.freeze({
         level: 2,
@@ -70,7 +75,9 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.CLIMAX, offbeat: STAGE.CLIMAX, combo: STAGE.NEVER },
         speedAmp: 0.8,
         airShare: 0.34,
-        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_DRIVE, segments: 1, climax: false }) }),
+        // Fácil: una sola mecánica nueva, la de pulsar (el vuelo pide mantener).
+        modes: Object.freeze({ flip: Object.freeze({ climax: false }) }),
+        moments: Object.freeze([75]),
     }),
     3: Object.freeze({
         level: 3,
@@ -81,7 +88,9 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         unlock: { duck: STAGE.FIRST_GROOVE, wide: STAGE.FIRST_DRIVE, offbeat: STAGE.FIRST_DRIVE, combo: STAGE.CLIMAX },
         speedAmp: 1,
         airShare: 0.5,
-        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_DRIVE, segments: 2, climax: false }) }),
+        // Normal: los dos modos, pero el clímax se corre a toda velocidad.
+        modes: Object.freeze({ flip: Object.freeze({ climax: false }), fly: Object.freeze({ climax: false }) }),
+        moments: Object.freeze([75, 150]),
     }),
     4: Object.freeze({
         level: 4,
@@ -92,7 +101,8 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         unlock: { duck: STAGE.START, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_DRIVE },
         speedAmp: 1.2,
         airShare: 0.5,
-        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_GROOVE, segments: 3, climax: true }) }),
+        modes: Object.freeze({ flip: Object.freeze({ climax: true }), fly: Object.freeze({ climax: true }) }),
+        moments: Object.freeze([60, 120]),
     }),
     5: Object.freeze({
         level: 5,
@@ -103,7 +113,8 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         unlock: { duck: STAGE.START, wide: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_GROOVE },
         speedAmp: 1.4,
         airShare: 0.5,
-        modes: Object.freeze({ flip: Object.freeze({ from: STAGE.FIRST_GROOVE, segments: 3, climax: true }) }),
+        modes: Object.freeze({ flip: Object.freeze({ climax: true }), fly: Object.freeze({ climax: true }) }),
+        moments: Object.freeze([60, 120]),
     }),
 });
 

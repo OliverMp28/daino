@@ -97,7 +97,11 @@ test('rejilla: toda acción cae en un pulso o un contratiempo real, a cualquier 
 });
 
 test('dinámica: la densidad sigue al arco (reposo < calma < groove < empuje < clímax)', () => {
-    const analysis = makeSyntheticSong({ bpm: 96 });
+    // 104 BPM y no 96: desde la Ola 6a el clímax de Difícil llega a ×1.68 y, a 96
+    // BPM, dos acciones de correr ya no caben en beats seguidos a esa velocidad
+    // (gotcha de `apm` en CLAUDE.md); en la 6a lo tapaba una antigravedad en el
+    // clímax, que la 6b ya no pone en esta canción (su momento es el puente).
+    const analysis = makeSyntheticSong({ bpm: 104 });
     const { chart } = buildChart(analysis, { seed: 2, difficulty: 4 });
     const secs = sections(chart);
     const byLevel = new Map();
@@ -106,7 +110,8 @@ test('dinámica: la densidad sigue al arco (reposo < calma < groove < empuje < c
         const t0 = Math.max(secs[i].t, CHARTER_RULES.firstActionMinS);
         if (t1 <= t0) continue;
         const acc = byLevel.get(secs[i].level) ?? { n: 0, dur: 0 };
-        acc.n += obstacles(chart).filter((e) => e.t >= t0 && e.t < t1).length;
+        // Una nota mantenida del vuelo es una acción, como un salto.
+        acc.n += chart.events.filter((e) => (e.type === 'obstacle' || e.type === 'hold') && e.t >= t0 && e.t < t1).length;
         acc.dur += t1 - t0;
         byLevel.set(secs[i].level, acc);
     }

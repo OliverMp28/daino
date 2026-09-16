@@ -17,6 +17,7 @@
 // @typedef {Object} MovementMode
 // @property {string} id
 // @property {string} label        Nombre para el jugador.
+// @property {{ keys: string, touch: string }} hint  Cómo se juega, con teclado y en táctil.
 // @property {number} color        Portal, mapa de la canción y avisos.
 // @property {readonly string[]} actions  Acciones del charter en este modo.
 // @property {number} settleS      Tras entrar, cuánto esperar para la primera acción.
@@ -30,12 +31,14 @@
 
 import { RUN_MODE } from './run.js';
 import { FLIP_MODE_DEF } from './flip.js';
+import { FLY_MODE_DEF } from './fly.js';
 
 export { BODY_EVENT, bodyState } from './body.js';
 
 export const MOVEMENT_MODES = Object.freeze({
     run: RUN_MODE,
     flip: FLIP_MODE_DEF,
+    fly: FLY_MODE_DEF,
 });
 
 /** Modo con el que empieza todo nivel. */

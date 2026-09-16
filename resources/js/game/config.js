@@ -113,12 +113,17 @@ export const JUMP_BUFFER_S = 0.12;
 // sale por un portal (systems/modes/). Correr (salto + agacharse) es el de siempre.
 
 /**
+ * Alto del pasillo de los modos con techo (antigravedad, vuelo): del suelo a la
+ * superficie del techo, en unidades de mundo. Con el alto mínimo de la vista
+ * (WORLD_VIEW.minHeight) el techo y su franja caben bajo el HUD.
+ */
+export const CORRIDOR_HEIGHT_PX = 300;
+
+/**
  * Antigravedad: un pasillo con techo; cualquier pulsación invierte la gravedad
  * y el Dino cae hacia la otra superficie. Los cristales del suelo obligan a
  * subir y los del techo a bajar.
  *
- *   ceilingAbovePx  Del suelo a la superficie del techo. Con el alto mínimo de la
- *                   vista (WORLD_VIEW.minHeight) el techo y su franja caben bajo el HUD.
  *   gravity         Aceleración hacia la superficie de destino (px/s²).
  *   kickPxS         Velocidad inicial al invertir: despega en seco en vez de
  *                   quedarse pegado a la superficie los primeros frames.
@@ -127,15 +132,36 @@ export const JUMP_BUFFER_S = 0.12;
  *                   cristal (ver modes/flip.js: `leadS`).
  */
 export const FLIP_MODE = Object.freeze({
-    ceilingAbovePx: 300,
     gravity: 5200,
     kickPxS: 450,
     maxSpeedPxS: 1500,
     leadMarginS: 0.24,
 });
 
+/**
+ * Vuelo (Ola 6b): mientras se mantiene pulsado el Dino sube; al soltar, baja.
+ * Siempre en línea recta y a velocidad fija: el camino que dibuja es exactamente
+ * el ritmo de las pulsaciones, como las notas mantenidas de un juego de ritmo, y
+ * un error de N ms desvía el Dino N ms × velocidad (el túnel lo tiene en cuenta).
+ *
+ *   climbPxS   Velocidad de subida (unidades de mundo por segundo).
+ *   divePxS    Velocidad de bajada.
+ *   baseMarginPx  Holgura fija del túnel, además del error de tiempo de la dificultad.
+ */
+export const FLY_MODE = Object.freeze({
+    climbPxS: 300,
+    divePxS: 300,
+    baseMarginPx: 10,
+    /**
+     * Boca del túnel: segundos tras el portal sin muros. El Dino puede cruzarlo
+     * al final de un salto (hasta ~130 de altura con un salto tardío) y baja a
+     * `divePxS`; los muros empiezan cuando ya está en el suelo.
+     */
+    entryOpenS: 0.5,
+});
+
 /** Color de cada modo: su portal, su franja en el mapa de la canción y su aviso. */
-export const MODE_COLORS = Object.freeze({ run: 0x7fe6ff, flip: 0xc08bff });
+export const MODE_COLORS = Object.freeze({ run: 0x7fe6ff, flip: 0xc08bff, fly: 0xffd166 });
 
 /**
  * Lo que rodea a un cambio de modo en la partida (solo visual).
@@ -151,6 +177,18 @@ export const MODE_FX = Object.freeze({
     strength: 0.7,
     hintRuns: 3,
     linesClearPx: 360,
+});
+
+/**
+ * Propulsión del vuelo (Ola 6b): mientras se mantiene, chispas en el oro del modo
+ * saliendo de la cola del Dino hacia atrás y abajo. Una cada `periodS`.
+ */
+export const FLY_JET = Object.freeze({
+    periodS: 0.04,
+    color: 0xffd166,
+    speedMin: 80,
+    speedMax: 200,
+    lifeS: 0.32,
 });
 
 // --------------------------- Animación ---------------------------

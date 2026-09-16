@@ -83,6 +83,8 @@ export function buildMusicModel(analysis) {
     for (const bar of bars) bar.slots = buildSlots(bar, beats, isDownbeat, onsets, period, swing, meter);
 
     const sections = readSections(analysis, durationSec, energy);
+    const bands = readBands(analysis);
+    const tonal = readTonal(analysis, durationSec);
 
     return {
         formatVersion: analysis.formatVersion,
@@ -102,6 +104,20 @@ export function buildMusicModel(analysis) {
         energyMean: (t0, t1) => meanOver(energy, t0, t1),
         /** Suma de fuerzas de golpe en [t0, t1). */
         activity: (t0, t1) => strengthSum(onsets, t0, t1),
+        // Carácter del sonido (Ola 6b: dónde encaja cada modo). Todo es null o
+        // vacío si el análisis no lo trae (formato 1, analizador 1).
+        /** Percusividad media de los golpes de [t0, t1), ponderada por fuerza: >0.5 batería, <0.5 notas. null sin dato. */
+        percussiveness: (t0, t1) => weightedPercussive(onsets, t0, t1),
+        /** Nivel medio de graves, medios y agudos en [t0, t1), relativos [0,1]. null sin dato. */
+        bandsMean: (t0, t1) => (bands === null ? null : {
+            low: meanOver(bands.low, t0, t1),
+            mid: meanOver(bands.mid, t0, t1),
+            high: meanOver(bands.high, t0, t1),
+        }),
+        /** Tonalidad global, acordes por beat y modulaciones (null sin análisis tonal). */
+        tonal,
+        /** Cambios de acorde por segundo en [t0, t1) (null sin acordes). */
+        chordChangeRate: (t0, t1) => chordChangeRate(tonal, t0, t1),
     };
 }
 
@@ -113,6 +129,9 @@ function readOnsets(analysis) {
         ? analysis.onsetColor
         : null;
     const n = raw.length;
+    const perc = Array.isArray(analysis.onsetPercussive) && analysis.onsetPercussive.length === n
+        ? Float32Array.from(analysis.onsetPercussive, (v) => (Number.isFinite(v) ? v : 0.5))
+        : null;
     const t = new Float64Array(n);
     const s = new Float32Array(n);
     const low = new Float32Array(n);
@@ -130,7 +149,7 @@ function readOnsets(analysis) {
             low[i] = mid[i] = high[i] = 1 / 3;
         }
     }
-    return { t, s, low, mid, high, count: n, hasColor: colors !== null };
+    return { t, s, low, mid, high, perc, count: n, hasColor: colors !== null };
 }
 
 /** Primer índice con t[i] ≥ value. */
@@ -509,12 +528,67 @@ function readSections(analysis, durationSec, energy) {
             cluster: typeof s.cluster === 'string' ? s.cluster : 'A',
             role: typeof s.role === 'string' ? s.role : 'verse',
             energy: Number.isFinite(s.energy) ? s.energy : meanOver(energy, s.startSec, s.endSec),
+            key: typeof s.key === 'string' ? s.key : null,
         });
     }
     if (out.length === 0) {
-        out.push({ start: 0, end: durationSec, cluster: 'A', role: 'verse', energy: meanOver(energy, 0, durationSec) });
+        out.push({ start: 0, end: durationSec, cluster: 'A', role: 'verse', energy: meanOver(energy, 0, durationSec), key: null });
     }
     return out;
+}
+
+function weightedPercussive(onsets, t0, t1) {
+    if (onsets.perc === null) return null;
+    let ws = 0;
+    let wp = 0;
+    for (let i = lowerBound(onsets.t, t0); i < onsets.count && onsets.t[i] < t1; i++) {
+        if (onsets.s[i] < HIT_FLOOR) continue;
+        ws += onsets.s[i];
+        wp += onsets.s[i] * onsets.perc[i];
+    }
+    return ws > 0 ? wp / ws : null;
+}
+
+/** Curvas de graves/medios/agudos del analizador 2, con la forma de `readEnergy`. */
+function readBands(analysis) {
+    const e = analysis.energy;
+    const b = e?.bands;
+    if (b === null || typeof b !== 'object' || !(e.hopSec > 0)) return null;
+    const curves = {};
+    for (const name of ['low', 'mid', 'high']) {
+        if (!Array.isArray(b[name]) || b[name].length === 0) return null;
+        curves[name] = { hopSec: e.hopSec, values: Float32Array.from(b[name]) };
+    }
+    return curves;
+}
+
+function readTonal(analysis, durationSec) {
+    const t = analysis.tonal;
+    if (t === null || typeof t !== 'object') return null;
+    const chords = Array.isArray(t.chords)
+        ? t.chords.filter((c) => Array.isArray(c) && Number.isFinite(c[0]) && c[0] <= durationSec && typeof c[1] === 'string')
+        : [];
+    const modulations = Array.isArray(t.modulations)
+        ? t.modulations.filter((m) => Number.isFinite(m?.t) && typeof m.key === 'string')
+        : [];
+    return {
+        key: typeof t.key === 'string' ? t.key : null,
+        chordConfidence: Number.isFinite(t.chordConfidence) ? t.chordConfidence : 0,
+        chords,
+        modulations,
+    };
+}
+
+function chordChangeRate(tonal, t0, t1) {
+    if (tonal === null || tonal.chords.length === 0 || !(t1 > t0)) return null;
+    let changes = 0;
+    let prev = null;
+    for (const [t, label] of tonal.chords) {
+        if (t >= t1) break;
+        if (t >= t0 && prev !== null && label !== prev) changes++;
+        prev = label;
+    }
+    return changes / (t1 - t0);
 }
 
 function clamp(v, lo, hi) {

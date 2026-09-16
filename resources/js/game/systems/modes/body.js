@@ -32,6 +32,7 @@ export const BODY_EVENT = Object.freeze({
  * @property {boolean} dead
  * @property {string} mode         Id del modo de movimiento vigente.
  * @property {1 | -1} gravityDir   1 hacia el suelo; −1 hacia el techo.
+ * @property {number} flyHeld      Botones mantenidos en el vuelo (Ola 6b).
  */
 
 /** Estado de un cuerpo de pie en el suelo, corriendo. */
@@ -49,5 +50,6 @@ export function bodyState(groundY) {
         dead: false,
         mode: 'run',
         gravityDir: 1,
+        flyHeld: 0,
     };
 }

@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), y la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada). Pendientes: Ola 6b y Ola 7.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo). Pendientes: Ola 6c y Ola 7.
 
 ---
 
@@ -1099,7 +1099,7 @@ Medido con la física real (`tests/js/modes.test.mjs`): el adelanto del cristal 
 
 **Limitaciones que quedan:**
 
-- **El playtest humano manda y está pendiente**, sobre todo si tres tramos de antigravedad en un tema largo (79 de 205 acciones en What's Up Danger Extremo) son demasiados. Todo lo afinable está en tablas: `MODE_RULES` (modePlan.js), `modes` por dificultad (difficulty.js), `FLIP_MODE` y `MODE_FX` (config.js). Las dos primeras exigen subir `CHARTER_VERSION`.
+- ~~**El playtest humano manda y está pendiente**, sobre todo si tres tramos de antigravedad en un tema largo (79 de 205 acciones en What's Up Danger Extremo) son demasiados.~~ Lo eran: la Ola 6b pasa a un momento por modo donde la canción suena distinta. Todo lo afinable está en tablas: `MODE_RULES` (modePlan.js), `modes` por dificultad (difficulty.js), `FLIP_MODE` y `MODE_FX` (config.js). Las dos primeras exigen subir `CHARTER_VERSION`.
 - El pasillo mide 300 unidades de mundo fijas: en pantallas muy bajas (32:9) cabe, pero el margen sobre el HUD es de ~50 unidades (test en `world-view.test.mjs`).
 - En antigravedad no hay agachado ni salto: una sola acción. Las figuras salen del ritmo, no de combinar gestos.
 - El bot de los E2E pulsa por el reloj de la canción, así que **no prueba la lectura visual** del zigzag: eso solo lo dice una persona jugando.
@@ -1107,14 +1107,100 @@ Medido con la física real (`tests/js/modes.test.mjs`): el adelanto del cristal 
 
 ---
 
-#### Ola 6b — Más modos y momentos (pendiente)
+#### Ola 6b — Cada canción, sus momentos: reparto de modos y vuelo ✅ (Sep 2026)
 
-Sobre las bases de 6a, y solo después del playtest humano de la antigravedad:
+> **Lo que pidió el propietario tras jugar la 6a.** (1) Al pasar el portal, *"el techo corre, parece una cinta de correr"*: se desplazaba más rápido que el mundo. (2) *"3 tramos de antigravedad en What's Up Danger son demasiados"*: mejor 1 o 2, como un evento, y **donde la canción suena distinta** (un puente, un tramo pasivo o uno épico, según la canción: *"cada canción es un mundo distinto"*). (3) Que los modos tengan sentido por nivel: según sus sonidos, su duración y su dificultad; que unos niveles tengan un modo que otros no y que las dificultades fáciles no tengan todo lo de las difíciles. Organizado, escalable, sin bugs y bien probado.
 
-- **Un modo de control continuo** (nave/jetpack: mantener para subir). Es el que obliga a generalizar el jugador virtual a una *política* (reacciona a su estado) en vez de un guion de pulsaciones, y a chartear "puertas" en vez de acciones puntuales. Candidato natural: la altura de las puertas siguiendo el contorno de la melodía, que el analizador 2 ya puede dar.
-- **Anillos y orbes en el aire** (pulsar en vuelo para volver a saltar): no es un modo, es una acción nueva dentro de correr, y rompe el techo de densidad del salto (0.67 s entre saltos) sin tocar la física del salto.
-- **Momentos especiales anclados a la armonía**: el analizador 2 da acordes, tonalidad y modulaciones; hoy el charter no los usa (ver "Afinado del analizador").
-- **Eventos `fx` nuevos** del chart cableados al runtime (hoy solo `drop` y `lift`).
+**1. El techo que resbalaba (bug).** Al recortar la tira del techo por la izquierda de la pantalla, el desfase de su textura tenía el signo cambiado, así que el dibujo avanzaba al doble de la velocidad del mundo. El recorte vive ahora en una función pura (`systems/tiling.js::clipTiledStrip`) con su test de regresión (`tests/js/tiling.test.mjs`: un punto del techo muestra siempre el mismo píxel de la textura, se recorte como se recorte), comprobada contra cómo `TilingSpriteShader` de Pixi v8 aplica `tilePosition`. En partida, medido en 455 frames de Time: la fase de la textura respecto al mundo no se mueve (±6 px de ruido del reloj en un periodo de 128); con el fallo habría recorrido el periodo varias veces por segundo.
+
+**2. Qué suena distinto: el carácter de cada tramo** (`levels/songCharacter.js`). Para cada tramo del arco, frente a lo **típico de esa canción** (mediana ponderada por duración y dispersión robusta):
+
+| Rasgo | De dónde sale |
+|---|---|
+| `contrast` | cuánto se aparta en energía, densidad de golpes, percusividad, graves/medios/agudos y ritmo armónico; más si su material suena una sola vez, si el análisis lo reconoce como puente o break, o si cambia de tonalidad |
+| `passive` / `epic` | más tranquilo o más intenso que lo típico (el clímax es épico por definición) |
+| `sustain` / `rhythmic` | notas sostenidas (pocos golpes, poco percusivos) o golpes marcados (densos y percusivos) |
+
+Usa por primera vez en el charter lo que el analizador 2 ya medía (`onsetPercussive`, `energy.bands`, acordes y tonalidad por sección: `musicModel.js` gana `percussiveness`, `bandsMean`, `chordChangeRate`, `tonal`). Con un análisis sin esos campos (navegador, formato 1) usa lo que hay y el contraste sale más bajo: menos momentos, nunca inventados.
+
+**3. El reparto de modos** (`levels/modePlan.js`, reescrito). Un modo es un **evento** de la canción:
+
+- Cada modo declara con qué carácter encaja (`MODE_CASTING`): la **antigravedad**, que se juega a golpes, con tramos rítmicos y épicos; el **vuelo**, que se juega manteniendo, con los sostenidos y pasivos. Los dos piden contraste.
+- Solo entran encajes claros (`minScore` 0.5) en tramos que contrastan (`minContrast` 0.4; el clímax, que ya es único, 0.28). **Una canción que suena igual de principio a fin no tiene momentos.**
+- **Cada modo, como mucho una vez por nivel** (siempre es su estreno), separados ≥ 12 s, nunca en el primer quinto.
+- **La dificultad** decide qué modos existen y cuántos momentos caben por duración (`difficulty.js`: `modes` y `moments`): Relajado ninguno; Fácil solo antigravedad (el vuelo pide mantener) y uno desde 75 s; Normal los dos, uno desde 75 s y dos desde 150 s, sin tocar el clímax; Difícil y Extremo, uno desde 60 s y dos desde 120 s, y el clímax puede ser uno.
+- Entre todas las combinaciones posibles se elige la de mejor encaje total. El momento dura el tramo entero si cabe en 10-24 s; si no, sus frases.
+
+Medido en la canción sintética con un break de batería y un puente sostenido (`CONTRAST_SONG_SECTIONS`): antigravedad en el break y vuelo en el puente a 90, 120 y 150 BPM; una canción uniforme, ninguno en ninguna dificultad; si solo el clímax suena distinto, Normal lo corre y Difícil lo cambia.
+
+**4. El segundo modo: vuelo** (`systems/modes/fly.js`). Mantener cualquier botón sube; soltar, baja; **en línea recta a 300 unidades/s**, entre el suelo y el techo del pasillo, sin inercia. Por eso las notas mantenidas del chart determinan **un único camino**, y el nivel es un **túnel** que sigue ese camino con la holgura de la dificultad por arriba y por abajo (`systems/flightCourse.js`). Una sola geometría para todo: la partida la dibuja (`entities/FlightTunnel.js`, un `Graphics` por tramo construido una vez) y choca con ella, y el charter la valida. La colisión comprueba los muros en todo el intervalo de tiempo que ocupa el ancho del hitbox, así que una esquina no atraviesa al Dino entre dos pasos de física. Tras el portal, 0.5 s de **boca abierta** (el Dino puede cruzarlo al final de un salto).
+
+Lo que el simulador enseñó al medirlo:
+
+- **Los errores de tiempo se acumulan.** La altura es la suma de todo lo mantenido: empezar tarde y soltar pronto deja al Dino 2 × 300 × tolerancia por debajo, y la nota siguiente hereda el desvío. Con notas pegadas, quien juega con ±55 ms choca a la tercera nota. Regla: **entre notas el camino vuelve al suelo** (el suelo pone el error a cero), con un silencio de lo que tarda en bajar + 4 tolerancias (`flightCharter.js::restEnd`). Con ella, ninguna dificultad falla.
+- La holgura necesaria es **3 × velocidad × tolerancia** (no 1×: soltar pronto baja mientras el camino aún sube) + lo que se inclina el camino a lo ancho del hitbox a la velocidad más lenta del tramo + 10 (`flightMargin`): 53-74 unidades entre Extremo y Normal.
+
+**Notas mantenidas** (`levels/flightCharter.js`): empiezan en huecos de la rejilla con golpe (a contratiempo solo con golpe fuerte y la mecánica desbloqueada), duran hasta el siguiente golpe con cuerpo entre medio beat y dos beats (≤ 1.1 s; sin golpe, un beat), tantas como las acciones por minuto del nivel del arco, con memoria de frases, estreno en el pulso y aterrizaje antes del portal de salida. El validador del charter juega las notas con las tres pautas de tolerancia (el jugador virtual acorta y alarga cada nota) y, ante un choque con el túnel, quita la nota menos importante de las dos últimas.
+
+**5. Formato de chart 4.** El portal del vuelo lleva `margin` (12-120) y hay eventos `{ t, type: 'hold', until }`. Una nota fuera de un tramo de vuelo, solapada o que sigue tras el portal de salida se descarta con aviso. **Un modo desconocido ya no se descarta: lanza `ChartError`** (el tramo se jugaría con otras reglas: sería otro nivel, o uno imposible). `ChartValidator.php` acepta 1-4 y valida `margin` y `until`. `chartStats` cuenta cada nota como una acción con el margen que le deja su túnel. `CHARTER_VERSION = 6`.
+
+**6. En partida.** Portal con las flechas de su modo (antigravedad ↑↓, vuelo ↑↑, correr ↓) y techo del pasillo con la línea en el color de cada modo; muros del túnel con filo dorado que late con el beat; el Dino inclina el morro al subir y al bajar, suelta chispas doradas mientras mantiene y hace squash al posarse; el aviso del HUD usa el texto de cada modo del registro (`hint`: "Mantén Espacio para subir" / "Mantén el dedo en la pantalla para subir") y cada modo lleva su propia cuenta de las 3 primeras partidas; pulsar en el golpe de una nota da el destello de "en el golpe"; la victoria y "¡Superado!" esperan también a salir del túnel; al volver de una pausa nada se da por mantenido (una tecla soltada con la pestaña oculta no llega).
+
+**Los 8 oficiales con el charter 6** (dificultad del manifiesto; velocidades y lectura como en la 6a):
+
+| Oficial (dificultad) | Duración | Acciones | Momentos | Acciones/min | Estrellas |
+|---|---|---|---|---|---|
+| Sugar Red (Normal) | 0:40 | 27 | — (corta) | 46 · pico 48 | 3★ (medida 3★) |
+| Last Christmas (Relajado) | 0:39 | 12 | — | 20 · pico 21 | 1★ (medida 1★) |
+| HOPE (Fácil) | 1:19 | 36 | — (ningún tramo encaja) | 30 · pico 36 | 2★ (medida 2★) |
+| Running With the Wolves (Normal) | 2:44 | 120 (7 cristales) | antigravedad en el **puente** (1:59) | 46 · pico 72 | 3★ (medida 4★) |
+| Time (Fácil) | 2:46 | 88 (8) | antigravedad 1:14 | 33 · pico 51 | 2★ (medida 2★) |
+| Mi Fiesta (Difícil) | 3:14 | 171 | — (suena uniforme) | 55 · pico 75 | 4★ (medida 4★) |
+| Dawn of Faith (Difícil) | 3:17 | 126 (9) + 4 notas | **vuelo** 1:28 · antigravedad en el clímax 2:00 | 44 · pico 63 | 4★ (medida 3★) |
+| What's Up Danger (Extremo) | 3:36 | 187 (26) + 4 notas | **vuelo** en el break de 2:11 · antigravedad en el clímax 2:52 | 55 · pico 78 | 5★ (medida 4★) |
+
+What's Up Danger pasa de 3 tramos de antigravedad (79 de 205 acciones) a **dos momentos distintos**; en Normal, solo el vuelo del break. En las cinco dificultades de los 8 oficiales hay niveles sin modos, con uno y con los dos.
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **238 JS** (+19: `flight.test.mjs` 10, `song-character.test.mjs` 5, `tiling.test.mjs` 2; `modes.test.mjs` reescrito para el reparto; vuelo en el bucle de frame), **70 PHP** (+1: formato 4), **104 Python** (sin cambios) |
+| 8 oficiales × 5 dificultades (40 charts) | jugables con la tolerancia de su dificultad, con portales y túneles, **0 reparaciones**, ≤ 2 momentos, cada modo una vez, ninguno fuera de su dificultad ni en un clímax que no le toca, 6-290 ms por chart |
+| E2E What's Up Danger (Extremo, 1280×720, bot con pulsaciones y notas fechadas) | **victoria al 100 %**, 263 entradas; vuelo 131.6-144.2 s y antigravedad 172.1-192.3 s en su instante; aviso "Vuelo · Mantén Espacio para subir" antes del portal; capturas del túnel subiendo y bajando |
+| E2E Dawn of Faith móvil (844×390, táctil emulado, notas con `TouchEvent` reales del manejador) | aviso "Mantén el dedo en la pantalla para subir"; tres notas tocadas 6-15 ms tarde, superadas; **la cuarta sin tocar choca con el muro** (98.7 s): la colisión del túnel está cableada |
+| E2E Time (techo de la antigravedad) | fase de la textura del techo fija respecto al mundo en 455 frames, sin recortar y recortado |
+| Consola | 0 errores de JS (solo el 401 del arranque anónimo y el favicon) |
+| Bundle | **186.09 KB gzip** (+5.89); por debajo del límite de 200 KB, pero ya cerca |
+| Oficiales y comunidad | los 8 re-horneados y re-sembrados; los 3 de la comunidad re-charteados por el worker (`--charter-below=6`) |
+
+**Decisiones (vinculantes):**
+
+- **Un modo es un evento de la canción, no una rutina**: aparece donde un tramo suena distinto y encaja con su forma de jugarse, como mucho una vez por nivel; una canción sin contraste no tiene momentos. Sustituye "hasta tres tramos donde vuelve el estribillo" de la 6a.
+- **Qué modos existen lo decide la dificultad** (Fácil sin vuelo, clímax solo desde Difícil) y **cuántos momentos, la duración**.
+- **Añadir un modo** = su archivo en `systems/modes/` + su entrada en `MODE_CASTING` (con qué carácter encaja) + su lugar en `modes` de cada dificultad + sus kinds o su propio charter. El reparto, el formato y el runtime genéricos no se tocan.
+- **Los modos de control continuo se validan como túneles deterministas**: movimiento sin inercia, camino único derivado de las notas, muros con la holgura de la tolerancia, y vuelta a un estado de error cero (el suelo) entre notas.
+- **Una misma geometría para dibujar, chocar y validar** (`flightCourse.js`).
+- **Un modo desconocido en un chart es un error**, no un aviso.
+
+**Limitaciones que quedan:**
+
+- **El playtest humano manda**: si el vuelo (4 notas en 12-13 s en los oficiales) sabe a poco o a mucho, si la antigravedad en un puente pasivo (RWTW, 7 cristales) convence, y si los umbrales del reparto aciertan con canciones de la comunidad. Todo en tablas: `MODE_RULES` y `MODE_CASTING` (modePlan.js), `modes`/`moments` (difficulty.js), `FLY_RULES` (flightCharter.js), `CHARACTER_RULES` (songCharacter.js), `FLY_MODE`/`FLY_JET` (config.js). Cualquier cambio de charter sube `CHARTER_VERSION`.
+- **La vuelta al suelo limita la densidad del vuelo** (una nota cada ~1.5-2 s). Un jugador humano corrige mirando el túnel y no acumula error como el jugador virtual de guion; tratar el vuelo con un jugador virtual que reacciona (política) permitiría frases encadenadas. Queda para una ola siguiente.
+- El bot de los E2E juega por el reloj: no prueba si el túnel **se lee** bien a la velocidad real; eso solo lo dice una persona.
+- A ~90-96 BPM el clímax de Difícil corriendo sale menos denso que el empuje (dos acciones de correr no caben en beats seguidos a ×1.68): en la 6a lo tapaba una antigravedad en el clímax. El test de densidad por arco usa 104 BPM y lo documenta.
+- El bundle se acerca a los 200 KB: la siguiente ola con código de juego debería medir qué se puede partir.
+
+---
+
+#### Ola 6c — Siguientes momentos (pendiente)
+
+Sobre el reparto y los dos modos, y solo después del playtest de la 6b:
+
+- **Jugador virtual como política** para el vuelo: frases de notas encadenadas sin volver al suelo, validadas con quien corrige mirando.
+- **Anillos y orbes en el aire** (pulsar en el aire para volver a saltar): una acción nueva dentro de correr que rompe el techo de densidad del salto.
+- **Altura de las notas siguiendo la melodía** (contorno melódico; Basic Pitch solo tras medir memoria en un VPS del tamaño real).
+- **Eventos `fx` nuevos** del chart cableados al runtime (hoy `drop` y `lift`).
 
 ---
 
@@ -1141,7 +1227,7 @@ Ola 3 (chart + sincronía) ◀─────────┘
                     │
                     └──> Ola 5 (charter musical)
                                 │
-                                ├──> Ola 6a (bases de modos + antigravedad) ──> Ola 6b (más modos)
+                                ├──> Ola 6a (bases de modos + antigravedad) ──> Ola 6b (reparto + vuelo) ──> Ola 6c
                                 └──> Ola 7 (editor y overrides)
 ```
 

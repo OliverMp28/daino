@@ -35,6 +35,11 @@
 // acelerón marcado; en los compases previos a uno, el suelo late a doble
 // tiempo y su chevrón parpadea; al llegar, ráfaga de líneas de velocidad y
 // marcha nueva, y las líneas siguen más cuanto más rápido va el nivel.
+//
+// Ola 6 — modos de movimiento: los portales del chart cambian las reglas del
+// Dino en su paso de física (antigravedad, vuelo). El vuelo trae su túnel
+// (systems/flightCourse.js): la misma geometría se dibuja (FlightTunnel), se
+// choca aquí y la valida el charter.
 
 import { Dino } from './entities/Dino.js';
 import { Obstacle } from './entities/Obstacle.js';
@@ -46,6 +51,8 @@ import { speedProfileOf } from './systems/speedProfile.js';
 import { obstacleEvents } from './levels/chartFormat.js';
 import { createBurstEmitter } from './entities/ParticleLayer.js';
 import { createModeGates } from './entities/ModeGates.js';
+import { createFlightTunnel } from './entities/FlightTunnel.js';
+import { createFlightCourse } from './systems/flightCourse.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
 import { BODY_EVENT, bodyHitbox, ceilingYOf, computeGroundY, enterMode, integrateBody } from './systems/physics.js';
@@ -57,7 +64,7 @@ import { countModeSeen } from '../ui/settings.js';
 import {
     DT_CAP_S, DINO_SIZE, MODE_COLORS, OBSTACLE_KIND,
     SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
-    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX,
+    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX, FLY_JET,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -139,16 +146,24 @@ export class GameSession {
         this._modes = createModeTimeline(this.chart.events);
         this._modeIdx = 0;
         this._gates = null;
-        this._modeHint = '';
+        /** Cómo se juega cada modo, solo para los que alguien aún está aprendiendo. */
+        this._modeHints = {};
         this._modeCue = '';
+        // Vuelo (Ola 6b): el túnel que dibujan las notas mantenidas.
+        this._course = createFlightCourse(this.chart.events);
+        this._tunnel = null;
+        this._jetT = 0;
         this._climaxGlow = 0;
         this._dropT = Infinity;       // segundos desde el último drop/lift (∞ = ninguno)
         this._momentStrength = 1;     // 1 drop, < 1 lift
         this._momentColor = DROP_FX.overlayColor;
         this._dropOverlay = undefined; // destello del drop, se crea en el primero
         this._cleared = false;        // ya no quedan obstáculos por cruzar
-        /** Obstáculos por instante de acción, para reconocer pulsaciones en el golpe. */
-        this._onBeatTargets = obstacleEvents(this.chart).map((e) => ({ t: e.t, action: OBSTACLE_KIND[e.kind].action, claimed: false }));
+        /** Obstáculos y notas del vuelo por instante de acción, para reconocer pulsaciones en el golpe. */
+        this._onBeatTargets = [
+            ...obstacleEvents(this.chart).map((e) => ({ t: e.t, action: OBSTACLE_KIND[e.kind].action, claimed: false })),
+            ...this._course.spans.flatMap((s) => s.holds.map((h) => ({ t: h.t, action: 'hold', claimed: false }))),
+        ].sort((a, b) => a.t - b.t);
         this._onBeatCursor = 0;
         // Física a paso fijo sincronizada con el reloj de la canción.
         this._physics = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
@@ -189,6 +204,9 @@ export class GameSession {
         // el Dino atraviesa el portal, no pasa por delante.
         this._gates = createModeGates({ changes: this._modes.changes, speed: this._speed });
         layers.gameLayer.addChildAt(this._gates.container, 0);
+        // Muros del vuelo, detrás de los portales (el aro se ve delante del túnel).
+        this._tunnel = createFlightTunnel({ course: this._course, speed: this._speed });
+        layers.gameLayer.addChildAt(this._tunnel.container, 0);
 
         // Bursts (polvo de aterrizaje, estallido de muerte) sobre el gameLayer.
         this._bursts = createBurstEmitter(layers.gameLayer);
@@ -205,11 +223,13 @@ export class GameSession {
             this._hintsShown = true;
         }
         // Las primeras veces que alguien se encuentra un modo, su aviso explica
-        // cómo se juega (en táctil, tocar; con teclado, la tecla).
-        const newModes = [...new Set(this._modes.changes.map((c) => c.mode))].filter((m) => m !== 'run');
-        if (newModes.length > 0 && newModes.some((m) => countModeSeen(m) <= MODE_FX.hintRuns)) {
-            const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-            this._modeHint = touch ? 'Toca para invertir la gravedad' : 'Espacio: invertir la gravedad';
+        // cómo se juega (en táctil, tocar; con teclado, la tecla). Cada modo lleva
+        // su cuenta y su texto (systems/modes/).
+        const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+        for (const m of new Set(this._modes.changes.map((c) => c.mode))) {
+            if (m === 'run' || countModeSeen(m) > MODE_FX.hintRuns) continue;
+            const hint = MOVEMENT_MODES[m].hint;
+            this._modeHints[m] = touch ? hint.touch : hint.keys;
         }
         this.hud.setRoadmap?.({
             durationSec: this._durationSec,
@@ -241,8 +261,13 @@ export class GameSession {
         Input.on('duckEnd', this._duckEndHandler);
 
         // Pausa/resume vienen del AudioEngine (statechange + Page Visibility).
+        // Al volver, nada se da por mantenido: una tecla soltada con la pestaña
+        // oculta no llega, y el Dino subiría solo hasta el techo del túnel.
         this._pauseHandler = () => { this._isPaused = true; };
-        this._resumeHandler = () => { this._isPaused = false; };
+        this._resumeHandler = () => {
+            this._isPaused = false;
+            if (this.dino !== null) this.dino.flyHeld = 0;
+        };
         window.addEventListener('audio:pause', this._pauseHandler);
         window.addEventListener('audio:resume', this._resumeHandler);
 
@@ -346,6 +371,7 @@ export class GameSession {
         // portales y el techo del modo, con la misma fórmula.
         this.spawner.tick(songTime, dt, { width: view.width, groundY });
         this._gates.tick(songTime, dt, { width: view.width, groundY });
+        this._tunnel.tick(songTime, { width: view.width, groundY });
 
         if (collided) {
             this._startDeath();
@@ -384,6 +410,25 @@ export class GameSession {
             }
         }
 
+        // Propulsión: mientras se mantiene en vuelo, chispas desde la cola.
+        if (this.dino.mode === 'fly' && this.dino.flyHeld > 0 && !this.engine.reducedMotion) {
+            this._jetT += dt;
+            if (this._jetT >= FLY_JET.periodS) {
+                this._jetT = 0;
+                this._bursts.burst({
+                    x: this.dino.x + 14,
+                    y: this.dino.y + DINO_SIZE.h - 12,
+                    count: 1,
+                    color: FLY_JET.color,
+                    speedMin: FLY_JET.speedMin,
+                    speedMax: FLY_JET.speedMax,
+                    gravity: 260,
+                    lifeS: FLY_JET.lifeS,
+                    upBias: -0.6,
+                });
+            }
+        }
+
         // Score: por ahora, score = floor(tiempo de canción * 100).
         this._score = Math.floor(shownTime * 100);
         this.hud.update(this._score, Math.min(shownTime, this._durationSec), this._durationSec);
@@ -391,7 +436,7 @@ export class GameSession {
         // Victoria: la canción terminó Y no queda ningún obstáculo por cruzar.
         // Antes bastaba con que acabara el audio, y como los obstáculos
         // llegaban tarde se ganaba con varios todavía en pantalla.
-        if (songTime >= this._durationSec && !this.spawner.hasPendingCrossing(songTime)) {
+        if (songTime >= this._durationSec && !this.spawner.hasPendingCrossing(songTime) && songTime >= this._course.lastEnd) {
             this._finalSongTime = this._durationSec;
             this._end('win');
         }
@@ -422,6 +467,7 @@ export class GameSession {
         const active = this.spawner.getActive();
         for (let i = 0; i < active.length; i++) active[i].setBeat?.(pulse);
         this._gates.setBeat(pulse);
+        this._tunnel.setBeat(pulse);
         this._tickModeCue(shownTime);
 
         const fired = this._director.update(shownTime, dt);
@@ -485,7 +531,8 @@ export class GameSession {
         this.hud.setPhase?.(this._cleared ? 'cleared' : (this._director.climax ? 'climax' : ''));
 
         // ¡Superado! Ningún obstáculo por cruzar: la canción termina de sonar.
-        if (!this._cleared && this._onBeatTargets.length > 0 && !this.spawner.hasPendingCrossing(songTime - 0.15)) {
+        // (Un túnel de vuelo también hay que cruzarlo entero.)
+        if (!this._cleared && this._onBeatTargets.length > 0 && !this.spawner.hasPendingCrossing(songTime - 0.15) && songTime - 0.15 >= this._course.lastEnd) {
             this._onCleared();
         }
     }
@@ -516,7 +563,7 @@ export class GameSession {
             state,
             label: state === '' ? '' : MOVEMENT_MODES[shown].label,
             color: MODE_COLORS[shown] ?? MODE_COLORS.run,
-            hint: state === 'warn' && shown !== 'run' ? this._modeHint : '',
+            hint: state === 'warn' && shown !== 'run' ? (this._modeHints[shown] ?? '') : '',
         });
     }
 
@@ -609,11 +656,12 @@ export class GameSession {
      * destello a los pies del Dino. Enseña sin palabras que el nivel está hecho
      * sobre la música y que pulsar SOBRE el golpe es la jugada.
      *
-     * En antigravedad cualquier botón invierte, así que cualquiera cuenta.
+     * En antigravedad cualquier botón invierte y en vuelo cualquiera sube, así
+     * que en esos modos cualquiera cuenta.
      */
     _checkOnBeat(input, at) {
         const targets = this._onBeatTargets;
-        const matches = (action) => (action === 'flip' ? true : action === (input === 'duckStart' ? 'duck' : 'jump'));
+        const matches = (action) => (action === 'flip' || action === 'hold' ? true : action === (input === 'duckStart' ? 'duck' : 'jump'));
         while (this._onBeatCursor < targets.length && targets[this._onBeatCursor].t < at - ON_BEAT.windowS) this._onBeatCursor++;
         for (let i = this._onBeatCursor; i < targets.length && targets[i].t <= at + ON_BEAT.windowS; i++) {
             const target = targets[i];
@@ -718,7 +766,10 @@ export class GameSession {
             if (events & BODY_EVENT.BUFFERED) dino.onGesture(dino.mode === 'flip' ? 'flip' : 'jump');
         }
 
-        return this.spawner.collisionAt(bodyHitbox(dino, this._hitbox), t, groundY) !== null;
+        const box = bodyHitbox(dino, this._hitbox);
+        if (this.spawner.collisionAt(box, t, groundY) !== null) return true;
+        // Muros del túnel del vuelo, con la anchura del hitbox (flightCourse.js).
+        return !this._course.empty && this._course.collisionAt(box, t, groundY, this._speed.speedAt(t));
     }
 
     /** Impacto: congela el mundo, corta el audio en seco y arma el juice. */
@@ -875,6 +926,7 @@ export class GameSession {
 
         if (this.spawner) this.spawner.dispose();
         if (this._gates) this._gates.dispose();
+        if (this._tunnel) this._tunnel.dispose();
         if (this._bursts) this._bursts.dispose();
         if (this.hud) this.hud.dispose();
         if (this.dino) {
@@ -888,5 +940,6 @@ export class GameSession {
         this.hud = null;
         this._bursts = null;
         this._gates = null;
+        this._tunnel = null;
     }
 }

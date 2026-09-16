@@ -167,10 +167,15 @@ export function makeSyntheticAnalysis(opts = {}) {
  * patrón de fuerzas (para la memoria de frases); si no, las fuerzas varían un
  * poco de compás a compás.
  *
+ * `perc` (Ola 6b) en una sección es la percusividad de sus golpes, como la mide
+ * el analizador 2 (`onsetPercussive`): alta en un break de batería, baja en un
+ * pasaje de notas sostenidas. Si alguna sección la declara, el análisis la
+ * incluye y las demás usan `DEFAULT_PERC`.
+ *
  * @param {{ bpm?: number, meter?: number, firstBeatS?: number, seed?: number,
  *           tailBeats?: number,
  *           sections?: Array<{ bars: number, energy: number, hits?: number, role?: string,
- *                              cluster?: string, silent?: boolean, riff?: boolean }> }} [opts]
+ *                              cluster?: string, silent?: boolean, riff?: boolean, perc?: number }> }} [opts]
  */
 export function makeSyntheticSong(opts = {}) {
     const bpm = opts.bpm ?? 120;
@@ -183,19 +188,24 @@ export function makeSyntheticSong(opts = {}) {
     const downbeats = [];
     const onsets = [];
     const onsetColor = [];
+    const onsetPercussive = [];
+    const withPerc = sections.some((s) => Number.isFinite(s.perc));
     const outSections = [];
     const energySpans = [];
     let t = opts.firstBeatS ?? 0.5;
 
+    let perc = DEFAULT_PERC;
     const hit = (time, strength, color) => {
         onsets.push([round3(time), round3(Math.min(1, strength))]);
         onsetColor.push(color);
+        onsetPercussive.push(perc);
     };
 
     for (let si = 0; si < sections.length; si++) {
         const s = sections[si];
         const start = si === 0 ? 0 : t;
         const hits = s.hits ?? 0.6;
+        perc = s.perc ?? DEFAULT_PERC;
         let hitCount = 0;
         for (let b = 0; b < s.bars; b++) {
             for (let k = 0; k < meter; k++) {
@@ -250,6 +260,7 @@ export function makeSyntheticSong(opts = {}) {
         beatPeriodS: period,
         onsets,
         onsetColor,
+        ...(withPerc ? { onsetPercussive } : {}),
         beats,
         downbeats,
         meter,
@@ -269,6 +280,9 @@ export function makeSyntheticSong(opts = {}) {
     };
 }
 
+/** Percusividad de los golpes de una sección que no la declara. */
+export const DEFAULT_PERC = 0.5;
+
 /** Forma pop típica: intro, estrofa, estribillo, estrofa, estribillo, puente, estribillo final, outro. */
 export const DEFAULT_SONG_SECTIONS = Object.freeze([
     { bars: 8, energy: 0.25, hits: 0.3, role: 'intro', cluster: 'A' },
@@ -277,6 +291,25 @@ export const DEFAULT_SONG_SECTIONS = Object.freeze([
     { bars: 12, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
     { bars: 8, energy: 0.85, hits: 0.95, role: 'chorus', cluster: 'C' },
     { bars: 8, energy: 0.3, hits: 0.25, role: 'bridge', cluster: 'D' },
+    { bars: 8, energy: 0.9, hits: 1, role: 'chorus', cluster: 'C' },
+    { bars: 6, energy: 0.2, hits: 0.2, role: 'outro', cluster: 'A' },
+]);
+
+/**
+ * Canción con dos momentos que suenan distintos al resto (Ola 6b): un break de
+ * batería (golpes densos y muy percusivos) y un puente sostenido (pocos golpes,
+ * poco percusivos, en calma). El reparto de modos debe poner la antigravedad en
+ * el break y el vuelo en el puente. A 120 BPM dura 2:54.
+ */
+export const CONTRAST_SONG_SECTIONS = Object.freeze([
+    { bars: 8, energy: 0.25, hits: 0.3, role: 'intro', cluster: 'A' },
+    { bars: 12, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+    { bars: 8, energy: 0.8, hits: 0.9, role: 'chorus', cluster: 'C' },
+    { bars: 12, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+    { bars: 8, energy: 0.75, hits: 1, role: 'break', cluster: 'D', perc: 0.95 },
+    { bars: 8, energy: 0.8, hits: 0.9, role: 'chorus', cluster: 'C' },
+    { bars: 8, energy: 0.55, hits: 0.55, role: 'verse', cluster: 'B' },
+    { bars: 8, energy: 0.3, hits: 0.25, role: 'bridge', cluster: 'E', perc: 0.12 },
     { bars: 8, energy: 0.9, hits: 1, role: 'chorus', cluster: 'C' },
     { bars: 6, energy: 0.2, hits: 0.2, role: 'outro', cluster: 'A' },
 ]);

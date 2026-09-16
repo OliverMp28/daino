@@ -81,6 +81,39 @@ test('ChartValidator acepta el formato 3 (Ola 6) con portales de modo, y solo ah
     }
 });
 
+test('ChartValidator acepta el formato 4 (Ola 6b) con vuelo y notas mantenidas, y solo ahí', function (): void {
+    $s = sha('a');
+    $raw = chartV2For($s);
+    $raw['formatVersion'] = 4;
+    $raw['events'][] = ['t' => 30.0, 'type' => 'mode', 'mode' => 'fly', 'margin' => 63];
+    $raw['events'][] = ['t' => 31.5, 'type' => 'hold', 'until' => 32.2];
+    $raw['events'][] = ['t' => 45.0, 'type' => 'mode', 'mode' => 'run'];
+    $decoded = json_decode(ChartValidator::validateChart($raw, $s)['json'], true);
+
+    assertSame(4, $decoded['formatVersion']);
+    $flight = array_values(array_filter($decoded['events'], static fn (array $e): bool => in_array($e['type'], ['mode', 'hold'], true)));
+    assertSame([
+        ['t' => 30.0, 'type' => 'mode', 'mode' => 'fly', 'margin' => 63.0],
+        ['t' => 31.5, 'type' => 'hold', 'until' => 32.2],
+        ['t' => 45.0, 'type' => 'mode', 'mode' => 'run'],
+    ], $flight);
+
+    $last = static fn (array $c): int => count($c['events']) - 2;
+    $cases = [
+        'nota en un chart de formato 3' => static function (array $c): array { $c['formatVersion'] = 3; return $c; },
+        'nota sin until'                => static function (array $c) use ($last): array { unset($c['events'][$last($c)]['until']); return $c; },
+        'nota que acaba antes de empezar' => static function (array $c) use ($last): array { $c['events'][$last($c)]['until'] = 31.0; return $c; },
+        'nota más allá de la canción'   => static function (array $c) use ($last): array { $c['events'][$last($c)]['until'] = 9999.0; return $c; },
+        'holgura del túnel absurda'     => static function (array $c) use ($last): array { $c['events'][$last($c) - 1]['margin'] = 5000; return $c; },
+        'holgura del túnel no numérica' => static function (array $c) use ($last): array { $c['events'][$last($c) - 1]['margin'] = 'ancho'; return $c; },
+    ];
+    foreach ($cases as $label => $mutate) {
+        assertThrows(ValidationException::class, fn () => ChartValidator::validateChart($mutate($raw), $s), function ($e) use ($label): void {
+            assertTrue(isset($e->fields['chart']), "{$label}: el error debe señalar el campo chart");
+        });
+    }
+});
+
 test('ChartValidator rechaza campos de formato 2 mal formados', function (): void {
     $s = sha('a');
     $mutations = [
@@ -103,7 +136,7 @@ test('ChartValidator rechaza charts inválidos o peligrosos', function (): void 
     $s = sha('a');
     $cases = [
         'no objeto'              => [[1, 2, 3], $s],
-        'formato futuro'         => [array_merge(chartFor($s), ['formatVersion' => 4]), $s],
+        'formato futuro'         => [array_merge(chartFor($s), ['formatVersion' => ChartValidator::CHART_FORMAT_VERSION + 1]), $s],
         'otro audio'             => [chartFor(sha('b')), $s],
         'duración absurda'       => [array_replace_recursive(chartFor($s), ['audio' => ['durationSec' => 999999]]), $s],
         'velocidad como texto'   => [array_replace_recursive(chartFor($s), ['world' => ['speedPxS' => '437']]), $s],

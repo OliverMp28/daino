@@ -41,6 +41,7 @@ import {
     DINO_CENTER_X,
 } from './physics.js';
 import { modeChanges } from './modeTimeline.js';
+import { createFlightCourse } from './flightCourse.js';
 import { asSpeedProfile, speedProfileOf } from './speedProfile.js';
 import { virtualPlayerScript } from './virtualPlayer.js';
 
@@ -98,6 +99,18 @@ export function toSimObstacles(events) {
 }
 
 /**
+ * Notas mantenidas (vuelo, Ola 6b) de una lista de eventos, en orden.
+ * @param {Array<{ t: number, type: string, until?: number }>} events
+ * @returns {Array<{ t: number, until: number }>}
+ */
+export function toSimHolds(events) {
+    return events
+        .filter((e) => e.type === 'hold' && Number.isFinite(e.t) && Number.isFinite(e.until) && e.until > e.t)
+        .map((e) => ({ t: e.t, until: e.until }))
+        .sort((a, b) => a.t - b.t);
+}
+
+/**
  * Cambios de modo de una lista de eventos, listos para `opts.modes`.
  * @param {Array<{ t: number, type: string, mode?: string }>} events
  * @returns {Array<{ t: number, mode: string }>}
@@ -112,14 +125,20 @@ export function toSimModes(events) {
  * @param {SimObstacle[]} obstacles
  * @param {number | import('./speedProfile.js').SpeedProfile} speed
  *        Velocidad constante o perfil de velocidad del nivel (Ola 5).
- * @param {{ dt?: number, pressOffset?: (index: number) => number, modes?: Array<{ t: number, mode: string }> }} [opts]
+ * @param {{ dt?: number, pressOffset?: (index: number) => number, modes?: Array<{ t: number, mode: string }>,
+ *           holds?: Array<{ t: number, until: number }>, course?: ReturnType<typeof createFlightCourse> | null }} [opts]
  *        `pressOffset(i)` desplaza la pulsación del obstáculo i (segundos;
  *        negativo = se adelanta). Por defecto 0: jugador perfecto.
  *        `modes`: cambios de modo del nivel en orden (toSimModes). Sin ellos, se corre.
+ *        `holds` y `course` (Ola 6b): notas mantenidas del vuelo y su túnel. Un
+ *        choque con el túnel se atribuye a la nota más reciente (índice `n + 2k`).
  * @returns {{ ok: true } | { ok: false, index: number, t: number, atSongTime: number }}
  */
 export function simulateRun(obstacles, speed, opts = {}) {
-    if (obstacles.length === 0) return { ok: true };
+    const holds = opts.holds ?? [];
+    const course = opts.course ?? null;
+    // Sin nada que jugar no hay choque posible; con un túnel sí (no pulsar es chocar).
+    if (obstacles.length === 0 && holds.length === 0 && (course === null || course.empty)) return { ok: true };
 
     const dt = opts.dt ?? DEFAULT_DT;
     const profile = asSpeedProfile(speed);
@@ -132,7 +151,7 @@ export function simulateRun(obstacles, speed, opts = {}) {
         for (let i = 0; i < obstacles.length; i++) crossD[i] = profile.distanceAt(obstacles[i].cross);
     }
 
-    const script = virtualPlayerScript(obstacles, profile, opts.pressOffset);
+    const script = virtualPlayerScript(obstacles, profile, opts.pressOffset, holds);
     const body = bodyState(SIM_GROUND_Y);
 
     // Ventana de obstáculos que pueden tocar al Dino en este instante: los que
@@ -150,8 +169,20 @@ export function simulateRun(obstacles, speed, opts = {}) {
     let inputIdx = 0;
     let modeIdx = 0;
 
-    const startT = Math.min(script[0].at, obstacles[0].cross - reachS) - 0.25;
-    const endT = obstacles[obstacles.length - 1].cross + reachS + 0.25;
+    const flying = course !== null && !course.empty;
+    let startT = script.length > 0 ? script[0].at : Infinity;
+    let endT = -Infinity;
+    if (obstacles.length > 0) {
+        startT = Math.min(startT, obstacles[0].cross - reachS);
+        endT = obstacles[obstacles.length - 1].cross + reachS;
+    }
+    if (flying) {
+        startT = Math.min(startT, course.spans[0].tIn);
+        endT = Math.max(endT, course.lastEnd);
+    }
+    startT -= 0.25;
+    endT += 0.25;
+    let holdIdx = -1;   // última nota que ya empezó (para atribuir un choque con el túnel)
 
     for (let tau = startT; tau <= endT; tau += dt) {
         // Mismo orden que GameSession: primero el portal, después las pulsaciones.
@@ -159,12 +190,20 @@ export function simulateRun(obstacles, speed, opts = {}) {
         while (inputIdx < script.length && script[inputIdx].at <= tau) applyInput(body, script[inputIdx++].input);
 
         integrateBody(body, dt, SIM_GROUND_Y);
+        bodyHitbox(body, dh);
+
+        if (flying) {
+            while (holdIdx + 1 < holds.length && holds[holdIdx + 1].t <= tau) holdIdx++;
+            if (course.collisionAt(dh, tau, SIM_GROUND_Y, profile.speedAt(tau))) {
+                const k = Math.max(0, holdIdx);
+                return { ok: false, index: obstacles.length + 2 * k, t: holds[k]?.t ?? tau, atSongTime: tau };
+            }
+        }
 
         while (hi < obstacles.length && obstacles[hi].cross <= tau + reachS) hi++;
         while (lo < hi && obstacles[lo].cross < tau - reachS) lo++;
         if (lo === hi) continue;
 
-        bodyHitbox(body, dh);
         const nowD = profile.distanceAt(tau);
         for (let i = lo; i < hi; i++) {
             const o = obstacles[i];
@@ -260,11 +299,11 @@ export function validatePlayability(obstacles, speed, opts = {}) {
         const reader = obstacles.map((o) => readerOffsetS(profile, o.t, o.cross - o.t, adaptS));
         // Solo si la vista se equivoca en algún obstáculo añade algo jugarlo así.
         if (reader.some((e) => Math.abs(e) > 1e-4)) {
-            for (const [name, offset] of patterns) runs.push([`vista-${name}`, (i) => reader[i] + offset(i)]);
+            for (const [name, offset] of patterns) runs.push([`vista-${name}`, (i) => (reader[i] ?? 0) + offset(i)]);
         }
     }
     for (const [name, pressOffset] of runs) {
-        const r = simulateRun(obstacles, profile, { dt: opts.dt, pressOffset, modes: opts.modes });
+        const r = simulateRun(obstacles, profile, { dt: opts.dt, pressOffset, modes: opts.modes, holds: opts.holds, course: opts.course });
         if (!r.ok) return { ok: false, index: r.index, t: r.t, pattern: name };
     }
     return { ok: true };
@@ -279,7 +318,13 @@ export function validatePlayability(obstacles, speed, opts = {}) {
  * @param {{ toleranceS?: number, dt?: number, adaptS?: number }} [opts]
  */
 export function validateChart(chart, opts = {}) {
-    return validatePlayability(toSimObstacles(chart.events), speedProfileOf(chart), { ...opts, modes: toSimModes(chart.events) });
+    const course = createFlightCourse(chart.events);
+    return validatePlayability(toSimObstacles(chart.events), speedProfileOf(chart), {
+        ...opts,
+        modes: toSimModes(chart.events),
+        holds: toSimHolds(chart.events),
+        course: course.empty ? null : course,
+    });
 }
 
 /** Resolución del barrido de `timingWindowS`: 5 ms, por debajo de un frame. */

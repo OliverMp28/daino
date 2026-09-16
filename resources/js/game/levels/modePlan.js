@@ -1,29 +1,31 @@
-// Plan de modos — en qué tramos de la canción cambian las reglas del cuerpo (Ola 6).
+// Plan de modos — qué momentos de la canción cambian las reglas del cuerpo, y con qué modo (Ola 6).
 //
-// Un modo de movimiento no es un obstáculo más: es un MOMENTO del nivel. Por eso
-// se decide con la estructura de la canción, antes de colocar ninguna acción,
-// como las marchas de velocidad:
+// Un modo de movimiento no es un obstáculo más: es un MOMENTO del nivel, y se
+// decide con la canción antes de colocar ninguna acción, como las marchas.
 //
-//   1. Dónde: tramos que suenan con cuerpo (groove o más), pasado el primer
-//      tramo de aprendizaje. El modo cubre frases completas desde que empieza el
-//      tramo, entre 12 y 24 s: un momento, no media canción (en un tema a 65 BPM
-//      16 compases son 44 s).
-//   2. En qué orden: primero el ESTRENO (el primer tramo posible), después el
-//      CLÍMAX si la dificultad lo permite (lo más intenso del nivel con las
-//      reglas cambiadas) y después el material del primer tramo que empuja
-//      (típicamente, el estribillo). Cada vez que ese material vuelve, vuelve su
-//      modo: el jugador aprende que "el estribillo es la antigravedad" y lo
-//      espera, igual que la memoria de frases repite los patrones de un riff.
-//   3. Cuántas veces y desde cuándo: lo decide la dificultad (difficulty.js,
-//      `modes`). Relajado no cambia de reglas; en Normal el clímax sigue siendo
-//      correr a toda velocidad; en Difícil y Extremo el modo también puede ser
-//      el clímax. Entre dos tramos de modo se corre al menos 16 s.
-//   4. Cómo se entra y se sale: por un portal en la anacrusa del primer compás
-//      (el mismo instante que un acelerón, `pickupTime`), nunca encima de una
-//      acción. Antes del portal la última acción deja pasar su obstáculo; después
-//      el Dino tiene tiempo de asentarse (`settleS` de cada modo). La primera vez
-//      que aparece un modo en la canción, sus primeras acciones esperan y van
-//      espaciadas: se estrena, no se impone.
+// Ola 6a los ponía donde volvía el estribillo, hasta tres veces. Jugado, se sentía
+// repetitivo. Desde la Ola 6b el plan es un REPARTO:
+//
+//   1. Cada tramo tiene un carácter (songCharacter.js): cuánto contrasta con el
+//      resto de la canción y si suena pasivo, épico, sostenido o a golpes.
+//   2. Cada modo declara con qué carácter encaja (MODE_CASTING): la antigravedad,
+//      que se juega a golpes, con los tramos rítmicos y épicos; el vuelo, que se
+//      juega manteniendo, con los pasajes sostenidos y pasivos. Los dos piden
+//      contraste: un modo aparece donde la canción hace algo distinto.
+//   3. Solo entran los encajes claros (`minScore`, `minContrast`). Una canción
+//      que suena igual de principio a fin puede no tener ningún momento: cada
+//      canción es un mundo, y así cada nivel se siente distinto.
+//   4. Cada modo, como mucho UNA vez por nivel: es un evento, no una rutina. La
+//      dificultad decide cuántos momentos caben según la duración (`moments`) y
+//      qué modos existen (Fácil solo antigravedad, Normal+ también vuelo; en
+//      Difícil y Extremo el clímax puede ser uno). Relajado no cambia de reglas.
+//   5. Entre todas las combinaciones posibles se elige la de mejor encaje total.
+//
+// Cómo se entra y se sale: por un portal en la anacrusa del primer compás (el
+// mismo instante que un acelerón, `pickupTime`), nunca encima de una acción. Antes
+// del portal la última acción deja pasar su obstáculo; después el Dino tiene
+// tiempo de asentarse (`settleS` de cada modo), y como cada modo aparece una sola
+// vez, sus primeras acciones siempre esperan y van espaciadas: se estrena.
 //
 // Función pura: mismo arco + misma dificultad ⇒ mismo plan.
 
@@ -31,34 +33,66 @@ import { MOVEMENT_MODES } from '../systems/modes/index.js';
 import { OBSTACLE_KIND } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
 import { pickupTime } from './speedPlan.js';
+import { describeSegments } from './songCharacter.js';
 
 /**
  * Reglas del plan de modos. Cambiar cualquiera altera los charts: sube
  * `CHARTER_VERSION` en chartFormat.js al hacerlo.
  */
 export const MODE_RULES = Object.freeze({
-    /** Un tramo de modo son frases completas de tantos compases… */
+    /** Frases preferidas dentro de un tramo largo, en compases. */
     phraseBars: 4,
     maxBars: 16,
-    /** …que duran entre esto y esto (segundos). */
-    minS: 12,
+    /** Un momento dura entre esto y esto (segundos). */
+    minS: 10,
     maxS: 24,
     /** Ningún modo antes de este segundo ni de esta fracción de la canción. */
     minStartS: 24,
     minStartFraction: 0.2,
-    /** Segundos corriendo como mínimo entre dos tramos de modo: un modo es un momento, no la norma. */
-    minGapS: 16,
+    /** Segundos corriendo como mínimo entre dos momentos. */
+    minGapS: 12,
+    /** Encaje mínimo de un modo con un tramo… */
+    minScore: 0.5,
+    /**
+     * …y contraste mínimo del tramo: sin algo distinto que jugar, no hay momento.
+     * El clímax ya es un momento único de la canción y pide menos (medido en los
+     * oficiales: con 0.28 para todos, un estribillo que vuelve se llevaba el modo
+     * antes que el puente de la misma canción).
+     */
+    minContrast: 0.4,
+    climaxMinContrast: 0.28,
+    /** Golpes o pulsos jugables mínimos en el tramo (en el pulso, con la música sonando). */
+    minPlayableSlots: 8,
     /**
      * Antes de un portal, la última acción del modo que termina deja al menos su
      * adelanto más esto: su obstáculo ya ha pasado cuando cambian las reglas.
      * Medido: bastan 0.20-0.29 s en total (tests/js/modes.test.mjs).
      */
     exitClearS: 0.25,
-    /** Estreno de un modo en la canción: su primera acción, tantos beats tras el portal… */
+    /** Estreno de un modo: su primera acción, tantos beats tras el portal… */
     introBeats: 2,
     /** …y sus primeras acciones, en el pulso y separadas al menos esto. */
     introActions: 2,
     introGapS: 1.1,
+});
+
+/**
+ * Con qué carácter encaja cada modo (songCharacter.js). Añadir un modo = una
+ * entrada aquí además de la de systems/modes/.
+ *
+ *   affinity(c)   Encaje [0,1] con un tramo de carácter `c`.
+ *   minDensity    Densidad de golpes mínima respecto a la típica (un modo que se
+ *                 juega a golpes no cabe en un pasaje casi sin golpes).
+ */
+export const MODE_CASTING = Object.freeze({
+    flip: Object.freeze({
+        affinity: (c) => 0.45 * c.contrast + 0.3 * c.rhythmic + 0.25 * c.epic,
+        minDensity: 0.35,
+    }),
+    fly: Object.freeze({
+        affinity: (c) => 0.45 * c.contrast + 0.4 * c.sustain + 0.15 * Math.max(c.passive, 0.6 * c.epic),
+        minDensity: 0,
+    }),
 });
 
 /**
@@ -69,79 +103,128 @@ export const MODE_RULES = Object.freeze({
  * @property {number} tIn      Portal de entrada (anacrusa de bar0).
  * @property {number} tOut     Portal de salida (anacrusa de bar1).
  * @property {number} at       Primer tiempo de bar0.
- * @property {boolean} first   Primera vez que aparece este modo en la canción.
+ * @property {boolean} first   Primera vez que aparece este modo en la canción (siempre, desde la Ola 6b).
+ * @property {number} score    Encaje del modo con el tramo.
+ * @property {number} segment  Tramo del arco.
+ * @property {import('./songCharacter.js').SegmentCharacter} character
+ * @property {number} [margin] Holgura del túnel (vuelo); la pone el charter.
  */
+
+/**
+ * Cuántos momentos caben en una canción de `durationSec` con una dificultad.
+ * @param {{ moments?: number[] }} profile  `moments[k]` = duración mínima para k+1 momentos.
+ */
+export function momentBudget(profile, durationSec) {
+    const thresholds = profile.moments ?? [];
+    let n = 0;
+    for (const minS of thresholds) if (durationSec >= minS) n++;
+    return n;
+}
 
 /**
  * @param {object} p
  * @param {ReturnType<import('./songArc.js').buildSongArc>} p.arc
  * @param {ReturnType<import('./musicModel.js').buildMusicModel>} p.model
- * @param {{ modes?: Record<string, { from: number, segments: number, climax: boolean }> }} p.profile
- * @param {(stage: number) => number} p.stageTime  Instante de cada etapa del arco (unlockSchedule).
- * @param {number} p.tMax                          Última acción posible del nivel.
+ * @param {{ modes?: Record<string, { climax: boolean }>, moments?: number[] }} p.profile
+ * @param {number} p.tMax  Última acción posible del nivel.
  * @returns {ModeSpan[]}  En orden temporal.
  */
-export function planModes({ arc, model, profile, stageTime, tMax }) {
+export function planModes({ arc, model, profile, tMax }) {
     const R = MODE_RULES;
+    const budget = momentBudget(profile, model.durationSec);
+    const allowed = Object.entries(profile.modes ?? {}).filter(([id]) => MOVEMENT_MODES[id] !== undefined && MODE_CASTING[id] !== undefined);
+    if (budget <= 0 || allowed.length === 0 || arc.segments.length === 0 || model.bars.length === 0) return [];
+
+    const characters = describeSegments(model, arc);
+    const from = Math.max(R.minStartS, model.durationSec * R.minStartFraction);
+
+    const candidates = [];
+    for (const seg of arc.segments) {
+        const c = characters[seg.index];
+        if (seg.index === 0 || seg.level < 1 || seg.t0 < from - 1e-6) continue;
+        if (c.contrast < (seg.climax ? R.climaxMinContrast : R.minContrast)) continue;
+        const span = spanOf(model, seg, tMax);
+        if (span === null || playableSlots(model, span) < R.minPlayableSlots) continue;
+        for (const [modeId, rule] of allowed) {
+            const cast = MODE_CASTING[modeId];
+            if (seg.climax && !rule.climax) continue;
+            if (c.density < cast.minDensity) continue;
+            const score = round3(cast.affinity(c));
+            if (score < R.minScore) continue;
+            candidates.push({ mode: modeId, segment: seg.index, character: c, score, ...span });
+        }
+    }
+
+    const best = bestCombination(candidates, budget);
     const bars = model.bars;
-    if (arc.segments.length === 0 || bars.length === 0) return [];
-
-    /** @type {ModeSpan[]} */
-    const chosen = [];
-    for (const [modeId, rule] of Object.entries(profile.modes ?? {})) {
-        if (MOVEMENT_MODES[modeId] === undefined || !(rule.segments > 0)) continue;
-        const from = Math.max(stageTime(rule.from), R.minStartS, model.durationSec * R.minStartFraction);
-
-        const candidates = [];
-        for (const seg of arc.segments) {
-            if (seg.index === 0 || seg.level < 2 || (seg.climax && !rule.climax) || seg.t0 < from - 1e-6) continue;
-            const span = spanOf(model, seg, tMax);
-            if (span !== null) candidates.push({ seg, ...span });
-        }
-        if (candidates.length === 0) continue;
-
-        // Estreno, clímax y, después, el material del primer tramo que empuja
-        // antes que el resto (ver cabecera).
-        const anchor = candidates.find((c) => c.seg.level >= 3) ?? candidates[0];
-        const ordered = [
-            candidates[0],
-            ...candidates.filter((c) => c.seg.climax),
-            ...candidates.filter((c) => c.seg.cluster === anchor.seg.cluster),
-            ...candidates,
-        ];
-        let count = 0;
-        for (const c of ordered) {
-            if (count >= rule.segments) break;
-            const clash = chosen.some((o) => c.tIn < o.tOut + R.minGapS && o.tIn < c.tOut + R.minGapS);
-            if (clash) continue;
-            chosen.push({ mode: modeId, bar0: c.bar0, bar1: c.bar1, tIn: round3(c.tIn), tOut: round3(c.tOut), at: round3(bars[c.bar0].t0), first: false });
-            count++;
-        }
-    }
-
-    chosen.sort((a, b) => a.bar0 - b.bar0);
-    const seen = new Set();
-    for (const span of chosen) {
-        span.first = !seen.has(span.mode);
-        seen.add(span.mode);
-    }
-    return chosen;
+    return best
+        .sort((a, b) => a.bar0 - b.bar0)
+        .map((c) => ({
+            mode: c.mode,
+            bar0: c.bar0,
+            bar1: c.bar1,
+            tIn: round3(c.tIn),
+            tOut: round3(c.tOut),
+            at: round3(bars[c.bar0].t0),
+            first: true,
+            score: c.score,
+            segment: c.segment,
+            character: c.character,
+        }));
 }
 
 /**
- * Frases completas desde el primer compás del tramo: las más posibles sin pasar
- * de `maxS` ni del tramo, con al menos `minS`, y con la vuelta a correr antes de
- * la última acción del nivel. null si no cabe.
+ * La combinación de mejor encaje total: como mucho `budget` momentos, cada modo
+ * una vez y separados `minGapS`. Pocos candidatos (≤ 2 por tramo): basta con
+ * probar las combinaciones. A igual encaje, la que empieza antes.
+ */
+function bestCombination(candidates, budget) {
+    const R = MODE_RULES;
+    let best = [];
+    let bestScore = 0;
+    const clash = (a, b) => a.mode === b.mode || (a.tIn < b.tOut + R.minGapS && b.tIn < a.tOut + R.minGapS);
+    const visit = (start, chosen, total) => {
+        if (total > bestScore + 1e-9 || (Math.abs(total - bestScore) < 1e-9 && chosen.length > 0 && earlier(chosen, best))) {
+            best = chosen.slice();
+            bestScore = total;
+        }
+        if (chosen.length >= budget) return;
+        for (let i = start; i < candidates.length; i++) {
+            const c = candidates[i];
+            if (chosen.some((o) => clash(o, c))) continue;
+            chosen.push(c);
+            visit(i + 1, chosen, total + c.score);
+            chosen.pop();
+        }
+    };
+    visit(0, [], 0);
+    return best;
+}
+
+function earlier(a, b) {
+    const ta = Math.min(...a.map((c) => c.tIn));
+    const tb = b.length > 0 ? Math.min(...b.map((c) => c.tIn)) : Infinity;
+    return ta < tb;
+}
+
+/**
+ * Compases del momento dentro de su tramo: el tramo entero si cabe en
+ * [minS, maxS] (sus fronteras son las de la música); si es más largo, las frases
+ * de 4 compases (o de 2) más largas que quepan desde su inicio. La vuelta a
+ * correr, antes de la última acción del nivel.
  */
 function spanOf(model, seg, tMax) {
     const R = MODE_RULES;
     const bars = model.bars;
-    for (let n = Math.floor(Math.min(seg.bar1 - seg.bar0, R.maxBars) / R.phraseBars) * R.phraseBars; n >= R.phraseBars; n -= R.phraseBars) {
+    const segBars = seg.bar1 - seg.bar0;
+    const counts = [segBars];
+    for (let n = Math.floor(Math.min(segBars, R.maxBars) / R.phraseBars) * R.phraseBars; n >= R.phraseBars; n -= R.phraseBars) counts.push(n);
+    for (let n = Math.floor(Math.min(segBars, R.maxBars) / 2) * 2; n >= 2; n -= 2) counts.push(n);
+    for (const n of counts) {
         const bar1 = seg.bar0 + n;
-        if (bar1 >= bars.length) continue;
+        if (n > segBars || bar1 >= bars.length) continue;
         const dur = bars[bar1].t0 - bars[seg.bar0].t0;
-        if (dur > R.maxS) continue;
-        if (dur < R.minS) return null;
+        if (dur < R.minS || dur > R.maxS) continue;
         const tOut = pickupTime(model, bar1);
         if (tOut > tMax) continue;
         return { bar0: seg.bar0, bar1, tIn: pickupTime(model, seg.bar0), tOut };
@@ -149,11 +232,24 @@ function spanOf(model, seg, tMax) {
     return null;
 }
 
-/** Eventos `mode` del chart para un plan: entrada y vuelta a correr. */
+/** Huecos del pulso con la música sonando (donde puede ir una acción de cualquier modo). */
+function playableSlots(model, span) {
+    let n = 0;
+    for (let b = span.bar0; b < span.bar1; b++) {
+        for (const slot of model.bars[b].slots) {
+            if (slot.onBeat && (slot.strength >= 0.2 || model.energyMean(slot.t - 0.3, slot.t + 0.3) >= 0.06)) n++;
+        }
+    }
+    return n;
+}
+
+/** Eventos `mode` del chart para un plan: entrada (con la holgura del túnel si la hay) y vuelta a correr. */
 export function modeEvents(plan) {
     const out = [];
     for (const span of plan) {
-        out.push({ t: span.tIn, type: 'mode', mode: span.mode });
+        const enter = { t: span.tIn, type: 'mode', mode: span.mode };
+        if (Number.isFinite(span.margin)) enter.margin = span.margin;
+        out.push(enter);
         out.push({ t: span.tOut, type: 'mode', mode: 'run' });
     }
     return out;
@@ -184,10 +280,14 @@ export function createModeGuide(plan, beatPeriodS) {
     }
 
     const spanAt = (t) => plan.find((s) => t >= s.tIn && t < s.tOut) ?? null;
+    // Un modo sin obstáculos en el registro (el vuelo: sus muros son el túnel) no
+    // recibe acciones del charter de correr; lo juega su propio charter.
+    const freeSpans = plan.filter((s) => maxLead[s.mode] === undefined);
 
     return {
         plan,
         constant: plan.length === 0,
+        freeSpans,
 
         /** Modo que rige en `t`. */
         modeAt(t) {
@@ -203,6 +303,7 @@ export function createModeGuide(plan, beatPeriodS) {
          * que el Dino se asiente (y, en el estreno del modo, un par de beats más).
          */
         allows(t) {
+            for (const s of freeSpans) if (t >= s.tIn && t < s.tOut) return false;
             for (const p of portals) {
                 if (t < p.t) {
                     if (p.t - t < (maxLead[p.from] ?? 0) + R.exitClearS - 1e-9) return false;

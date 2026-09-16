@@ -21,9 +21,10 @@ import {
 import { MAX_PHYSICS_CATCHUP_S, PHYSICS_STEP_S } from '../../resources/js/game/config.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
 import { speedProfileOf } from '../../resources/js/game/systems/speedProfile.js';
-import { toSimModes, toSimObstacles } from '../../resources/js/game/systems/playability.js';
+import { toSimHolds, toSimModes, toSimObstacles } from '../../resources/js/game/systems/playability.js';
 import { virtualPlayerScript } from '../../resources/js/game/systems/virtualPlayer.js';
-import { makeSyntheticAnalysis, makeSyntheticSong } from './helpers/synthetic-audio.mjs';
+import { createFlightCourse } from '../../resources/js/game/systems/flightCourse.js';
+import { CONTRAST_SONG_SECTIONS, makeSyntheticAnalysis, makeSyntheticSong } from './helpers/synthetic-audio.mjs';
 
 const GROUND = 700;
 
@@ -85,7 +86,7 @@ test('un paso puede detener el avance (colisión)', () => {
  * como una persona: no puede actuar entre dos frames que no ha visto.
  */
 function playLikeTheGame(chart, frameMs) {
-    const { script, modes } = levelOf(chart);
+    const { script, modes, hits } = levelOf(chart);
     const spawner = fakeSpawner(chart);
     const body = bodyState(GROUND);
     const stepper = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
@@ -107,7 +108,7 @@ function playLikeTheGame(chart, frameMs) {
         stepper.advance(songTime, (t) => {
             while (modeIdx < modes.length && modes[modeIdx].t <= t) enterMode(body, modes[modeIdx++].mode);
             integrateBody(body, PHYSICS_STEP_S, GROUND);
-            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null) { hitAt = t; return true; }
+            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null || hits(box, t)) { hitAt = t; return true; }
             return false;
         });
         if (hitAt !== null) return { ok: false, at: hitAt };
@@ -126,9 +127,10 @@ test('un nivel completo se supera actuando en el beat, a 144, 60 y 30 fps', () =
     }
 });
 
-test('un nivel con antigravedad (Ola 6a) se supera con los portales en su paso de física, a 144, 60, 30 y 1 fps y con tirones', () => {
-    const { chart, report } = buildChart(makeSyntheticSong({ bpm: 124 }), { seed: 8, difficulty: 5 });
-    assert.ok(report.modes.length >= 2, 'el chart cambia de modo');
+test('un nivel con antigravedad y vuelo (Olas 6a-6b) se supera con portales y túnel en su paso de física, a 144, 60, 30 y 1 fps y con tirones', () => {
+    const { chart, report } = buildChart(makeSyntheticSong({ bpm: 124, sections: CONTRAST_SONG_SECTIONS }), { seed: 8, difficulty: 5 });
+    assert.deepEqual(report.modes.map((m) => m.mode), ['flip', 'fly'], 'el chart invierte la gravedad y vuela');
+    assert.ok(report.holds >= 4, `${report.holds} notas mantenidas`);
     for (const fps of [144, 60, 30]) {
         const r = playLikeTheGame(chart, () => 1000 / fps);
         assert.ok(r.ok, `${fps} fps: choque en t=${r.at?.toFixed(3)}`);
@@ -212,7 +214,7 @@ test('con pulsaciones fechadas, un tirón de 250 ms ya no cambia el resultado', 
  * cada pulsación se aplica en el paso de física de su instante real.
  */
 function runWithTimestampedInputs(chart, frameMs) {
-    const { script, modes } = levelOf(chart);
+    const { script, modes, hits } = levelOf(chart);
     const spawner = fakeSpawner(chart);
     const body = bodyState(GROUND);
     const stepper = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
@@ -234,7 +236,7 @@ function runWithTimestampedInputs(chart, frameMs) {
             while (modeIdx < modes.length && modes[modeIdx].t <= t) enterMode(body, modes[modeIdx++].mode);
             inputs.drainUntil(t, (a) => applyInput(body, a));
             integrateBody(body, PHYSICS_STEP_S, GROUND);
-            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null) { hit = true; return true; }
+            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null || hits(box, t)) { hit = true; return true; }
             return false;
         });
         if (hit) return false;
@@ -243,10 +245,17 @@ function runWithTimestampedInputs(chart, frameMs) {
     return true;
 }
 
-/** Guion del jugador virtual (el mismo del simulador del charter) y portales del chart. */
+/** Guion del jugador virtual (el mismo del simulador del charter), portales y túnel del vuelo del chart. */
 function levelOf(chart) {
     const obstacles = toSimObstacles(chart.events);
-    return { script: virtualPlayerScript(obstacles, speedProfileOf(chart)), modes: toSimModes(chart.events) };
+    const speed = speedProfileOf(chart);
+    const course = createFlightCourse(chart.events);
+    return {
+        script: virtualPlayerScript(obstacles, speed, () => 0, toSimHolds(chart.events)),
+        modes: toSimModes(chart.events),
+        // Igual que GameSession: el túnel choca con el hitbox del paso (ya calculado).
+        hits: (box, t) => !course.empty && course.collisionAt(box, t, GROUND, speed.speedAt(t)),
+    };
 }
 
 function fakeSpawner(chart) {

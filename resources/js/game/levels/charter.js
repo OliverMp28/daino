@@ -18,8 +18,9 @@
 //   songArc      tramos, niveles de intensidad, clímax, subidas y drops
 //   difficulty   cuánto se llena cada nivel, con qué margen, qué se desbloquea
 //   speedPlan    marchas hacia el clímax y en qué pulsación acelera el mundo
-//   modePlan     en qué tramos cambian las reglas del cuerpo (antigravedad) y
-//                por qué portales se entra y se sale (Ola 6)
+//   modePlan     qué momentos de la canción cambian las reglas del cuerpo y con
+//                qué modo (antigravedad, vuelo), según cómo suena cada tramo (Ola 6)
+//   flightCharter  las notas mantenidas de cada tramo de vuelo (Ola 6b)
 //   patterns     compás a compás: dónde va cada acción y cuál, con memoria de
 //                frases (un riff que vuelve es un patrón que vuelve)
 //   aquí         silencios demasiado largos, tipo de obstáculo, validación
@@ -35,10 +36,12 @@
 
 import { OBSTACLE_KIND, speedFromBpm } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
-import { toSimModes, toSimObstacles, validatePlayability, timingWindowS, readerOffsetS } from '../systems/playability.js';
+import { toSimHolds, toSimModes, toSimObstacles, validatePlayability, timingWindowS, readerOffsetS } from '../systems/playability.js';
+import { createFlightCourse, flightMargin } from '../systems/flightCourse.js';
 import { createSpeedProfile } from '../systems/speedProfile.js';
 import { SPEED_RULES, planSpeed } from './speedPlan.js';
 import { MODE_RULES, createModeGuide, modeEvents, planModes } from './modePlan.js';
+import { chartHolds } from './flightCharter.js';
 import { Seeded } from './Seed.js';
 import {
     CHART_FORMAT_VERSION,
@@ -114,7 +117,8 @@ export function gameplayTempo(bpm) {
  * @property {number} speedChanges
  * @property {number[]} gears         Primer tiempo de cada marcha (la última, el clímax).
  * @property {number} topSpeedPxS     Velocidad máxima del nivel.
- * @property {Array<{ mode: string, t0: number, t1: number }>} modes  Tramos con otro modo de movimiento.
+ * @property {Array<{ mode: string, t0: number, t1: number, score: number }>} modes  Momentos con otro modo de movimiento.
+ * @property {number} holds           Notas mantenidas (vuelo).
  */
 
 /**
@@ -151,13 +155,18 @@ export function buildChart(analysis, opts = {}) {
     const tMin = CHARTER_RULES.firstActionMinS;
     const tMax = model.durationSec - CHARTER_RULES.tailRestS - maxLead;
 
-    const plan = tMax > tMin ? planModes({ arc, model, profile, stageTime: unlockTimes.stageTime, tMax }) : [];
+    const plan = tMax > tMin ? planModes({ arc, model, profile, tMax }) : [];
+    // El túnel del vuelo tiene la holgura de la dificultad a la velocidad más lenta del tramo.
+    for (const span of plan) {
+        if (span.mode === 'fly') span.margin = flightMargin(profile.toleranceS, minSpeedIn(speed, span.tIn, span.tOut));
+    }
     const modes = createModeGuide(plan, model.beatPeriodS);
     const structure = [...structureEvents(arc), ...modeEvents(plan)];
     const simModes = toSimModes(structure);
 
-    const ctx = { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, prng, modes, simModes };
+    const ctx = { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, prng, modes, simModes, structure };
     let actions = [];
+    let holds = [];
     let fillers = 0;
     let repaired = 0;
     if (tMax > tMin && model.bars.length > 0) {
@@ -166,11 +175,15 @@ export function buildChart(analysis, opts = {}) {
         actions = fillLongRests(actions, ctx);
         fillers = actions.length - before;
         assignKinds(actions, ctx);
-        repaired = repairUnplayable(actions, ctx);
+        for (const span of plan) {
+            if (span.mode === 'fly') holds.push(...chartHolds({ span, model, arc, profile, unlocked }));
+        }
+        repaired = repairUnplayable(actions, holds, ctx);
     }
 
     const events = [
         ...structure,
+        ...holds.map((h) => ({ t: h.t, type: 'hold', until: h.until })),
         ...actions.map((a) => ({ t: round3(a.t), type: 'obstacle', kind: a.kind })),
     ].sort((a, b) => (a.t - b.t) || (EVENT_ORDER[a.type] - EVENT_ORDER[b.type]));
 
@@ -207,13 +220,21 @@ export function buildChart(analysis, opts = {}) {
             speedChanges: speedChanges.length,
             gears: speedPlanOut.gears,
             topSpeedPxS: speed.maxSpeed,
-            modes: plan.map((s) => ({ mode: s.mode, t0: s.tIn, t1: s.tOut })),
+            modes: plan.map((s) => ({ mode: s.mode, t0: s.tIn, t1: s.tOut, score: s.score })),
+            holds: holds.length,
         },
     };
 }
 
-/** A igual instante: la sección, su efecto, el portal y, al final, el obstáculo. */
-const EVENT_ORDER = Object.freeze({ section: 0, fx: 1, mode: 2, obstacle: 3 });
+/** A igual instante: la sección, su efecto, el portal, la nota mantenida y, al final, el obstáculo. */
+const EVENT_ORDER = Object.freeze({ section: 0, fx: 1, mode: 2, hold: 3, obstacle: 4 });
+
+/** Velocidad más lenta del mundo en [t0, t1]. */
+function minSpeedIn(speed, t0, t1) {
+    let min = Math.min(speed.speedAt(t0), speed.speedAt(t1));
+    for (let t = t0; t < t1; t += 0.25) min = Math.min(min, speed.speedAt(t));
+    return min;
+}
 
 // --------------------------- Velocidad ---------------------------
 
@@ -272,8 +293,6 @@ export function unlockSchedule(arc, profile) {
         wide: at(profile.unlock.wide),
         offbeat: at(profile.unlock.offbeat),
         combo: at(profile.unlock.combo),
-        /** Instante de cualquier etapa (lo usa el plan de modos). */
-        stageTime: at,
     };
 }
 
@@ -388,9 +407,9 @@ function fillLongRests(actions, ctx) {
         for (let i = -1; i < out.length; i++) {
             const a = i >= 0 ? out[i] : null;
             const b = i + 1 < out.length ? out[i + 1] : null;
-            const from = a !== null ? a.t : tMin;
-            const to = b !== null ? b.t : tMax;
-            if (to - from <= profile.maxRestS) continue;
+            const rest = longestRest(a !== null ? a.t : tMin, b !== null ? b.t : tMax, modes.freeSpans);
+            if (rest === null || rest.to - rest.from <= profile.maxRestS) continue;
+            const { from, to } = rest;
             if (model.energyMean(from, to) < 0.12) continue;
 
             const mid = (from + to) / 2;
@@ -426,6 +445,25 @@ function fillLongRests(actions, ctx) {
         if (!inserted) break;
     }
     return out;
+}
+
+/**
+ * Silencio de juego más largo dentro de [from, to]: un tramo que se juega sin
+ * obstáculos (el vuelo) corta el hueco en dos, el de antes y el de después.
+ */
+function longestRest(from, to, freeSpans) {
+    let best = null;
+    let cursor = from;
+    const consider = (a, b) => {
+        if (b > a && (best === null || b - a > best.to - best.from)) best = { from: a, to: b };
+    };
+    for (const s of freeSpans) {
+        if (s.tOut <= cursor || s.tIn >= to) continue;
+        consider(cursor, Math.min(s.tIn, to));
+        cursor = Math.max(cursor, s.tOut);
+    }
+    consider(cursor, to);
+    return best;
 }
 
 // --------------------------- Tipo de obstáculo ---------------------------
@@ -513,17 +551,32 @@ function pickKindForRole(role, prng, surface = null) {
  * Juega el chart con la física real, la velocidad del nivel y la tolerancia de
  * la dificultad. Ante un choque: si el obstáculo es un acento, pasa a salto
  * normal; si no, se quita el menos importante del par (el que choca y el
- * anterior), así un golpe de relleno nunca se lleva por delante un drop.
+ * anterior), así un golpe de relleno nunca se lleva por delante un drop. Un
+ * choque con el túnel del vuelo quita la nota menos importante de las dos
+ * últimas (el error de altura se arrastra de una nota a la siguiente).
  */
-function repairUnplayable(actions, ctx) {
-    const { speed, profile, simModes } = ctx;
+function repairUnplayable(actions, holds, ctx) {
+    const { speed, profile, simModes, structure } = ctx;
     let repaired = 0;
-    while (repaired < CHARTER_RULES.maxRepairs && actions.length > 0) {
+    while (repaired < CHARTER_RULES.maxRepairs && (actions.length > 0 || holds.length > 0)) {
         const sim = toSimObstacles(actions.map((a) => ({ t: a.t, type: 'obstacle', kind: a.kind })));
-        const verdict = validatePlayability(sim, speed, { toleranceS: profile.toleranceS, modes: simModes });
+        const holdEvents = holds.map((h) => ({ t: h.t, type: 'hold', until: h.until }));
+        const course = holds.length > 0 ? createFlightCourse([...structure, ...holdEvents]) : null;
+        const verdict = validatePlayability(sim, speed, {
+            toleranceS: profile.toleranceS,
+            modes: simModes,
+            holds: toSimHolds(holdEvents),
+            course: course === null || course.empty ? null : course,
+        });
         if (verdict.ok) break;
         repaired++;
         const i = verdict.index;
+        if (i >= actions.length) {
+            const k = Math.min(holds.length - 1, (i - actions.length) >> 1);
+            const victim = k > 0 && holds[k - 1].score < holds[k].score ? k - 1 : k;
+            holds.splice(victim, 1);
+            continue;
+        }
         const hit = actions[i];
         if (OBSTACLE_KIND[hit.kind]?.role === 'accent') {
             hit.kind = pickKindForRole('jump', null);

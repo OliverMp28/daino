@@ -31,15 +31,20 @@ use App\Core\ValidationException;
  */
 final class ChartValidator
 {
-    /** Formato que genera el charter actual (Ola 6). */
-    public const CHART_FORMAT_VERSION = 3;
+    /** Formato que genera el charter actual (Ola 6b). */
+    public const CHART_FORMAT_VERSION = 4;
 
     /**
      * 1 = charter de las Olas 3-4 (velocidad constante). 2 = charter musical
      * (Ola 5): cambios de velocidad, pulso, dificultad y eventos de estructura.
      * 3 = modos de movimiento (Ola 6): eventos `mode` con el modo que empieza.
+     * 4 = vuelo (Ola 6b): `margin` opcional en el portal y eventos `hold` con `until`.
      */
-    public const CHART_FORMAT_VERSIONS = [1, 2, 3];
+    public const CHART_FORMAT_VERSIONS = [1, 2, 3, 4];
+
+    /** Holgura del túnel del vuelo en unidades de mundo (`flightCourse.js::FLY_MARGIN_RANGE`). */
+    private const FLY_MARGIN_MIN = 12;
+    private const FLY_MARGIN_MAX = 120;
 
     /** Mismo patrón que un kind: el registro de modos vive en el frontend. */
     private const MODE_PATTERN = '/^[a-z][a-z0-9_]{0,31}$/';
@@ -181,6 +186,18 @@ final class ChartValidator
                     self::fail($f, "events[{$i}].mode inválido.");
                 }
                 $clean['mode'] = $mode;
+                if (array_key_exists('margin', $e)) {
+                    $clean['margin'] = self::number($e['margin'], $f, "events[{$i}].margin", self::FLY_MARGIN_MIN, self::FLY_MARGIN_MAX);
+                }
+            } elseif ($type === 'hold') {
+                if ($formatVersion < 4) {
+                    self::fail($f, "events[{$i}]: notas mantenidas solo desde el formato 4.");
+                }
+                $until = self::number($e['until'] ?? null, $f, "events[{$i}].until", 0, $durationSec);
+                if ($until <= $t) {
+                    self::fail($f, "events[{$i}].until debe ser posterior a t.");
+                }
+                $clean['until'] = $until;
             }
             // Tipos futuros (section, mode, fx…) se aceptan con sus campos
             // escalares, sin anidar: el cliente los ignora si no los conoce.

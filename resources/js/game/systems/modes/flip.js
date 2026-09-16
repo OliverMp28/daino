@@ -33,11 +33,13 @@ export const FLIP_MODE_DEF = Object.freeze({
     id: 'flip',
     label: 'Antigravedad',
     color: MODE_COLORS.flip,
+    hint: Object.freeze({ keys: 'Espacio: invertir la gravedad', touch: 'Toca para invertir la gravedad' }),
     actions: Object.freeze(['flip']),
     /** Tras cruzar el portal, hasta poder actuar: el Dino puede venir del final de un salto. */
     settleS: 0.3,
 
     enter(body) {
+        body.flyHeld = 0;
         body.ducking = false;
         body.fastFall = false;
         body.jumpHeld = false;
