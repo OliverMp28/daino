@@ -1,13 +1,15 @@
 // Arco de la canción (Ola 5): tramos, niveles, clímax, subidas y momentos.
 //
 // Con canciones sintéticas de estructura conocida: el arco debe leer la forma
-// que la canción tiene, sin inventarse picos en un tema plano.
+// que la canción tiene, sin inventarse picos en un tema plano. Tras el playtest
+// de la 6b, los tramos empiezan donde el sonido cambia (songChanges.js) y el
+// clímax que entra de golpe empieza en el golpe.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildMusicModel } from '../../resources/js/game/levels/musicModel.js';
-import { ARC_LEVEL, buildSongArc } from '../../resources/js/game/levels/songArc.js';
+import { ARC_LEVEL, ARC_RULES, buildSongArc } from '../../resources/js/game/levels/songArc.js';
 import { DEFAULT_SONG_SECTIONS, makeSyntheticSong } from './helpers/synthetic-audio.mjs';
 
 const arcOf = (analysis) => buildSongArc(buildMusicModel(analysis));
@@ -51,7 +53,7 @@ test('escalada: el mismo material suena más intenso cada vez que vuelve', () =>
     assert.equal(choruses[2].climax, true, 'el último estribillo es el clímax');
 });
 
-test('tema plano: casi todo groove, sin reposo inventado, y aun así un clímax en la segunda mitad', () => {
+test('tema plano: groove sin reposo inventado, sin partir tramos donde el sonido no cambia, y aun así un clímax en la segunda mitad', () => {
     const analysis = makeSyntheticSong({
         bpm: 124,
         sections: Array.from({ length: 6 }, (_, i) => ({ bars: 8, energy: 0.64 + (i % 2) * 0.03, hits: 0.7, cluster: i % 2 ? 'B' : 'A' })),
@@ -59,32 +61,83 @@ test('tema plano: casi todo groove, sin reposo inventado, y aun así un clímax 
     const arc = arcOf(analysis);
     const levels = arc.segments.map((s) => s.level);
     assert.ok(!levels.includes(ARC_LEVEL.REST), `sin reposo en un tema plano: ${levels}`);
-    assert.ok(levels.filter((l) => l === ARC_LEVEL.GROOVE || l === ARC_LEVEL.DRIVE).length >= 4, `niveles ${levels}`);
+    assert.ok(arc.segments.filter((s) => !s.climax).every((s) => s.level === ARC_LEVEL.GROOVE || s.level === ARC_LEVEL.DRIVE), `niveles ${levels}`);
+    assert.ok(arc.segments.length <= 2, `seis secciones que suenan igual no son seis tramos: ${arc.segments.length}`);
     const climax = arc.segments[arc.climax];
     assert.ok((climax.t0 + climax.t1) / 2 > analysis.durationSec * 0.45);
 });
 
-test('clímax largo: se queda con su final (≤ 16 compases y ≤ 34 s); lo anterior conserva su nivel', () => {
+test('clímax largo que entra de golpe: empieza en el golpe (≤ 16 compases y ≤ 40 s); lo que sigue conserva su nivel', () => {
+    // What's Up Danger: el final entra a las 2:37 y dura 45 s. Antes el clímax
+    // eran sus últimos compases y empezaba a las 2:52, donde no cambia nada.
+    for (const bpm of [70, 95, 128]) {
+        const analysis = makeSyntheticSong({
+            bpm,
+            sections: [
+                { bars: 8, energy: 0.4, hits: 0.4, role: 'verse' },
+                { bars: 24, energy: 0.9, hits: 0.95, role: 'chorus' },
+            ],
+        });
+        const arc = arcOf(analysis);
+        const climax = arc.segments[arc.climax];
+        assert.equal(climax.bar0, 8, `${bpm} BPM: el clímax empieza donde entra el estribillo`);
+        assert.ok(climax.drop, `${bpm} BPM: y entra como drop`);
+        assert.ok(climax.bar1 - climax.bar0 <= ARC_RULES.climaxMaxBars && climax.t1 - climax.t0 <= ARC_RULES.climaxMaxS + 1e-6, `${bpm} BPM: clímax de ${(climax.t1 - climax.t0).toFixed(1)} s`);
+        assert.equal((32 - climax.bar1) % ARC_RULES.phraseBars, 0, `${bpm} BPM: termina en una frase contada desde el final del tramo`);
+        const rest = arc.segments[arc.climax + 1];
+        assert.equal(rest.role, 'chorus', `${bpm} BPM: el resto del estribillo queda como tramo propio`);
+        assert.ok(rest.level < ARC_LEVEL.CLIMAX);
+        assert.equal(arc.segments.filter((s) => s.drop).length, 1);
+    }
+});
+
+test('clímax largo al que no se llega de golpe: se queda con su final; lo anterior conserva su nivel', () => {
     const analysis = makeSyntheticSong({
         bpm: 70,
         sections: [
-            { bars: 8, energy: 0.4, hits: 0.4, role: 'verse' },
-            { bars: 24, energy: 0.9, hits: 0.95, role: 'chorus' },
+            { bars: 8, energy: 0.95, hits: 0.95, role: 'chorus', cluster: 'A' },
+            { bars: 24, energy: 0.85, hits: 0.9, role: 'chorus', cluster: 'B' },
         ],
     });
     const arc = arcOf(analysis);
     const climax = arc.segments[arc.climax];
-    assert.ok(climax.bar1 - climax.bar0 <= 16);
-    assert.ok(climax.t1 - climax.t0 <= 34 + 60 / 70 * 4, `clímax de ${(climax.t1 - climax.t0).toFixed(1)} s`);
-    const head = arc.segments[arc.climax - 1];
-    assert.equal(head.role, 'chorus', 'el principio del tramo largo queda como tramo propio');
-    assert.ok(head.level < ARC_LEVEL.CLIMAX);
+    assert.ok(climax.bar1 - climax.bar0 <= ARC_RULES.climaxMaxBars);
+    assert.ok(climax.t1 - climax.t0 <= ARC_RULES.climaxMaxS + 1e-6, `clímax de ${(climax.t1 - climax.t0).toFixed(1)} s`);
     assert.equal(climax.bar1, arc.bars.length, 'el clímax es el final del tramo');
+    const head = arc.segments[arc.climax - 1];
+    assert.equal(head.bar0, 8, 'el principio del tramo largo queda como tramo propio');
+    assert.ok(head.level < ARC_LEVEL.CLIMAX);
 });
 
-test('regresión: recortar el clímax nunca deja delante un tramo de 1-3 compases (dos drops seguidos)', () => {
-    // Estribillo final de 17-19 compases: con recorte a 16 quedaría una cabeza
-    // de 1-3 compases convertida en tramo propio, con su propio drop.
+test('un break y la vuelta dentro de una misma sección del análisis: la vuelta abre el clímax y el break no es un tramo', () => {
+    // What's Up Danger 2:24-3:22: el analizador ve una sola sección (mismo
+    // material) con un break de 2 compases casi en silencio y la vuelta de golpe.
+    for (const bpm of [95, 120, 150]) {
+        const analysis = makeSyntheticSong({
+            bpm,
+            sections: [
+                { bars: 8, energy: 0.3, hits: 0.35, role: 'intro', cluster: 'A' },
+                { bars: 16, energy: 0.6, hits: 0.6, role: 'verse', cluster: 'B' },
+                { bars: 8, energy: 0.6, hits: 0.6, role: 'verse', cluster: 'C' },
+                { bars: 2, energy: 0.15, hits: 0.15, role: 'verse', cluster: 'C' },
+                { bars: 18, energy: 0.92, hits: 0.9, role: 'verse', cluster: 'C' },
+                { bars: 4, energy: 0.2, hits: 0.2, role: 'outro', cluster: 'A' },
+            ],
+        });
+        const s = analysis.sections;
+        analysis.sections = [s[0], s[1], { ...s[2], endSec: s[4].endSec }, s[5]];
+        const arc = arcOf(analysis);
+        const climax = arc.segments[arc.climax];
+        assert.equal(climax.bar0, 34, `${bpm} BPM: el clímax empieza en la vuelta`);
+        assert.ok(climax.drop, `${bpm} BPM`);
+        assert.ok(!arc.segments.some((seg) => seg.bar0 === 32), `${bpm} BPM: el break de 2 compases se queda con lo anterior`);
+        assert.deepEqual(arc.bars.slice(32, 34).map((b) => b.build), [1, 2], `${bpm} BPM: el break es la subida al drop`);
+    }
+});
+
+test('regresión: recortar el clímax nunca deja un tramo de 1-3 compases (dos drops seguidos)', () => {
+    // Estribillo final de 17-19 compases: con recorte a 16 quedaría un trozo
+    // de 1-3 compases convertido en tramo propio, con su propio drop.
     for (const bars of [17, 18, 19]) {
         const analysis = makeSyntheticSong({
             bpm: 142,

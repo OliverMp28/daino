@@ -4,7 +4,9 @@
 // un puente sostenido suena pasivo y sostenido, un break de batería rítmico y
 // épico, los dos contrastan y una estrofa que vuelve no; la percusividad, las
 // bandas y la armonía suman cuando existen, y sin ellas (análisis del navegador)
-// todo sigue siendo un número en [0,1].
+// todo sigue siendo un número en [0,1]. Tras el playtest de la 6b, la LLEGADA:
+// un tramo que entra de golpe hacia lo más intenso (o se vacía hacia la calma)
+// es un momento aunque lo que suena no sea raro en la canción.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,11 +21,15 @@ function characterOf(analysis) {
     const model = buildMusicModel(analysis);
     const arc = buildSongArc(model);
     const chars = describeSegments(model, arc);
-    /** Carácter del tramo del arco que empieza con la sección de ese papel (la n-ésima). */
+    /**
+     * Carácter del tramo del arco donde suena la sección de ese papel (la
+     * n-ésima): el que empieza con ella o, si la sección no cambia el sonido y no
+     * parte ningún tramo, el que la contiene.
+     */
     const at = (role, nth = 0) => {
         const start = analysis.sections.filter((s) => s.role === role)[nth].startSec;
-        const seg = arc.segments.find((s) => Math.abs(s.t0 - start) < 0.6);
-        assert.ok(seg !== undefined, `hay un tramo que empieza con ${role} ${nth}`);
+        const seg = arc.segments.find((s) => Math.abs(s.t0 - start) < 0.6) ?? arc.segments.find((s) => s.t0 <= start && start < s.t1);
+        assert.ok(seg !== undefined, `hay un tramo con ${role} ${nth}`);
         return chars[seg.index];
     };
     return { model, arc, chars, at };
@@ -47,7 +53,7 @@ test('puente sostenido: pasivo, sostenido y contrasta; break de batería: rítmi
     assert.ok(MODE_CASTING.flip.affinity(verse) < 0.5 && MODE_CASTING.fly.affinity(verse) < 0.5, 'una estrofa típica no encaja con ningún modo');
 });
 
-test('la percusividad distingue lo que la energía no: un tramo igual de intenso pero sostenido contrasta', () => {
+test('la percusividad distingue lo que la energía no: un tramo igual de intenso pero sostenido es un tramo y contrasta', () => {
     const sections = [
         { bars: 16, energy: 0.6, hits: 0.6, role: 'verse', cluster: 'A', perc: 0.7 },
         { bars: 8, energy: 0.6, hits: 0.6, role: 'chorus', cluster: 'B', perc: 0.7 },
@@ -55,11 +61,35 @@ test('la percusividad distingue lo que la energía no: un tramo igual de intenso
         { bars: 8, energy: 0.6, hits: 0.6, role: 'chorus', cluster: 'B', perc: 0.1 },
         { bars: 8, energy: 0.6, hits: 0.6, role: 'verse', cluster: 'A', perc: 0.7 },
     ];
-    const { at } = characterOf(makeSyntheticSong({ bpm: 120, sections }));
+    const analysis = makeSyntheticSong({ bpm: 120, sections });
+    const { at, arc } = characterOf(analysis);
+    const padStart = analysis.sections[3].startSec;
+    assert.ok(arc.segments.some((seg) => Math.abs(seg.t0 - padStart) < 0.6), 'cambiar de golpes a notas sostenidas parte el tramo');
     const pad = at('chorus', 1);
     const typical = at('chorus', 0);
     assert.ok(pad.contrast > typical.contrast + 0.2, `${pad.contrast} vs ${typical.contrast}`);
     assert.ok(pad.sustain > typical.sustain + 0.4, `${pad.sustain} vs ${typical.sustain}`);
+});
+
+test('llegada: lo que entra de golpe hacia lo más intenso sube, lo que se vacía hacia la calma baja, y una estrofa tras el estribillo no es un momento', () => {
+    const analysis = makeSyntheticSong({ bpm: 120, sections: CONTRAST_SONG_SECTIONS });
+    const { at } = characterOf(analysis);
+
+    const finale = at('chorus', 2);
+    assert.ok(finale.arrival >= 0.9 && finale.rises && finale.epic === 1, JSON.stringify(finale));
+    assert.ok(MODE_CASTING.flip.event(finale) >= 0.9, 'el estribillo final llega como un momento de antigravedad');
+    assert.equal(MODE_CASTING.fly.event(finale), finale.contrast, 'y no de vuelo: sube');
+
+    const bridge = at('bridge');
+    assert.ok(bridge.arrival >= 0.6 && !bridge.rises && bridge.passive === 1, JSON.stringify(bridge));
+    assert.ok(MODE_CASTING.fly.event(bridge) >= 0.6);
+
+    // La estrofa tras el primer estribillo también baja, pero a lo típico.
+    const verse = at('verse', 1);
+    assert.ok(verse.arrival >= 0.6 && !verse.rises && verse.passive <= 0.55, JSON.stringify(verse));
+    for (const [mode, cast] of Object.entries(MODE_CASTING)) {
+        assert.ok(cast.event(verse) < 0.4, `${mode}: ${cast.event(verse)}`);
+    }
 });
 
 test('un cambio de tonalidad suma contraste', () => {
@@ -82,7 +112,7 @@ test('sin percusividad, bandas ni armonía (formato 1 o análisis antiguo) todo 
         const { chars, arc } = characterOf(analysis);
         assert.equal(chars.length, arc.segments.length);
         for (const c of chars) {
-            for (const key of ['contrast', 'passive', 'epic', 'sustain', 'rhythmic']) {
+            for (const key of ['contrast', 'arrival', 'passive', 'epic', 'sustain', 'rhythmic']) {
                 assert.ok(Number.isFinite(c[key]) && c[key] >= 0 && c[key] <= 1, `${key} = ${c[key]}`);
             }
             assert.ok(Number.isFinite(c.density) && c.density >= 0);

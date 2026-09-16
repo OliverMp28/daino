@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo). Pendientes: Ola 6c y Ola 7.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música). Pendientes: Ola 6c y Ola 7.
 
 ---
 
@@ -1190,6 +1190,90 @@ What's Up Danger pasa de 3 tramos de antigravedad (79 de 205 acciones) a **dos m
 - El bot de los E2E juega por el reloj: no prueba si el túnel **se lee** bien a la velocidad real; eso solo lo dice una persona.
 - A ~90-96 BPM el clímax de Difícil corriendo sale menos denso que el empuje (dos acciones de correr no caben en beats seguidos a ×1.68): en la 6a lo tapaba una antigravedad en el clímax. El test de densidad por arco usa 104 BPM y lo documenta.
 - El bundle se acerca a los 200 KB: la siguiente ola con código de juego debería medir qué se puede partir.
+
+---
+
+#### Ajustes tras el playtest de la 6b: los momentos siguen a la música ✅ (Sep 2026)
+
+> **Lo que se jugó.** Con la herramienta de dev "sin colisiones", tres niveles de principio a fin, anotando los minutos. **What's Up Danger** (Extremo): el vuelo entra con la calma de las 2:12 y termina a las 2:24, aunque la calma sigue un poco; hacia las 2:38 entra el bombo y a las 2:40 el cantante grita: *lo más emocionante del tema, y el Dino seguía corriendo* (solo los efectos visuales lo reflejaban); la antigravedad empezaba a las 2:52 y terminaba a las 3:12, con el coro. **Time** (Fácil): la antigravedad de la 1:15 encaja, pero terminaba a la 1:30 sin que la canción cambiase; a la 1:47 entran instrumentos y la zona roja, bien. **Dawn of Faith** (Difícil): el vuelo empieza justo en el cambio de la 1:28, pero termina a la 1:42 *y la canción sigue sonando casi igual*. Pidió averiguar si fallaba el analizador o el reparto, sin mover nada a mano: si hay que mover algo a mano, el sistema no está bien hecho.
+
+**Diagnóstico.** Medido compás a compás con los datos del análisis y, para descartar al analizador, con un diagnóstico aparte de novedad espectral (6 bandas en dB, timbre MFCC, croma, densidad) sobre el audio real de las tres canciones.
+
+- **El analizador tenía los cambios.** What's Up Danger: entre las 2:29.6 y las 2:34.7 la energía cae de 0.67 a 0.23 (un break casi en silencio), a las 2:37.2 vuelve de golpe a 0.73 y a las 2:39.7 a 0.90, y ahí se queda hasta la outro (3:22.7); en el audio, la banda de 2.5-6 kHz sube 4 dB con el grito. Dawn of Faith: a las 1:49.6 la energía pasa de 0.25 a 0.66 (el bajo, +25 dB en 20-150 Hz). Time: a la 1:45.7 medios y agudos +2.7 dB. Y donde se oyó que no cambiaba nada, no cambia nada: en Time 1:30 y Dawn of Faith 1:42 la novedad es de 0.3-0.5, frente a 1-3 en un cambio real.
+- **Pero sus secciones son de material, no de sonido** (agrupación espectral por timbre y armonía: un estribillo se parece a los otros). Un break y la vuelta tras él son el mismo material a otro volumen: en What's Up Danger, de las 2:24.5 a las 3:22.7 es una sola sección de 58 s con el break y la vuelta dentro. Eso es correcto para lo que se pensó (qué se repite) y no se toca.
+- **El charter no leía lo que había.** Tres causas:
+  1. El arco solo partía una sección por un salto de intensidad compuesta a **≥ 8 compases** del último corte. La vuelta de What's Up Danger quedaba a 5 compases de la frontera anterior. Y la intensidad pesaba un 30 % la **actividad de golpes**, que en un muro de guitarras distorsionadas BAJA aunque suene más (estrofa de la 1:51: 4.4 golpes/s; final: 1.0-1.6), así que el final valía 0.66-0.72 frente a 0.83 de una estrofa.
+  2. El clímax de un tramo largo eran sus **últimos** 12-16 compases: en What's Up Danger, 2:52.3-3:22.7, 15 s después de la vuelta.
+  3. Un modo se cortaba en **frases de 4 compases desde su inicio hasta 24 s**, terminara la música o no: Time a la 1:30 y Dawn of Faith a la 1:42 son exactamente ese corte.
+- **Lo que no se puede medir:** en What's Up Danger, de las 2:42 a las 3:20 el acompañamiento no cambia y el cantante alterna canto (2:52) y grito (3:05). En la mezcla eso no se ve (novedad 0.0-0.4 frente a 1-3 de un cambio real) y separar la voz exige un modelo de separación de pistas, descartado por memoria (afinado del analizador). Por suerte no hacía falta: lo que se pidió fue que el momento empiece donde la canción explota.
+
+**Qué se construyó.** El analizador no cambia (ni su versión). Todo es del charter (`CHARTER_VERSION = 7`, formato de chart igual):
+
+1. **`levels/songChanges.js` — dónde cambia la canción.** Cada compás es un vector de rasgos del análisis (energía, graves, medios, agudos, densidad y percusividad de los golpes; la densidad y la percusividad pesan poco porque el primer compás de un pasaje suele traer un redoble), cada uno en su escala en la canción. Se busca la **partición en pasajes homogéneos que mejor explica la canción** (mínimos cuadrados con un coste por frontera, exacta por programación dinámica, O(n²): 21 ms para una canción de 20 minutos y 896 compases). Un par de compases tras los que todo vuelve a sonar como antes (una parada, un redoble) no cuenta. Las fronteras de sección del analizador se conservan, y una de sonido a un compás de una de sección se lleva a su sitio. Cada frontera lleva su **fuerza** (distancia media en z entre los 4 compases de antes y los de después: la vuelta de What's Up Danger 1.82, el break de Dawn of Faith 1.42, Time 1:45.7 0.56, un cambio de sección que no cambia el sonido 0.2-0.4), su **subida de energía** y su **plenitud** (media de graves, medios y agudos): el break de las 2:11.9 de What's Up Danger sube de energía porque se queda solo el bajo, pero se vacía.
+2. **`songArc.js`.**
+   - **Tramos** donde el sonido cambia (fuerza ≥ 0.5), no en toda frontera de sección: los cambios de sección de Dawn of Faith a las 2:21 y 2:32 (0.21 y 0.33) partían su clímax en tres trozos.
+   - Un tramo **corto** (< 4 compases **y** < 8 s; solo en compases, la vuelta de 11 s de Dawn of Faith a 65 BPM y 3/4 se perdía) se funde **por su frontera más débil**: el break de 2 compases antes de la vuelta de What's Up Danger se queda con lo anterior y la vuelta abre el tramo. El principio o el final de la canción separados por un cambio claro se quedan como tramo (el final de Mi Fiesta metía 5 s de silencio en su clímax).
+   - **Intensidad** = 50 % energía, 20 % plenitud, 10 % actividad, 20 % energía de la sección (antes 50/0/30/20).
+   - **Clímax** de un tramo largo (> 16 compases o 40 s, antes 34): si el tramo **entra de golpe** (subida de energía ≥ 0.1 en un cambio real) el clímax empieza en el golpe; si no, es su final. El corte va donde el tramo cambia algo por dentro (el cambio más marcado, aunque no llegue a partir un tramo) o, si no cambia nada, en una frase de 4 compases contada desde el final del tramo, que es donde una sección cambia aunque su entrada traiga una anacrusa o un compás de más. En What's Up Danger ese corte cae a las 3:12.5: el coro.
+3. **`songCharacter.js`: la llegada.** `arrival` = cuánto sube o se vacía la canción al entrar en el tramo (±0.35 de energía o plenitud vale 1) y `rises` = si se llena. El final de What's Up Danger suena como sus estrofas fuertes (contraste con lo típico 0.30): lo que lo hace un momento es cómo llega.
+4. **`modePlan.js`.**
+   - **Un momento es un tramo entero, de 10 a 40 s:** entra donde la canción cambia y sale donde vuelve a cambiar, o en el borde del clímax (donde el nivel también cambia: la marcha sube o se suelta). Sin cortes por duración: un pasaje de más de 40 s no es un momento. Tampoco entra en un corte de clímax hecho por frase, donde no cambia nada.
+   - `MODE_CASTING.event(c)`: cuánto es un momento **para cada modo**, el contraste con lo típico o la llegada **hacia su carácter**: una llegada que revienta hacia lo más intenso es de antigravedad (× `epic`), una que se vacía hacia la calma, de vuelo (× `passive`). Una estrofa corriente tras un estribillo también baja, pero a lo típico: no es un momento.
+   - Al repartir, el clímax cuenta **+0.1** de encaje (donde la dificultad lo permite): es el momento más intenso. Sin eso, la antigravedad de Dawn of Faith se iba al tramo de después del clímax por 0.006.
+   - Separación mínima entre momentos: **10 s** (antes 12): entre el vuelo y el clímax de Dawn of Faith suena la vuelta del bajo, 11.1 s, un tramo entero corriendo.
+
+**Los tres niveles del playtest**, con la dificultad del manifiesto:
+
+| Nivel | Lo que se oyó | Charter 6 | Charter 7 |
+|---|---|---|---|
+| What's Up Danger (Extremo) | calma 2:12; vuelve tras el break 2:37-2:40 (lo más intenso); coro 3:12; solo música 3:23 | vuelo 2:11.6-2:24.2 · antigravedad **2:52.0**-3:12.2 · clímax **2:52.3-3:22.7** · marcha al clímax 2:52.0, se suelta 3:22.7 | vuelo 2:11.6-2:24.2 · antigravedad **2:36.9-3:12.2** · clímax **2:37.2-3:12.5** · marcha **2:36.9**, se suelta **3:12.5** |
+| Time (Fácil) | cambio 1:15; nada a la 1:30; instrumentos y zona roja 1:47; calma 2:16 | antigravedad 1:14.7-**1:30.0** · primera marcha **0:28.9** | antigravedad 1:14.7-**1:45.2** (sale al entrar el clímax) · primera marcha **0:44.2** (entran instrumentos) |
+| Dawn of Faith (Difícil) | cambio 1:28; nada a la 1:42; (vuelve el bajo 1:49.6); cambio leve 2:00 | vuelo 1:28.4-**1:41.7** · antigravedad 2:00.2-**2:13.1** · clímax 2:00.7-2:32.0 | vuelo 1:28.4-**1:49.1** · antigravedad 2:00.2-**2:31.6** (el clímax entero) · clímax 2:00.7-2:32.0 |
+
+(Los portales van en la anacrusa, unas décimas antes del primer tiempo del tramo.)
+
+**Los 8 oficiales con el charter 7** (dificultad del manifiesto):
+
+| Oficial (dificultad) | Acciones (cristales) + notas | Momentos | Acciones/min | Estrellas |
+|---|---|---|---|---|
+| Sugar Red (Normal) | 26 | — | 44 · pico 48 | 3★ (medida 3★) |
+| Last Christmas (Relajado) | 13 | — | 22 · pico 21 | 1★ (medida 1★) |
+| HOPE (Fácil) | 38 | — | 32 · pico 36 | 2★ (medida 2★) |
+| Running With the Wolves (Normal) | 103 (9) + 3 | antigravedad en el primer estribillo (0:58.9, energía +0.35) · vuelo 2:14.9-2:26.6 | 41 · pico 57 | 3★ (medida 3★) |
+| Time (Fácil) | 85 (19) | antigravedad 1:15.2-1:45.7 | 34 · pico 48 | 2★ (medida 2★) |
+| Mi Fiesta (Difícil) | 180 | — (suena uniforme) | 58 · pico 81 | 4★ (medida 5★) |
+| Dawn of Faith (Difícil) | 119 (29) + 8 | vuelo 1:28.8-1:49.6 · antigravedad en el clímax 2:00.7-2:32.0 | 43 · pico 63 | 4★ (medida 3★) |
+| What's Up Danger (Extremo) | 177 (50) + 4 | vuelo 2:11.9-2:24.5 · antigravedad en el clímax 2:37.2-3:12.5 | 52 · pico 93 | 5★ (medida 5★) |
+
+Cambian también niveles que no se jugaron: en Running With the Wolves la antigravedad pasa del puente (2:00) al primer estribillo, que entra de golpe, y el vuelo va al tramo sostenido que lleva al clímax; el clímax de HOPE empieza en su segunda sección (0:26.7, 36 s) y, al llegar antes del segundo 35, no hay marcha (velocidad máxima 596 px/s en vez de 640). Los momentos duran más: la antigravedad de What's Up Danger pasa de 26 a 50 cristales (pico de 93 acciones/min en 20 s, en el clímax de Extremo).
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **248 JS** (+10: `song-changes.test.mjs` 5; en `song-arc` el clímax que entra de golpe, el que no y el break dentro de una sección; en `song-character` la llegada; en `modes` el momento de tramo entero y **el playtest como regresión**: modos, clímax y marcha de What's Up Danger, Time y Dawn of Faith en los instantes medidos), **70 PHP**, **104 Python** |
+| 8 oficiales × 5 dificultades | jugables con la tolerancia de su dificultad, 0 reparaciones, cada modo una vez, ≤ 2 momentos, todos los momentos de tramo entero |
+| Oficiales y comunidad | re-horneados (`bun run bake:official`) y re-sembrados (`seed:official -- --rechart`); la comunidad, re-charteada por el worker (`--charter-below=7`) |
+| E2E What's Up Danger (Extremo, 1280×720, "sin colisiones" del panel de dev) | el cliente carga el chart 7 del servidor; en partida: corriendo a las 2:11.1, **vuelo** a las 2:14, corriendo a las 2:26 y a las 2:36.5 (525 px/s), **antigravedad a las 2:39.5 con el clímax encendido en el HUD, a 665 px/s**, con el drop del chart a las 2:37.2; sigue en antigravedad y clímax a las 3:00 y a las 3:12.0; a las 3:14.5 corriendo, sin clímax y soltando (599 px/s); victoria al 100 % |
+| Consola | 0 errores de JS (solo el 401 del arranque anónimo y el favicon) |
+| Bundle | **187.86 KB gzip** (+1.77) |
+
+**Decisiones (vinculantes):**
+
+- **Un tramo empieza donde la canción cambia de verdad**, no en cada frontera de sección del analizador: sus secciones dicen qué material se repite, y un cambio de sección que no cambia el sonido no parte nada.
+- **Un modo es un tramo entero: entra y sale con la música** (o en el borde del clímax). Nada de cortes por duración; un pasaje de más de 40 s no es un momento. Sustituye "12-24 s, frases de 4 compases" de la 6a/6b.
+- **Un clímax largo que entra de golpe empieza en el golpe.**
+- **La llegada cuenta**: un tramo que revienta hacia lo más intenso es un momento de antigravedad aunque suene como el resto de la canción; uno que se vacía hacia la calma, de vuelo.
+- **La intensidad del arco es sobre todo energía y plenitud**; la actividad de golpes pesa poco.
+- **El analizador no se toca** para esto: sus datos ya contenían los cambios. Detectar cambios solo de la voz (canto/grito sobre el mismo acompañamiento) queda fuera mientras no haya separación de pistas.
+
+**Limitaciones que quedan:**
+
+- Los cambios que están solo en la voz no se ven (What's Up Danger 2:52 y 3:05).
+- La frontera puede caer un compás tarde cuando el primer compás de un pasaje trae un acento que se parece a lo anterior (Time 0:44.7 sale en el compás siguiente; es débil y no parte tramo, y la marcha cae ahí igualmente, en la frase de 8 compases de su tramo).
+- Calibrado con los 8 oficiales y lo que se oyó en tres de ellos. Los umbrales están en tablas: `CHANGE_RULES` (songChanges.js), `ARC_RULES` (songArc.js, ahora exportado), `CHARACTER_RULES.arrivalFull`, `MODE_RULES` (`maxS`, `minGapS`, `climaxBonus`) y `MODE_CASTING.event`.
+- La antigravedad de Time entra con encaje 0.526 (mínimo 0.5): un tema así de sostenido está en el borde, y un análisis algo distinto podría dejarlo sin momento.
+- Momentos más largos (hasta 40 s): si 35 s de antigravedad en el clímax de Extremo se hacen largos, lo dirá el siguiente playtest.
 
 ---
 

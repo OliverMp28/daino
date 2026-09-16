@@ -220,7 +220,7 @@ export function buildChart(analysis, opts = {}) {
             speedChanges: speedChanges.length,
             gears: speedPlanOut.gears,
             topSpeedPxS: speed.maxSpeed,
-            modes: plan.map((s) => ({ mode: s.mode, t0: s.tIn, t1: s.tOut, score: s.score })),
+            modes: plan.map((s) => ({ mode: s.mode, t0: s.tIn, t1: s.tOut, at: s.at, score: s.score })),
             holds: holds.length,
         },
     };

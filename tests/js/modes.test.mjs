@@ -16,6 +16,9 @@
 //     vez, el presupuesto por duración, dónde van (tramo del arco, anacrusa,
 //     separados), el estreno espaciado, los cristales alternando, la memoria de
 //     frases dentro del modo y los 8 oficiales jugables y distintos entre sí.
+//   - Tras el playtest de la 6b: un modo dura su tramo entero (entra y sale donde
+//     la música cambia) y en What's Up Danger, Time y Dawn of Faith cae donde se
+//     oyó el cambio.
 //   El vuelo (física, túnel, notas) tiene su archivo: flight.test.mjs.
 
 import { test } from 'node:test';
@@ -353,7 +356,7 @@ test('una canción que suena igual de principio a fin no tiene momentos; cada mo
     }
 });
 
-test('dónde: un tramo del arco entero o sus frases, de 10-24 s, portales en la anacrusa, nunca al arranque y separados', () => {
+test('dónde: un tramo del arco entero de 10-40 s que empieza en un cambio, portales en la anacrusa, nunca al arranque y separados', () => {
     for (const analysis of [contrastSong(90), contrastSong(128), climaxSong(), makeSyntheticSong({ bpm: 150 })]) {
         const model = buildMusicModel(analysis);
         const arc = buildSongArc(model);
@@ -369,7 +372,11 @@ test('dónde: un tramo del arco entero o sus frases, de 10-24 s, portales en la 
                 assert.ok(dur >= MODE_RULES.minS - 1e-6 && dur <= MODE_RULES.maxS + 1e-6, `${label}: tramo de ${dur.toFixed(1)} s`);
                 const seg = arc.segments.find((s) => s.bar0 === bar0);
                 assert.ok(seg !== undefined && seg.level >= 1, `${label}: empieza con un tramo del arco`);
-                assert.ok(bar1 === seg.bar1 || (bar1 - bar0) % 2 === 0, `${label}: el tramo entero o frases completas`);
+                assert.equal(bar1, seg.bar1, `${label}: el tramo entero`);
+                assert.ok(arc.changes.at(bar0) !== null, `${label}: entra donde la canción cambia`);
+                const next = arc.segments[seg.index + 1];
+                assert.ok(arc.changes.at(bar1) !== null || seg.climax || next?.climax, `${label}: sale donde la canción cambia o en el borde del clímax`);
+                assert.equal(m.at, Math.round(model.bars[bar0].t0 * 1000) / 1000, `${label}: primer tiempo del tramo`);
                 assert.equal(m.t0, Math.round(pickupTime(model, bar0) * 1000) / 1000, `${label}: entrada en la anacrusa`);
                 assert.equal(m.t1, Math.round(pickupTime(model, bar1) * 1000) / 1000, `${label}: salida en la anacrusa`);
                 assert.ok(model.bars[bar0].t0 >= Math.max(MODE_RULES.minStartS, analysis.durationSec * MODE_RULES.minStartFraction) - 1e-6, `${label}: no en el arranque`);
@@ -379,6 +386,29 @@ test('dónde: un tramo del arco entero o sus frases, de 10-24 s, portales en la 
             }
             assert.deepEqual(normalizeChart(chart).warnings, [], label);
         }
+    }
+});
+
+test('un modo dura su pasaje entero, también si pasa de 24 s; un pasaje de más de 40 s no es un momento', () => {
+    // Antes el momento se cortaba en frases de 4 compases hasta 24 s: el vuelo de
+    // Dawn of Faith acababa a las 1:42 con la canción sonando igual.
+    const withBridge = (bpm, bars) => makeSyntheticSong({ bpm, sections: CONTRAST_SONG_SECTIONS.map((sec) => (sec.role === 'bridge' ? { ...sec, bars } : sec)) });
+    for (const [bpm, bars] of [[90, 12], [120, 16], [120, 20]]) {
+        const analysis = withBridge(bpm, bars);
+        const model = buildMusicModel(analysis);
+        const bridge = analysis.sections.find((sec) => sec.role === 'bridge');
+        const fly = buildChart(analysis, { seed: 1, difficulty: 5 }).report.modes.find((m) => m.mode === 'fly');
+        const bar0 = model.bars.findIndex((b) => Math.abs(b.t0 - bridge.startSec) < 1e-3);
+        const bar1 = model.bars.findIndex((b) => Math.abs(b.t0 - bridge.endSec) < 1e-3);
+        const label = `${bpm} BPM, puente de ${(bridge.endSec - bridge.startSec).toFixed(1)} s`;
+        assert.ok(fly !== undefined, label);
+        assert.equal(fly.t0, Math.round(pickupTime(model, bar0) * 1000) / 1000, `${label}: entra con el puente`);
+        assert.equal(fly.t1, Math.round(pickupTime(model, bar1) * 1000) / 1000, `${label}: sale cuando el puente termina`);
+    }
+    const long = withBridge(90, 16);
+    const bridge = long.sections.find((sec) => sec.role === 'bridge');
+    for (const m of buildChart(long, { seed: 1, difficulty: 5 }).report.modes) {
+        assert.ok(m.t1 <= bridge.startSec || m.t0 >= bridge.endSec - 1, `un puente de 42.7 s no es un momento: ${JSON.stringify(m)}`);
     }
 });
 
@@ -477,7 +507,7 @@ test('los 8 oficiales × 5 dificultades: jugables, con momentos contados y disti
             assert.ok(ids.every((id) => profile.modes[id] !== undefined), `${label}: ${ids.join(' ')} fuera de su dificultad`);
             for (const m of report.modes) {
                 assert.ok(m.t1 - m.t0 <= MODE_RULES.maxS + 2, `${label}: tramo de ${(m.t1 - m.t0).toFixed(1)} s`);
-                const inClimax = report.climax !== null && m.t0 < report.climax.t1 && m.t1 > report.climax.t0;
+                const inClimax = report.climax !== null && m.at < report.climax.t1 - 1e-3 && m.t1 > report.climax.t0;
                 if (inClimax) assert.ok(profile.modes[m.mode].climax, `${label}: ${m.mode} en el clímax`);
             }
             if (report.difficulty === 5 || (report.difficulty === 4 && d === 5)) signatures.add(ids.join('+') || 'ninguno');
@@ -487,4 +517,50 @@ test('los 8 oficiales × 5 dificultades: jugables, con momentos contados y disti
     }
     // Cada canción es un mundo: en la dificultad máxima hay niveles sin modos, con uno y con los dos.
     assert.ok(signatures.has('ninguno') && [...signatures].some((s) => s.includes('fly')) && [...signatures].some((s) => s.includes('flip')), [...signatures].join(' | '));
+});
+
+test('playtest de la 6b: en What\'s Up Danger, Time y Dawn of Faith los modos y el clímax entran y salen donde cambia la música', async () => {
+    const dir = path.join(ROOT, 'database/seeds/official/baked');
+    const plan = async (slug) => {
+        const baked = JSON.parse(await readFile(path.join(dir, `${slug}.json`), 'utf8'));
+        const { chart, report } = buildChart(baked.analysis, { sha256: baked.audio.sha256, difficulty: baked.requestedDifficulty });
+        const model = buildMusicModel(baked.analysis);
+        // Primer tiempo del tramo en que se vuelve a correr (el portal de salida va en su anacrusa).
+        const exitAt = (m) => model.bars.find((b) => b.t0 > m.t1 + 1e-6).t0;
+        return { chart, report, exitAt, modes: report.modes.map((m) => m.mode) };
+    };
+    const near = (actual, expected, label, tol = 0.6) => assert.ok(Math.abs(actual - expected) <= tol, `${label}: ${actual.toFixed(2)} s, se esperaba ~${expected}`);
+
+    // What's Up Danger (Extremo). Se oyó: calma desde 2:12; la canción vuelve de
+    // golpe tras un break a las 2:37-2:40 (lo más intenso del tema); canto
+    // coreado a las 3:12; solo música a las 3:23. Antes la antigravedad y el
+    // clímax empezaban a las 2:52, donde la música no cambia.
+    const wud = await plan('whats-up-danger');
+    assert.deepEqual(wud.modes, ['fly', 'flip']);
+    const [fly, flip] = wud.report.modes;
+    near(fly.at, 131.9, 'vuelo: entra en la calma (2:11.9)');
+    near(wud.exitAt(fly), 144.5, 'vuelo: sale cuando vuelven medios y agudos (2:24.5)');
+    near(flip.at, 157.2, 'antigravedad: entra con la vuelta tras el break (2:37.2)');
+    near(wud.report.climax.t0, 157.2, 'clímax: empieza con la vuelta');
+    near(wud.exitAt(flip), 192.5, 'antigravedad: sale en el coro de 3:12.5');
+    near(wud.report.climax.t1, 192.5, 'clímax: termina a las 3:12.5, antes de la outro');
+    assert.ok(wud.chart.world.speedChanges.some((c) => c.speedPxS > wud.chart.world.speedPxS && Math.abs(c.t - 157.2) < 0.7), 'el mundo acelera con la vuelta');
+
+    // Time (Fácil). Se oyó: el cambio de 1:14-1:15 (antigravedad, bien), ningún
+    // cambio a la 1:30 (donde antes terminaba) y más instrumentos a la 1:47.
+    const time = await plan('time');
+    assert.deepEqual(time.modes, ['flip']);
+    near(time.report.modes[0].at, 75.2, 'antigravedad: entra a la 1:15.2');
+    near(time.exitAt(time.report.modes[0]), 105.7, 'antigravedad: sale cuando entran instrumentos (1:45.7), no a la 1:30');
+    near(time.report.climax.t0, 105.7, 'clímax: 1:45.7');
+
+    // Dawn of Faith (Difícil). Se oyó: cambio a la 1:28 (vuelo, bien) y ninguno
+    // a la 1:42 (donde antes terminaba); vuelven el bajo y el bombo a la 1:49.6.
+    const dawn = await plan('dawn-of-faith');
+    assert.deepEqual(dawn.modes, ['fly', 'flip']);
+    near(dawn.report.modes[0].at, 88.8, 'vuelo: entra a la 1:28.8');
+    near(dawn.exitAt(dawn.report.modes[0]), 109.6, 'vuelo: sale cuando vuelve el bajo (1:49.6), no a la 1:42');
+    near(dawn.report.modes[1].at, 120.7, 'antigravedad: entra con el clímax (2:00.7)');
+    near(dawn.report.climax.t0, 120.7, 'clímax: 2:00.7');
+    near(dawn.exitAt(dawn.report.modes[1]), dawn.report.climax.t1, 'antigravedad: dura el clímax');
 });

@@ -13,6 +13,16 @@
 //              armónico, cada uno frente a la mediana de la canción y en su
 //              escala; más si su material no se repite, si es un puente o break
 //              y si cambia de tonalidad.
+//   arrival    [0,1] cuánto sube o se vacía la canción al empezar el tramo: la
+//              mayor de las subidas de energía y de plenitud (graves, medios y
+//              agudos) de su frontera (songChanges.js). Es lo que se oye al
+//              llegar. Tras el playtest de la 6b: el final de What's Up Danger
+//              entra con el golpe más fuerte del tema (energía +0.50) pero suena
+//              como sus estrofas fuertes (contraste con lo típico 0.30), y el
+//              modo se lo llevaba un tramo menor. Un cambio de textura sin
+//              cambio de volumen (Mi Fiesta, +0.06) no es una llegada.
+//   rises      si al llegar el sonido se llena (un drop, un estribillo que
+//              revienta) o se vacía (un break, un pasaje sin bajo ni batería).
 //   passive    [0,1] más tranquilo que lo típico.
 //   epic       [0,1] más intenso que lo típico (1 en el clímax).
 //   sustain    [0,1] notas que se sostienen: pocos golpes y poco percusivos.
@@ -32,6 +42,13 @@ const WEIGHTS = Object.freeze({ energy: 1, density: 1, perc: 1, low: 1, mid: 0.5
 export const CHARACTER_RULES = Object.freeze({
     /** Multiplica el contraste medio de los rasgos (un tramo típico ronda 0.1-0.25). */
     contrastGain: 1.5,
+    /**
+     * Subida (o vaciado) de energía o plenitud con la que la llegada vale 1.
+     * Medido: ±0.35-0.5 es un cambio que nadie pasa por alto (el break de Dawn
+     * of Faith a las 1:28.8, la vuelta del bajo a las 1:49.6, el final de What's
+     * Up Danger); +0.2, uno claro pero suave (Time 1:15.2).
+     */
+    arrivalFull: 0.35,
     /** Material que solo suena una vez en la canción. */
     rareBonus: 0.12,
     /** Tramo que el análisis reconoce como puente o break. */
@@ -44,6 +61,8 @@ export const CHARACTER_RULES = Object.freeze({
  * @typedef {Object} SegmentCharacter
  * @property {number} index     Índice del tramo en el arco.
  * @property {number} contrast
+ * @property {number} arrival
+ * @property {boolean} rises
  * @property {number} passive
  * @property {number} epic
  * @property {number} sustain
@@ -120,6 +139,9 @@ export function describeSegments(model, arc) {
         const R = CHARACTER_RULES;
         const contrast = clamp01(featureContrast * R.contrastGain
             + (rare ? R.rareBonus : 0) + (bridge ? R.bridgeBonus : 0) + (keyChange ? R.keyBonus : 0));
+        const entry = i > 0 ? arc.changes?.at(s.bar0) ?? null : null;
+        const arrival = entry === null ? 0 : clamp01(Math.max(Math.abs(entry.rise), Math.abs(entry.fill)) / R.arrivalFull);
+        const rises = entry !== null && entry.fill > 0;
 
         const density = r.densityLinear / typicalDensity;
         const passive = clamp01(0.5 + (medEnergy - r.energy) * 2.5);
@@ -134,6 +156,8 @@ export function describeSegments(model, arc) {
         return {
             index: s.index,
             contrast: round3(contrast),
+            arrival: round3(arrival),
+            rises,
             passive: round3(passive),
             epic: round3(epic),
             sustain: round3(sustain),

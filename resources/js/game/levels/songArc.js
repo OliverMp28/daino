@@ -9,33 +9,57 @@
 //
 // Este módulo decide la FORMA del nivel, sin decidir todavía ningún obstáculo:
 //
-//   1. Intensidad de cada compás: energía (cuánto suena), actividad (cuántos
-//      golpes y de qué fuerza) y la energía de su sección.
-//   2. Tramos: las secciones del análisis, partidas donde la intensidad cambia
-//      de forma sostenida y fundidas si son demasiado cortas para jugarse.
+//   1. Intensidad de cada compás: energía (cuánto suena), plenitud (graves,
+//      medios y agudos a la vez), actividad (cuántos golpes y de qué fuerza) y
+//      la energía de su sección.
+//   2. Tramos: los pasajes entre los cambios de la canción que se oyen
+//      (songChanges.js: un break, la vuelta tras él, un instrumento que entra,
+//      un cambio de sección que cambia el sonido), fundidos por su frontera más
+//      débil si son demasiado cortos para jugarse.
 //   3. Nivel de cada tramo (0 reposo · 1 calma · 2 groove · 3 empuje · 4 clímax),
 //      relativo a la propia canción: toda canción tiene su calma y su cumbre.
 //   4. Escalada: la segunda y la tercera vez que vuelve el mismo material (el
 //      estribillo) cuentan un poco más. Es lo que hace que el final "llegue".
 //   5. Clímax: el tramo más intenso de la segunda mitad; nunca dura más de
-//      16 compases ni de 34 s (un clímax de un minuto no es un clímax, es
-//      cansancio).
+//      16 compases ni de 40 s (un clímax de un minuto no es un clímax, es
+//      cansancio). Si el tramo es más largo y entra de golpe (un drop), el
+//      clímax empieza donde entra la música, no unos compases después.
 //   6. Subidas y drops: los compases previos a un salto grande de nivel se
 //      marcan como subida; el primer compás del tramo alto, como drop.
 //
 // El arco NO depende de la dificultad: el mismo tema tiene la misma forma en
 // Fácil y en Extremo; la dificultad decide cuánto se llena cada nivel.
 
+import { detectChanges } from './songChanges.js';
+
 export const ARC_LEVEL = Object.freeze({ REST: 0, CALM: 1, GROOVE: 2, DRIVE: 3, CLIMAX: 4 });
 
-const ARC_RULES = Object.freeze({
-    /** Tramo mínimo jugable, en compases. */
+export const ARC_RULES = Object.freeze({
+    /**
+     * Tramo mínimo jugable: 4 compases o 8 s. Solo en compases, a 65 BPM y 3/4
+     * la vuelta de Dawn of Faith (3 compases, 11 s) se fundía con su clímax.
+     */
     minSegmentBars: 4,
-    /** Diferencia de intensidad (ventanas de 4 compases) que parte un tramo. */
-    splitDelta: 0.16,
-    /** Duración máxima del clímax, en compases y en segundos (lo que llegue antes, con mínimo de 8 compases). */
+    minSegmentS: 8,
+    /**
+     * Fuerza mínima de un cambio (songChanges.js) para que empiece un tramo.
+     * Medido en los oficiales: lo que se oye como otro pasaje va de 0.56 (Time
+     * 1:45.7, entran instrumentos) a 3 (What's Up Danger 3:22.7). Por debajo de
+     * 0.5 hay variaciones dentro de un mismo pasaje y cambios de sección que no
+     * cambian el sonido (Dawn of Faith 2:21 y 2:32, 0.21 y 0.33): partían su
+     * clímax en trozos.
+     */
+    splitStrength: 0.5,
+    /** Subida de energía mínima para que un tramo "entre de golpe" (un drop). */
+    dropRise: 0.1,
+    /** Un principio o final de canción cortos se quedan como tramo si su frontera es al menos así de clara. */
+    edgeStrength: 1,
+    /** Duración máxima del clímax, en compases y en segundos (lo que llegue antes), y mínima al recortarlo. */
     climaxMaxBars: 16,
-    climaxMaxS: 34,
+    climaxMaxS: 40,
+    climaxMinBars: 8,
+    /** Frase con la que se cuenta desde el final de un tramo largo, en compases. */
+    phraseBars: 4,
     /** El clímax se busca a partir de esta fracción de la canción. */
     climaxFrom: 0.45,
     /** Compases de subida antes de un drop. */
@@ -72,16 +96,17 @@ const ARC_RULES = Object.freeze({
 
 /**
  * @param {ReturnType<import('./musicModel.js').buildMusicModel>} model
- * @returns {{ bars: ArcBar[], segments: ArcSegment[], climax: number }}
+ * @returns {{ bars: ArcBar[], segments: ArcSegment[], climax: number, changes: ReturnType<typeof detectChanges> }}
  */
 export function buildSongArc(model) {
     const nBars = model.bars.length;
-    if (nBars === 0) return { bars: [], segments: [], climax: -1 };
+    const changes = detectChanges(model);
+    if (nBars === 0) return { bars: [], segments: [], climax: -1, changes };
 
     const raw = barIntensities(model);
-    let segments = splitSegments(model, raw);
+    let segments = splitSegments(model, raw, changes);
     segments = assignLevels(model, segments);
-    const climax = pickClimax(model, segments);
+    const climax = pickClimax(model, segments, changes);
     if (climax.split !== null) segments = climax.split;
     const climaxIndex = segments.findIndex((s) => s.climax);
 
@@ -107,7 +132,7 @@ export function buildSongArc(model) {
         }
     }
 
-    return { bars, segments, climax: climaxIndex };
+    return { bars, segments, climax: climaxIndex, changes };
 }
 
 // --------------------------- 1. Intensidad por compás ---------------------------
@@ -116,61 +141,69 @@ function barIntensities(model) {
     const n = model.bars.length;
     const energy = new Float64Array(n);
     const activity = new Float64Array(n);
+    const full = new Float64Array(n);
     const section = new Float64Array(n);
     for (let i = 0; i < n; i++) {
         const bar = model.bars[i];
         const dur = Math.max(1e-3, bar.t1 - bar.t0);
         energy[i] = model.energyMean(bar.t0, bar.t1);
+        const bands = model.bandsMean(bar.t0, bar.t1);
+        full[i] = bands === null ? energy[i] : (bands.low + bands.mid + bands.high) / 3;
         activity[i] = model.activity(bar.t0, bar.t1) / dur;
         section[i] = sectionAt(model, (bar.t0 + bar.t1) / 2).energy;
     }
     // La actividad no tiene escala propia: se normaliza a su percentil 90 en la
-    // canción (un compás lleno de golpes vale ~1 en cualquier tema).
+    // canción (un compás lleno de golpes vale ~1 en cualquier tema). Pesa poco:
+    // un muro de guitarras distorsionadas suena más que una estrofa limpia y da
+    // MENOS golpes separables. En What's Up Danger, con la actividad al 30 %, el
+    // final (energía 0.88, la más alta) quedaba por debajo de una estrofa (0.80
+    // de energía y el triple de golpes) y el clímax se iba a la estrofa.
     const p90 = percentile(activity, 0.9) || 1;
     const out = new Float64Array(n);
     for (let i = 0; i < n; i++) {
         const act = Math.min(1, activity[i] / p90);
-        out[i] = clamp01(0.5 * energy[i] + 0.3 * act + 0.2 * section[i]);
+        out[i] = clamp01(0.5 * energy[i] + 0.2 * full[i] + 0.1 * act + 0.2 * section[i]);
     }
     return out;
 }
 
 // --------------------------- 2. Tramos ---------------------------
 
-function splitSegments(model, raw) {
+function splitSegments(model, raw, changes) {
     const nBars = model.bars.length;
     const cuts = new Set([0]);
 
-    // Fronteras de sección del análisis, llevadas al compás más cercano.
-    for (const s of model.sections) {
-        if (s.start <= 0) continue;
-        cuts.add(nearestBar(model, s.start));
-    }
-
-    // Cambios sostenidos de intensidad dentro de una sección larga: se compara
-    // la media de los 4 compases anteriores con la de los 4 siguientes.
-    const W = 4;
-    let lastCut = 0;
-    for (let b = W; b <= nBars - W; b++) {
-        if (cuts.has(b)) {
-            lastCut = b;
-            continue;
-        }
-        if (b - lastCut < ARC_RULES.minSegmentBars * 2) continue;
-        const before = mean(raw, b - W, b);
-        const after = mean(raw, b, b + W);
-        if (Math.abs(after - before) >= ARC_RULES.splitDelta) {
-            cuts.add(b);
-            lastCut = b;
-        }
+    // Donde la canción cambia de verdad. Antes: toda frontera de sección del
+    // análisis más un salto de intensidad compuesta a ≥ 8 compases del último
+    // corte. La vuelta tras el break de What's Up Danger (2:37) quedaba a 5
+    // compases de la sección anterior y nunca partía nada.
+    for (const change of changes.boundaries) {
+        if (change.strength >= ARC_RULES.splitStrength) cuts.add(change.bar);
     }
 
     const starts = [...cuts].filter((b) => b >= 0 && b < nBars).sort((a, b) => a - b);
     let segs = starts.map((b0, i) => makeSegment(model, raw, b0, i + 1 < starts.length ? starts[i + 1] : nBars));
 
-    // Tramos demasiado cortos: se funden con el vecino de intensidad más parecida.
+    // Tramos demasiado cortos, del más corto al más largo: se funden con el vecino
+    // al otro lado de su frontera más débil (lo que menos cambia es lo que menos
+    // separa). A igual fuerza, con el de intensidad más parecida. Así un break de
+    // 2 compases antes de un drop se queda con lo anterior, no con el drop. El
+    // principio o el final de la canción separados por un cambio claro de un
+    // tramo largo se quedan como tramo: fundido, el final de Mi Fiesta (5 s que
+    // se apagan tras 3:04) metía su silencio en el clímax.
+    const strengthAt = (bar) => changes.at(bar)?.strength ?? 0;
+    const keepsEdge = (i) => {
+        if (segs.length < 2 || (i !== 0 && i !== segs.length - 1)) return false;
+        const neighbor = i === 0 ? segs[1] : segs[i - 1];
+        const boundary = i === 0 ? segs[1].bar0 : segs[i].bar0;
+        return !isShort(model, neighbor.bar0, neighbor.bar1) && strengthAt(boundary) >= ARC_RULES.edgeStrength;
+    };
     for (;;) {
-        const idx = segs.findIndex((s) => s.bar1 - s.bar0 < ARC_RULES.minSegmentBars);
+        let idx = -1;
+        for (let i = 0; i < segs.length; i++) {
+            if (!isShort(model, segs[i].bar0, segs[i].bar1) || keepsEdge(i)) continue;
+            if (idx < 0 || segs[i].t1 - segs[i].t0 < segs[idx].t1 - segs[idx].t0) idx = i;
+        }
         if (idx < 0 || segs.length === 1) break;
         const s = segs[idx];
         const left = segs[idx - 1];
@@ -178,7 +211,12 @@ function splitSegments(model, raw) {
         let into;
         if (left === undefined) into = idx + 1;
         else if (right === undefined) into = idx - 1;
-        else into = Math.abs(left.intensity - s.intensity) <= Math.abs(right.intensity - s.intensity) ? idx - 1 : idx + 1;
+        else {
+            const inStrength = strengthAt(s.bar0);
+            const outStrength = strengthAt(right.bar0);
+            if (Math.abs(inStrength - outStrength) > 0.05) into = inStrength < outStrength ? idx - 1 : idx + 1;
+            else into = Math.abs(left.intensity - s.intensity) <= Math.abs(right.intensity - s.intensity) ? idx - 1 : idx + 1;
+        }
         const a = Math.min(idx, into);
         const merged = makeSegment(model, raw, segs[a].bar0, segs[a + 1].bar1);
         segs.splice(a, 2, merged);
@@ -258,7 +296,7 @@ function assignLevels(model, segs) {
 
 // --------------------------- 5. Clímax ---------------------------
 
-function pickClimax(model, segs) {
+function pickClimax(model, segs, changes) {
     const duration = model.durationSec;
     let best = -1;
     let bestScore = -Infinity;
@@ -283,27 +321,56 @@ function pickClimax(model, segs) {
     }
 
     const target = segs[best];
-    // Máximo en compases Y en segundos: 16 compases a 63 BPM son un minuto.
-    let maxBars = ARC_RULES.climaxMaxBars;
-    while (maxBars > 8 && model.bars[target.bar1 - 1].t1 - model.bars[Math.max(target.bar0, target.bar1 - maxBars)].t0 > ARC_RULES.climaxMaxS) {
-        maxBars -= 4;
-    }
-    // Si recortar dejaría delante un trozo más corto que un tramo jugable, el
-    // clímax se lo queda entero. Medido sin esto: en un tema de la comunidad la
-    // cabeza quedó de 1 compás (1.7 s) y el nivel encadenaba dos drops seguidos.
-    if (target.bar1 - target.bar0 <= maxBars + ARC_RULES.minSegmentBars - 1) {
+    const whole = () => {
         target.climax = true;
         target.level = ARC_LEVEL.CLIMAX;
         return { split: null };
+    };
+    // Máximo en compases Y en segundos: 16 compases a 63 BPM son un minuto.
+    const fits = (b0, b1) => b1 - b0 <= ARC_RULES.climaxMaxBars && model.bars[b1 - 1].t1 - model.bars[b0].t0 <= ARC_RULES.climaxMaxS;
+    if (fits(target.bar0, target.bar1)) return whole();
+
+    // Tramo largo: el clímax es un trozo, y el corte va donde el tramo cambia
+    // algo por dentro (un cambio de sección que apenas cambia el sonido, por
+    // debajo de lo que parte un tramo; el más marcado) o, si no cambia nada, en
+    // una frase de 4 compases contada desde el final del tramo: una sección
+    // cambia al acabar una frase aunque su entrada traiga una anacrusa o un
+    // compás de más. Ningún corte deja fuera un trozo más corto que un tramo.
+    const inner = changes.boundaries
+        .filter((c) => c.bar > target.bar0 && c.bar < target.bar1)
+        .sort((a, b) => b.strength - a.strength || a.bar - b.bar)
+        .map((c) => c.bar);
+    const split = (cut, climaxFirst) => {
+        const first = { ...target, bar1: cut, t1: model.bars[cut - 1].t1, climax: climaxFirst, level: climaxFirst ? ARC_LEVEL.CLIMAX : target.level };
+        const second = { ...target, bar0: cut, t0: model.bars[cut].t0, climax: !climaxFirst, level: climaxFirst ? target.level : ARC_LEVEL.CLIMAX };
+        return { split: [...segs.slice(0, best), first, second, ...segs.slice(best + 1)].map((s, i) => ({ ...s, index: i })) };
+    };
+
+    const entry = changes.at(target.bar0);
+    const dropsIn = target.index > 0 && entry !== null && entry.rise >= ARC_RULES.dropRise && entry.strength >= ARC_RULES.splitStrength;
+    if (dropsIn) {
+        // Entra de golpe: el clímax empieza donde entra la música (lo más intenso
+        // se siente al llegar). Antes el clímax eran los ÚLTIMOS compases y en
+        // What's Up Danger empezaba 15 s después del drop (2:52 en vez de 2:37),
+        // en un compás donde la música no cambia nada.
+        const ok = (end) => end >= target.bar0 + ARC_RULES.climaxMinBars && end < target.bar1 && fits(target.bar0, end) && !isShort(model, end, target.bar1);
+        const phrases = [];
+        for (let b = target.bar1 - ARC_RULES.phraseBars; b > target.bar0; b -= ARC_RULES.phraseBars) phrases.push(b);
+        for (let len = ARC_RULES.climaxMaxBars; len >= ARC_RULES.climaxMinBars; len -= ARC_RULES.phraseBars) phrases.push(target.bar0 + len);
+        const end = [...inner, ...phrases].find(ok);
+        return end === undefined ? whole() : split(end, true);
     }
 
-    // Tramo largo: el clímax son sus últimos compases (la frase que desemboca
-    // en el final o en la outro); lo anterior conserva su nivel.
-    const cut = target.bar1 - maxBars;
-    const head = { ...target, bar1: cut, t1: model.bars[cut - 1].t1, climax: false };
-    const tail = { ...target, bar0: cut, t0: model.bars[cut].t0, climax: true, level: ARC_LEVEL.CLIMAX };
-    const split = [...segs.slice(0, best), head, tail, ...segs.slice(best + 1)].map((s, i) => ({ ...s, index: i }));
-    return { split };
+    // Se llega poco a poco: el clímax es el final del tramo (la frase que
+    // desemboca en el final o en la outro); lo anterior conserva su nivel.
+    // Recortar nunca deja delante un trozo más corto que un tramo. Medido sin
+    // eso: en un tema de la comunidad la cabeza quedó de 1 compás (1.7 s) y el
+    // nivel encadenaba dos drops seguidos.
+    const ok = (start) => start > target.bar0 && start <= target.bar1 - ARC_RULES.climaxMinBars && fits(start, target.bar1) && !isShort(model, target.bar0, start);
+    const phrases = [];
+    for (let len = ARC_RULES.climaxMaxBars; len >= ARC_RULES.climaxMinBars; len -= ARC_RULES.phraseBars) phrases.push(target.bar1 - len);
+    const start = [...inner, ...phrases].find(ok);
+    return start === undefined ? whole() : split(start, false);
 }
 
 // --------------------------- 6. Drops ---------------------------
@@ -328,28 +395,15 @@ function markDrops(segs) {
 
 // --------------------------- Utilidades ---------------------------
 
+/** ¿Demasiado corto para ser un tramo? (menos de 4 compases y de 8 s). */
+function isShort(model, bar0, bar1) {
+    if (bar1 <= bar0) return true;
+    return bar1 - bar0 < ARC_RULES.minSegmentBars && model.bars[bar1 - 1].t1 - model.bars[bar0].t0 < ARC_RULES.minSegmentS;
+}
+
 function sectionAt(model, t) {
     for (const s of model.sections) if (t >= s.start && t < s.end) return s;
     return model.sections[model.sections.length - 1];
-}
-
-function nearestBar(model, t) {
-    let best = 0;
-    let bestD = Infinity;
-    for (const bar of model.bars) {
-        const d = Math.abs(bar.t0 - t);
-        if (d < bestD) {
-            bestD = d;
-            best = bar.index;
-        }
-    }
-    return best;
-}
-
-function mean(arr, a, b) {
-    let s = 0;
-    for (let i = a; i < b; i++) s += arr[i];
-    return b > a ? s / (b - a) : 0;
 }
 
 function percentile(arr, p) {

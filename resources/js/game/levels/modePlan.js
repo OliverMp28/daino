@@ -7,11 +7,14 @@
 // repetitivo. Desde la Ola 6b el plan es un REPARTO:
 //
 //   1. Cada tramo tiene un carácter (songCharacter.js): cuánto contrasta con el
-//      resto de la canción y si suena pasivo, épico, sostenido o a golpes.
+//      resto de la canción, cuánto sube o se vacía al llegar, y si suena pasivo,
+//      épico, sostenido o a golpes.
 //   2. Cada modo declara con qué carácter encaja (MODE_CASTING): la antigravedad,
 //      que se juega a golpes, con los tramos rítmicos y épicos; el vuelo, que se
 //      juega manteniendo, con los pasajes sostenidos y pasivos. Los dos piden
-//      contraste: un modo aparece donde la canción hace algo distinto.
+//      contraste: un modo aparece donde la canción hace algo distinto (o llega
+//      de golpe: una llegada que revienta es de antigravedad, una que se vacía,
+//      de vuelo).
 //   3. Solo entran los encajes claros (`minScore`, `minContrast`). Una canción
 //      que suena igual de principio a fin puede no tener ningún momento: cada
 //      canción es un mundo, y así cada nivel se siente distinto.
@@ -20,6 +23,15 @@
 //      qué modos existen (Fácil solo antigravedad, Normal+ también vuelo; en
 //      Difícil y Extremo el clímax puede ser uno). Relajado no cambia de reglas.
 //   5. Entre todas las combinaciones posibles se elige la de mejor encaje total.
+//
+// Cuánto dura (tras el playtest de la 6b): lo que dura su pasaje. Un modo entra
+// donde la canción cambia y SALE donde vuelve a cambiar: es siempre un tramo del
+// arco entero, y las fronteras de los tramos son cambios de la música
+// (songChanges.js). Antes el momento se cortaba en frases de 4 compases desde su
+// inicio hasta 24 s, y se jugó así: el vuelo de Dawn of Faith acababa a las 1:42
+// y la antigravedad de Time a las 1:30 con la canción sonando igual ("termina,
+// pero no suena distinto"). Un pasaje de más de 40 s (lo que dura como mucho un
+// clímax) no es un momento: es media canción.
 //
 // Cómo se entra y se sale: por un portal en la anacrusa del primer compás (el
 // mismo instante que un acelerón, `pickupTime`), nunca encima de una acción. Antes
@@ -40,27 +52,36 @@ import { describeSegments } from './songCharacter.js';
  * `CHARTER_VERSION` en chartFormat.js al hacerlo.
  */
 export const MODE_RULES = Object.freeze({
-    /** Frases preferidas dentro de un tramo largo, en compases. */
-    phraseBars: 4,
-    maxBars: 16,
-    /** Un momento dura entre esto y esto (segundos). */
+    /** Un momento (un tramo entero) dura entre esto y esto (segundos); el máximo, el de un clímax (songArc.js). */
     minS: 10,
-    maxS: 24,
+    maxS: 40,
     /** Ningún modo antes de este segundo ni de esta fracción de la canción. */
     minStartS: 24,
     minStartFraction: 0.2,
-    /** Segundos corriendo como mínimo entre dos momentos. */
-    minGapS: 12,
+    /**
+     * Segundos corriendo como mínimo entre dos momentos. 10 y no 12: en Dawn of
+     * Faith, entre el vuelo del break y la antigravedad del clímax suena la
+     * vuelta del bajo (11.1 s), un tramo entero corriendo.
+     */
+    minGapS: 10,
     /** Encaje mínimo de un modo con un tramo… */
     minScore: 0.5,
     /**
-     * …y contraste mínimo del tramo: sin algo distinto que jugar, no hay momento.
-     * El clímax ya es un momento único de la canción y pide menos (medido en los
-     * oficiales: con 0.28 para todos, un estribillo que vuelve se llevaba el modo
-     * antes que el puente de la misma canción).
+     * …y cuánto tiene que ser un momento para ese modo (`MODE_CASTING.event`):
+     * sin algo distinto que jugar, no hay momento. El clímax ya es un momento
+     * único de la canción y pide menos (medido en los oficiales: con 0.28 para
+     * todos, un estribillo que vuelve se llevaba el modo antes que el puente de
+     * la misma canción).
      */
     minContrast: 0.4,
     climaxMinContrast: 0.28,
+    /**
+     * Al repartir, el clímax (donde la dificultad lo permite) cuenta este encaje
+     * de más: es el momento más intenso de la canción. Sin esto, en Dawn of
+     * Faith la antigravedad se iba al tramo de después del clímax por 0.006 de
+     * encaje, con una entrada que apenas cambia el sonido.
+     */
+    climaxBonus: 0.1,
     /** Golpes o pulsos jugables mínimos en el tramo (en el pulso, con la música sonando). */
     minPlayableSlots: 8,
     /**
@@ -80,17 +101,29 @@ export const MODE_RULES = Object.freeze({
  * Con qué carácter encaja cada modo (songCharacter.js). Añadir un modo = una
  * entrada aquí además de la de systems/modes/.
  *
+ *   event(c)      Cuánto es un momento el tramo PARA ESTE MODO [0,1]: cuánto se
+ *                 aparta de lo típico de la canción, o cuánto cambia al llegar
+ *                 si llega hacia el carácter del modo. Tras el playtest de la 6b:
+ *                 el final de What's Up Danger entra con un golpe que es lo más
+ *                 intenso del tema pero suena como sus estrofas fuertes
+ *                 (contraste con lo típico 0.30), y el modo se lo llevaba un
+ *                 tramo menor. Una llegada que revienta hacia lo más intenso es
+ *                 un momento de antigravedad; una que se vacía hacia la calma,
+ *                 de vuelo. Una estrofa normal tras un estribillo también baja,
+ *                 pero a lo típico: no es un momento (de ahí epic y passive).
  *   affinity(c)   Encaje [0,1] con un tramo de carácter `c`.
  *   minDensity    Densidad de golpes mínima respecto a la típica (un modo que se
  *                 juega a golpes no cabe en un pasaje casi sin golpes).
  */
 export const MODE_CASTING = Object.freeze({
     flip: Object.freeze({
-        affinity: (c) => 0.45 * c.contrast + 0.3 * c.rhythmic + 0.25 * c.epic,
+        event: (c) => Math.max(c.contrast, c.rises ? c.arrival * c.epic : 0),
+        affinity: (c) => 0.45 * MODE_CASTING.flip.event(c) + 0.3 * c.rhythmic + 0.25 * c.epic,
         minDensity: 0.35,
     }),
     fly: Object.freeze({
-        affinity: (c) => 0.45 * c.contrast + 0.4 * c.sustain + 0.15 * Math.max(c.passive, 0.6 * c.epic),
+        event: (c) => Math.max(c.contrast, c.rises ? 0 : c.arrival * c.passive),
+        affinity: (c) => 0.45 * MODE_CASTING.fly.event(c) + 0.4 * c.sustain + 0.15 * Math.max(c.passive, 0.6 * c.epic),
         minDensity: 0,
     }),
 });
@@ -137,21 +170,29 @@ export function planModes({ arc, model, profile, tMax }) {
 
     const characters = describeSegments(model, arc);
     const from = Math.max(R.minStartS, model.durationSec * R.minStartFraction);
+    // Un tramo empieza donde la canción cambia, salvo cuando songArc.js recorta
+    // un clímax largo por una frase en la que no cambia nada. Un modo entra en un
+    // cambio, y sale en un cambio o en el borde del clímax, donde el nivel
+    // también cambia (la velocidad sube o se suelta).
+    const changesAt = (bar) => arc.changes?.at(bar) != null;
 
     const candidates = [];
     for (const seg of arc.segments) {
         const c = characters[seg.index];
         if (seg.index === 0 || seg.level < 1 || seg.t0 < from - 1e-6) continue;
-        if (c.contrast < (seg.climax ? R.climaxMinContrast : R.minContrast)) continue;
+        const next = arc.segments[seg.index + 1];
+        if (!changesAt(seg.bar0) || (next !== undefined && !changesAt(next.bar0) && !seg.climax && !next.climax)) continue;
         const span = spanOf(model, seg, tMax);
         if (span === null || playableSlots(model, span) < R.minPlayableSlots) continue;
         for (const [modeId, rule] of allowed) {
             const cast = MODE_CASTING[modeId];
             if (seg.climax && !rule.climax) continue;
+            if (cast.event(c) < (seg.climax ? R.climaxMinContrast : R.minContrast)) continue;
             if (c.density < cast.minDensity) continue;
             const score = round3(cast.affinity(c));
             if (score < R.minScore) continue;
-            candidates.push({ mode: modeId, segment: seg.index, character: c, score, ...span });
+            const weight = score + (seg.climax ? R.climaxBonus : 0);
+            candidates.push({ mode: modeId, segment: seg.index, character: c, score, weight, ...span });
         }
     }
 
@@ -174,9 +215,10 @@ export function planModes({ arc, model, profile, tMax }) {
 }
 
 /**
- * La combinación de mejor encaje total: como mucho `budget` momentos, cada modo
- * una vez y separados `minGapS`. Pocos candidatos (≤ 2 por tramo): basta con
- * probar las combinaciones. A igual encaje, la que empieza antes.
+ * La combinación de mejor encaje total (el del clímax, con `climaxBonus`): como
+ * mucho `budget` momentos, cada modo una vez y separados `minGapS`. Pocos
+ * candidatos (≤ 2 por tramo): basta con probar las combinaciones. A igual
+ * encaje, la que empieza antes.
  */
 function bestCombination(candidates, budget) {
     const R = MODE_RULES;
@@ -193,7 +235,7 @@ function bestCombination(candidates, budget) {
             const c = candidates[i];
             if (chosen.some((o) => clash(o, c))) continue;
             chosen.push(c);
-            visit(i + 1, chosen, total + c.score);
+            visit(i + 1, chosen, total + c.weight);
             chosen.pop();
         }
     };
@@ -208,28 +250,20 @@ function earlier(a, b) {
 }
 
 /**
- * Compases del momento dentro de su tramo: el tramo entero si cabe en
- * [minS, maxS] (sus fronteras son las de la música); si es más largo, las frases
- * de 4 compases (o de 2) más largas que quepan desde su inicio. La vuelta a
- * correr, antes de la última acción del nivel.
+ * El momento es el tramo entero: entra con él (un cambio de la canción) y sale
+ * con él (el siguiente), por portales en sus anacrusas. Un tramo de menos de
+ * `minS` o de más de `maxS`, o que termina con la canción o después de la
+ * última acción del nivel, no es un momento.
  */
 function spanOf(model, seg, tMax) {
     const R = MODE_RULES;
     const bars = model.bars;
-    const segBars = seg.bar1 - seg.bar0;
-    const counts = [segBars];
-    for (let n = Math.floor(Math.min(segBars, R.maxBars) / R.phraseBars) * R.phraseBars; n >= R.phraseBars; n -= R.phraseBars) counts.push(n);
-    for (let n = Math.floor(Math.min(segBars, R.maxBars) / 2) * 2; n >= 2; n -= 2) counts.push(n);
-    for (const n of counts) {
-        const bar1 = seg.bar0 + n;
-        if (n > segBars || bar1 >= bars.length) continue;
-        const dur = bars[bar1].t0 - bars[seg.bar0].t0;
-        if (dur < R.minS || dur > R.maxS) continue;
-        const tOut = pickupTime(model, bar1);
-        if (tOut > tMax) continue;
-        return { bar0: seg.bar0, bar1, tIn: pickupTime(model, seg.bar0), tOut };
-    }
-    return null;
+    if (seg.bar1 >= bars.length) return null;
+    const dur = bars[seg.bar1].t0 - bars[seg.bar0].t0;
+    if (dur < R.minS - 1e-6 || dur > R.maxS + 1e-6) return null;
+    const tOut = pickupTime(model, seg.bar1);
+    if (tOut > tMax) return null;
+    return { bar0: seg.bar0, bar1: seg.bar1, tIn: pickupTime(model, seg.bar0), tOut };
 }
 
 /** Huecos del pulso con la música sonando (donde puede ir una acción de cualquier modo). */

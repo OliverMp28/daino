@@ -67,9 +67,10 @@ docker compose exec -T php composer analysis:enqueue -- --charter-below=4  # com
 Tras subir `CHARTER_VERSION` (cualquier cambio en el charter), `--charter-below=<nueva>`
 re-chartea los niveles de la comunidad con su análisis guardado y la dificultad que
 su autor tuviera pedida; los oficiales se re-hornean (ver abajo). La versión actual
-es la 4 (marchas de velocidad hacia el clímax, doc 10 "Afinado de velocidad"). Un
-nivel analizado con un analizador anterior se vuelve a analizar en ese re-chart
-(medido: 37-49 s por canción de 3-4 min; con el análisis en caché, ~2 s).
+es la 7 (tramos en los cambios que se oyen, clímax desde su drop y modos de tramo
+entero: doc 10, "Ajustes tras el playtest de la 6b"). Un nivel analizado con un
+analizador anterior se vuelve a analizar en ese re-chart (medido: 37-49 s por
+canción de 3-4 min; con el análisis en caché, ~2 s).
 
 `ANALYZER_ENABLED=false` en `.env` desactiva el flujo: publicar vuelve a ser
 inmediato con el chart del navegador (el sistema degrada, no se rompe).
