@@ -41,6 +41,7 @@ import {
     DINO_CENTER_X,
 } from './physics.js';
 import { modeChanges } from './modeTimeline.js';
+import { movementMode } from './modes/index.js';
 import { createFlightCourse } from './flightCourse.js';
 import { asSpeedProfile, speedProfileOf } from './speedProfile.js';
 import { virtualPlayerScript } from './virtualPlayer.js';
@@ -327,10 +328,10 @@ export function validateChart(chart, opts = {}) {
     });
 }
 
-/** Resolución del barrido de `timingWindowS`: 5 ms, por debajo de un frame. */
+/** Resolución del barrido de `timingMarginsS`: 5 ms, por debajo de un frame. */
 const WINDOW_SCAN_STEP_S = 0.005;
 const WINDOW_SCAN_MAX_S = 0.5;
-const windowCache = new Map();
+const marginCache = new Map();
 
 /**
  * Anchura, en segundos, del margen de error de UNA acción aislada: el intervalo
@@ -357,9 +358,30 @@ const windowCache = new Map();
  * @returns {number}  0 si ni la pulsación exacta sobrevive.
  */
 export function timingWindowS(kind, speedPxS) {
+    const { early, late } = timingMarginsS(kind, speedPxS);
+    return Math.round((early + late) * 1000) / 1000;
+}
+
+/**
+ * Los dos lados del margen de `timingWindowS`: cuánto se puede adelantar
+ * (`early`) y retrasar (`late`) la pulsación de una acción aislada. Un
+ * obstáculo exige tanta precisión como su lado más estrecho.
+ *
+ * @param {string} kind
+ * @param {number} speedPxS
+ * @returns {{ early: number, late: number }}  0 y 0 si ni la pulsación exacta sobrevive.
+ */
+export function timingMarginsS(kind, speedPxS) {
     const key = `${kind}@${Math.round(speedPxS)}`;
-    const cached = windowCache.get(key);
+    const cached = marginCache.get(key);
     if (cached !== undefined) return cached;
+    // Los modos que lo saben calcular sin simular (un salto al correr) lo dan directo.
+    const known = OBSTACLE_KIND[kind] !== undefined ? movementMode(OBSTACLE_KIND[kind].mode ?? 'run').marginsS?.(OBSTACLE_KIND[kind], Math.round(speedPxS)) : null;
+    if (known !== null && known !== undefined) {
+        const fast = { early: Math.min(WINDOW_SCAN_MAX_S, Math.round(known.early * 1000) / 1000), late: Math.min(WINDOW_SCAN_MAX_S, Math.round(known.late * 1000) / 1000) };
+        marginCache.set(key, fast);
+        return fast;
+    }
 
     const def = OBSTACLE_KIND[kind];
     const events = [{ t: 5, type: 'obstacle', kind }];
@@ -375,15 +397,16 @@ export function timingWindowS(kind, speedPxS) {
     const target = obstacles.findIndex((o) => o.kind === kind && o.t === 5);
     const survives = (offset) => simulateRun(obstacles, speedPxS, { modes, pressOffset: (i) => (i === target ? offset : 0) }).ok;
 
-    let width = 0;
+    const out = { early: 0, late: 0 };
     if (target >= 0 && survives(0)) {
         const steps = Math.round(WINDOW_SCAN_MAX_S / WINDOW_SCAN_STEP_S);
         let early = 0;
         while (early < steps && survives(-(early + 1) * WINDOW_SCAN_STEP_S)) early++;
         let late = 0;
         while (late < steps && survives((late + 1) * WINDOW_SCAN_STEP_S)) late++;
-        width = Math.round((early + late) * WINDOW_SCAN_STEP_S * 1000) / 1000;
+        out.early = Math.round(early * WINDOW_SCAN_STEP_S * 1000) / 1000;
+        out.late = Math.round(late * WINDOW_SCAN_STEP_S * 1000) / 1000;
     }
-    windowCache.set(key, width);
-    return width;
+    marginCache.set(key, out);
+    return out;
 }

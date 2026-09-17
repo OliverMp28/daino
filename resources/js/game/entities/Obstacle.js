@@ -14,6 +14,7 @@
 // Kinds (config.js OBSTACLE_KIND):
 //   CACTUS_SMALL — saguaro alto/angosto, apoyado en el suelo.
 //   CACTUS_WIDE  — cluster de 3 cactus, bajo/ancho, apoyado en el suelo.
+//   CACTUS_ROW*  — hilera de 2 a 8 saguaros: salto que exige precisión.
 //   PTERO        — pterodáctilo volador (altitude > 0): se pasa agachándose.
 //   CRYSTAL_*    — cristales de la antigravedad (Ola 6a), en el suelo o
 //                  colgando del techo (el mismo sprite reflejado).

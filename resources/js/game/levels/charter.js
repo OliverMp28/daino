@@ -23,6 +23,8 @@
 //   flightCharter  las notas mantenidas de cada tramo de vuelo (Ola 6b)
 //   patterns     compás a compás: dónde va cada acción y cuál, con memoria de
 //                frases (un riff que vuelve es un patrón que vuelve)
+//   accents      qué golpes fuertes llevan una variante que exige precisión y
+//                cuánto, hasta la exigencia de la dificultad (challenge.js)
 //   aquí         silencios demasiado largos, tipo de obstáculo, validación
 //                jugando y eventos para el runtime
 //
@@ -36,10 +38,11 @@
 
 import { OBSTACLE_KIND, speedFromBpm } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
-import { toSimHolds, toSimModes, toSimObstacles, validatePlayability, timingWindowS, readerOffsetS } from '../systems/playability.js';
+import { toSimHolds, toSimModes, toSimObstacles, validatePlayability, readerOffsetS } from '../systems/playability.js';
 import { createFlightCourse, flightMargin } from '../systems/flightCourse.js';
 import { createSpeedProfile } from '../systems/speedProfile.js';
 import { SPEED_RULES, planSpeed } from './speedPlan.js';
+import { accentVariant, assignAccents } from './accents.js';
 import { MODE_RULES, createModeGuide, modeEvents, planModes } from './modePlan.js';
 import { chartHolds } from './flightCharter.js';
 import { Seeded } from './Seed.js';
@@ -59,7 +62,7 @@ import {
     normalizeRequestedDifficulty,
     resolveDifficulty,
 } from './difficulty.js';
-import { PAIR_GAP, chooseBarActions, createPhraseMemory, duckThreshold, pairGap } from './patterns.js';
+import { chooseBarActions, createPhraseMemory, duckThreshold, pairGap, segmentGrooves } from './patterns.js';
 
 /**
  * Reglas del charter. Cambiar cualquiera altera los charts generados: sube
@@ -82,9 +85,8 @@ export const CHARTER_RULES = Object.freeze({
      */
     speedTempoMin: 90,
     speedTempoMax: 200,
-    // La aceleración del mundo vive en speedPlan.js (SPEED_RULES).
-    /** Un cactus de acento solo si su margen de error supera N veces la tolerancia. */
-    accentWindowFactor: 2.4,
+    // La aceleración del mundo vive en speedPlan.js (SPEED_RULES) y la exigencia
+    // de los acentos en accents.js (ACCENT_RULES).
     /** En un tramo de reposo, el silencio de juego máximo (`maxRestS`) se alarga tanto. */
     restLevelFactor: 1.6,
     /** Techo de reparaciones del validador (defensa ante bucles). */
@@ -121,6 +123,7 @@ export function gameplayTempo(bpm) {
  * @property {number} topSpeedPxS     Velocidad máxima del nivel.
  * @property {Array<{ mode: string, t0: number, t1: number, score: number }>} modes  Momentos con otro modo de movimiento.
  * @property {number} holds           Notas mantenidas (vuelo).
+ * @property {import('./accents.js').AccentSummary} accents  Saltos con acento y su exigencia (antes de reparar).
  */
 
 /**
@@ -166,17 +169,22 @@ export function buildChart(analysis, opts = {}) {
     const structure = [...structureEvents(arc), ...modeEvents(plan)];
     const simModes = toSimModes(structure);
 
-    const ctx = { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, prng, modes, simModes, structure };
+    const ctx = {
+        model, arc, profile, speed, readerOk, unlocked, tMin, tMax, prng, modes, simModes, structure,
+        introActions: CHARTER_RULES.introActions,
+        durationSec: model.durationSec,
+    };
     let actions = [];
     let holds = [];
     let fillers = 0;
     let repaired = 0;
+    let accents = { accents: 0, hazard: 0, budget: 0, scale: 0 };
     if (tMax > tMin && model.bars.length > 0) {
         actions = chartActions(ctx);
         const before = actions.length;
         actions = fillLongRests(actions, ctx);
         fillers = actions.length - before;
-        assignKinds(actions, ctx);
+        accents = assignKinds(actions, ctx);
         for (const span of plan) {
             if (span.mode === 'fly') holds.push(...chartHolds({ span, model, arc, profile, unlocked }));
         }
@@ -224,6 +232,7 @@ export function buildChart(analysis, opts = {}) {
             topSpeedPxS: speed.maxSpeed,
             modes: plan.map((s) => ({ mode: s.mode, t0: s.tIn, t1: s.tOut, at: s.at, score: s.score })),
             holds: holds.length,
+            accents,
         },
     };
 }
@@ -292,8 +301,9 @@ export function unlockSchedule(arc, profile) {
     };
     return {
         duck: at(profile.unlock.duck),
-        wide: at(profile.unlock.wide),
+        accent: at(profile.unlock.accent),
         offbeat: at(profile.unlock.offbeat),
+        sixteenth: at(profile.unlock.sixteenth ?? STAGE.NEVER),
         combo: at(profile.unlock.combo),
     };
 }
@@ -303,6 +313,7 @@ export function unlockSchedule(arc, profile) {
 function chartActions(ctx) {
     const { model, arc, profile, speed, readerOk, unlocked, tMin, tMax, modes } = ctx;
     const memory = createPhraseMemory();
+    const groove = segmentGrooves(model, arc);
     const threshold = duckThreshold(model);
     const placed = [];
     /** Acciones colocadas en cada tramo de modo (para su estreno). */
@@ -359,7 +370,9 @@ function chartActions(ctx) {
 
         const span = modes.spanAt(bar.t0);
         const spanCount = span === null ? 0 : (spanCounts.get(span) ?? 0);
+        const segGroove = groove[arcBar.segment];
         const chosen = chooseBarActions({
+            groove: (beats, pos) => segGroove.get(`${beats}:${pos}`) ?? 0,
             bar,
             nextBar: model.bars[bar.index + 1] ?? null,
             nextArcBar: arc.bars[bar.index + 1] ?? null,
@@ -509,41 +522,22 @@ function longestRest(from, to, freeSpans) {
 
 // --------------------------- Tipo de obstáculo ---------------------------
 
+/**
+ * Qué obstáculo lleva cada acción: el de su papel (saltar, agacharse, invertir),
+ * y los saltos sobre los golpes fuertes, el de acento que les toca (accents.js).
+ * Sin azar: el golpe manda.
+ *
+ * @returns {import('./accents.js').AccentSummary}
+ */
 function assignKinds(actions, ctx) {
-    const { model, profile, speed, unlocked, prng } = ctx;
-    const tol = profile.toleranceS;
-    const jj = PAIR_GAP.jumpJump(0, tol);
-
-    for (let i = 0; i < actions.length; i++) {
-        const a = actions[i];
+    const { prng } = ctx;
+    for (const a of actions) {
+        a.accentTarget = null;
         if (a.type === 'flip') continue;
-        if (a.type === 'duck') {
-            a.kind = pickKindForRole('duck', prng);
-            continue;
-        }
-        const prev = actions[i - 1];
-        const next = actions[i + 1];
-        const cross = a.t + actionLeadS(OBSTACLE_KIND.CACTUS_SMALL);
-        const roomy = (prev === undefined || a.t - prev.t >= jj + 0.15) && (next === undefined || next.t - a.t >= jj + 0.15);
-        let recentAccents = 0;
-        for (let k = Math.max(0, i - 6); k < i; k++) if (OBSTACLE_KIND[actions[k].kind]?.role === 'accent') recentAccents++;
-        const accentKind = pickKindForRole('accent', null);
-        const windowOk = accentKind !== null && timingWindowS(accentKind, speed.speedAt(cross)) >= CHARTER_RULES.accentWindowFactor * tol;
-        const allowed = unlocked('wide', a.t) && roomy && windowOk && recentAccents < 2;
-
-        let role = 'jump';
-        if (allowed) {
-            if (a.echo !== null && a.echo.kind !== undefined) {
-                // Frase repetida: el mismo obstáculo que la primera vez.
-                role = OBSTACLE_KIND[a.echo.kind]?.role === 'accent' ? 'accent' : 'jump';
-            } else {
-                const accent = a.forced || (a.slot.metric >= 0.8 && a.slot.strength >= 0.55 && (!model.onsets.hasColor || a.slot.low >= 0.34));
-                if (accent || prng.next() < 0.1) role = 'accent';
-            }
-        }
-        a.kind = pickKindForRole(role, prng) ?? pickKindForRole('jump', prng);
+        a.kind = pickKindForRole(a.type === 'duck' ? 'duck' : 'jump', prng);
     }
     assignFlipKinds(actions, ctx);
+    return assignAccents(actions, ctx);
 }
 
 /**
@@ -563,7 +557,9 @@ function assignFlipKinds(actions, ctx) {
             span = s;
             onFloor = true;
         }
-        a.kind = pickKindForRole('flip', null, onFloor ? 'floor' : 'ceiling');
+        const base = pickKindForRole('flip', null, onFloor ? 'floor' : 'ceiling');
+        // Un acento conserva su margen al cambiar de superficie (accents.js).
+        a.kind = (a.accentTarget ?? null) !== null ? (accentVariant(base, a.t, a.accentTarget, ctx) ?? base) : base;
         onFloor = !onFloor;
     }
 }
@@ -619,8 +615,11 @@ function repairUnplayable(actions, holds, ctx) {
             continue;
         }
         const hit = actions[i];
-        if (OBSTACLE_KIND[hit.kind]?.role === 'accent') {
-            hit.kind = pickKindForRole('jump', null);
+        const accentOf = OBSTACLE_KIND[hit.kind]?.accentOf;
+        if (accentOf !== undefined) {
+            // Un acento que no se deja jugar vuelve a ser la acción normal.
+            hit.kind = accentOf;
+            hit.accentTarget = null;
             continue;
         }
         const weight = (a) => a.score + (a.forced ? 10 : 0);

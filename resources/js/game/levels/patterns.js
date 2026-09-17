@@ -8,11 +8,15 @@
 //      Lo decide charter.js: los decimales se reparten de forma periódica por
 //      posición en el tramo (2.5 por compás = 2-3-2-3), así la densidad media
 //      es la pedida y la acción extra cae siempre en el mismo compás de la frase.
-//   2. DÓNDE: cada hueco puntúa por la fuerza del golpe que suena ahí y por su
-//      peso métrico (el primer tiempo manda). En calma solo cuentan los tiempos
-//      fuertes; a contratiempo solo entra una síncopa real (un golpe fuerte
-//      donde el pulso no lo tiene) y solo cuando la dificultad la desbloquea.
-//      Donde la música calla, no hay pulso que jugar.
+//   2. DÓNDE: cada hueco puntúa por la fuerza del golpe que suena ahí, por su
+//      peso métrico (el primer tiempo manda), por el groove del tramo (la
+//      fuerza media de esa posición en sus compases: el patrón de bombo y caja
+//      que se repite) y por un cambio de acorde. En calma solo cuentan los
+//      tiempos fuertes. Fuera del pulso solo hay acción sobre un golpe que se
+//      oye: a contratiempo, una síncopa real (o, en el clímax de las
+//      dificultades altas, un golpe); en semicorchea, un golpe que manda sobre
+//      el pulso y el contratiempo de al lado (el bombo sincopado). Donde la
+//      música calla, no hay pulso que jugar.
 //   3. MEMORIA DE FRASES: si el compás suena como uno anterior del mismo nivel
 //      (misma huella de golpes graves y agudos), repite su patrón. Un riff que
 //      vuelve es un patrón que vuelve: el jugador lo reconoce y lo toca "de
@@ -249,7 +253,7 @@ export function chooseBarActions(ctx) {
     if (echo !== null) {
         // Repetir el patrón de la frase que suena igual, hueco a hueco.
         for (const pick of echo.picks) {
-            const cand = candidates.find((c) => c.si === pick.si);
+            const cand = candidates.find((c) => c.slot.pos === pick.pos);
             if (cand !== undefined && chosen.length < ctx.target + (cand.forced ? 1 : 0)) {
                 tryAdd(cand, allowedType(pick.type, cand, ctx), pick.event);
             }
@@ -294,6 +298,7 @@ export function chooseBarActions(ctx) {
 
     ctx.memory.remember(bar.index, signature, arcBar.level, ctx.target, chosen.map((a) => ({
         si: bar.slots.indexOf(a.slot),
+        pos: a.slot.pos,
         type: a.type,
         event: a,
     })), barMode);
@@ -303,17 +308,72 @@ export function chooseBarActions(ctx) {
 /** Síncopa de verdad: un golpe fuerte y claramente por encima del pulso que lo rodea. */
 const DEFAULT_OFFBEAT = Object.freeze({ strength: 0.4, ratio: 0.85 });
 
+/**
+ * Fuera del pulso solo hay acción sobre un golpe que se oye. Tras el playtest de
+ * "la dificultad que se siente": en el clímax de What's Up Danger (un muro de
+ * guitarras que golpea en negras, con la caja en 2 y 4) la subdivisión por
+ * energía ponía cristales en contratiempos sin nada (17 de 72 inversiones sobre
+ * golpes por debajo de 0.2), y "no se sentía acorde a la canción".
+ */
+const OFFBEAT_FLOOR = 0.2;
+
+/** Cuánto pesa en la puntuación el groove del tramo (fuerza media de esa posición en sus compases). */
+const GROOVE_WEIGHT = 0.3;
+
+/** Cuánto pesa un cambio de acorde en el pulso donde cae. */
+const CHORD_WEIGHT = 0.1;
+
 /** Sin plan de modos: se corre de principio a fin. */
 const NO_MODES = Object.freeze({ constant: true, modeAt: () => 'run', allows: () => true, spanAt: () => null });
+
+/**
+ * Groove de cada tramo: fuerza media de cada posición del compás (pulso,
+ * contratiempo, semicorchea) en los compases del tramo con el mismo número de
+ * beats. Es el patrón de bombo y caja que se repite, sin el ruido de cada compás.
+ *
+ * @returns {Array<Map<string, number>>}  Por tramo, `"beats:pos"` → fuerza media.
+ */
+export function segmentGrooves(model, arc) {
+    const sums = arc.segments.map(() => new Map());
+    const counts = arc.segments.map(() => new Map());
+    for (const bar of model.bars) {
+        const seg = arc.bars[bar.index].segment;
+        counts[seg].set(bar.beats, (counts[seg].get(bar.beats) ?? 0) + 1);
+        for (const slot of barGrid(bar)) {
+            const key = `${bar.beats}:${slot.pos}`;
+            sums[seg].set(key, (sums[seg].get(key) ?? 0) + slot.strength);
+        }
+    }
+    return sums.map((m, seg) => {
+        const out = new Map();
+        for (const [key, sum] of m) out.set(key, sum / counts[seg].get(Number(key.split(':')[0])));
+        return out;
+    });
+}
+
+/** Pulso, contratiempo y semicorcheas con golpe de un compás, en orden temporal. */
+export function barGrid(bar) {
+    const extra = bar.sixteenths ?? [];
+    if (extra.length === 0) return bar.slots;
+    return [...bar.slots, ...extra].sort((a, b) => a.pos - b.pos);
+}
+
+/** Hueco del pulso del beat `beat` (o el primero del compás siguiente). */
+function beatSlot(bar, nextBar, beat) {
+    const k = beat - bar.b0;
+    if (k < bar.beats) return bar.slots[2 * k] ?? null;
+    return nextBar?.slots[0] ?? null;
+}
 
 function barCandidates(ctx) {
     const { bar, nextBar, arcBar, segment, unlocked, tMin, tMax, modes } = ctx;
     const out = [];
     const dropBar = segment.drop && bar.index === segment.bar0;
     let dropForced = false;
+    const grid = barGrid(bar);
 
-    for (let si = 0; si < bar.slots.length; si++) {
-        const slot = bar.slots[si];
+    for (let si = 0; si < grid.length; si++) {
+        const slot = grid[si];
         if (slot.t < tMin || slot.t > tMax) continue;
         // Alrededor de un portal no hay acciones (modePlan.js).
         if (!modes.allows(slot.t)) continue;
@@ -324,17 +384,24 @@ function barCandidates(ctx) {
         if (mode !== 'run' && ctx.modeIntroLeft > 0 && !slot.onBeat) continue;
 
         if (!slot.onBeat) {
-            if (arcBar.level < 2 || !unlocked('offbeat', slot.t)) continue;
-            const neighbor = Math.max(bar.slots[si - 1]?.strength ?? 0, bar.slots[si + 1]?.strength ?? nextBar?.slots[0]?.strength ?? 0);
-            const rule = ctx.profile.offbeat ?? DEFAULT_OFFBEAT;
-            const syncopation = slot.strength >= rule.strength && slot.strength >= rule.ratio * neighbor;
-            // En el clímax de las dificultades altas se juega la subdivisión:
-            // contratiempos con golpe, aunque no sea una síncopa, o con la
-            // música a tope alrededor.
-            const climax = ctx.profile.climaxOffbeat ?? null;
-            const subdivision = climax !== null && arcBar.level === 4
-                && (slot.strength >= climax.strength || ctx.energyMean(slot.t - 0.15, slot.t + 0.15) >= climax.energy);
-            if (!syncopation && !subdivision) continue;
+            if (arcBar.level < 2 || !unlocked('offbeat', slot.t) || slot.strength < OFFBEAT_FLOOR) continue;
+            const around = Math.max(beatSlot(bar, nextBar, slot.beat)?.strength ?? 0, beatSlot(bar, nextBar, slot.beat + 1)?.strength ?? 0);
+            if (slot.sub === 2) {
+                const rule = ctx.profile.offbeat ?? DEFAULT_OFFBEAT;
+                const syncopation = slot.strength >= rule.strength && slot.strength >= rule.ratio * around;
+                // En el clímax de las dificultades altas se juega la subdivisión
+                // que suena: un contratiempo con golpe aunque no sea una síncopa.
+                const climax = ctx.profile.climaxOffbeat ?? null;
+                const subdivision = climax !== null && arcBar.level === 4 && slot.strength >= climax.strength;
+                if (!syncopation && !subdivision) continue;
+            } else {
+                // Semicorchea: solo un golpe que manda sobre el pulso y el
+                // contratiempo que tiene al lado (el bombo sincopado, no el charles).
+                const rule = ctx.profile.sixteenth ?? null;
+                if (rule === null || !unlocked('sixteenth', slot.t)) continue;
+                const and = bar.slots[2 * (slot.beat - bar.b0) + 1]?.strength ?? 0;
+                if (slot.strength < rule.strength || slot.strength < rule.ratio * Math.max(around, and)) continue;
+            }
         } else if (arcBar.level <= 1 && slot.metric < 0.8 && slot.strength < (ctx.profile.calmBeatStrength ?? 0.5)) {
             continue;
         }
@@ -345,6 +412,11 @@ function barCandidates(ctx) {
         const prior = slot.onBeat ? (slot.metric >= 1 ? 0.22 : slot.metric >= 0.8 ? 0.12 : 0.05) : 0;
         let score = Math.pow(slot.strength, 0.8) * (0.55 + 0.45 * slot.metric) + prior;
         if (ctx.previousPositions?.has(slot.pos)) score += 0.08;
+        // El groove del tramo: una posición que suena en casi todos sus compases
+        // pesa aunque en este suene algo menos. Así el patrón sigue al bombo y la
+        // caja de la canción en vez de a los golpes sueltos de cada compás.
+        if (ctx.groove !== undefined) score += GROOVE_WEIGHT * ctx.groove(bar.beats, slot.pos);
+        if (slot.chord) score += CHORD_WEIGHT;
         // En los tramos que empujan, el golpe brillante del pulso (la caja, las
         // palmas) gana peso frente al bombo del tiempo 3: "bum-CLAP" en vez de
         // "bum . bum". Medido sin esto: a 128-160 BPM el bombo ganaba siempre y
@@ -375,7 +447,10 @@ function reservedDownbeat(ctx) {
     if (slot === undefined || slot.t < ctx.tMin || slot.t > ctx.tMax || !ctx.modes.allows(slot.t)) return null;
     if (slot.strength === 0 && ctx.energyMean(slot.t - 0.3, slot.t + 0.3) < 0.06) return null;
     const type = ctx.modes.modeAt(slot.t) === 'flip' ? 'flip' : 'jump';
-    return { t: slot.t, type, score: Math.pow(slot.strength, 0.8) + 0.22 };
+    // Con el mismo groove que puntúa a los candidatos: sin él, cualquier golpe del
+    // final del compás que suene en el groove rompía la reserva y el riff perdía su 1.
+    const groove = ctx.groove !== undefined ? GROOVE_WEIGHT * ctx.groove(next.beats, 0) : 0;
+    return { t: slot.t, type, score: Math.pow(slot.strength, 0.8) + 0.22 + groove };
 }
 
 function preferredType(cand, ctx, chosen) {

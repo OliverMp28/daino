@@ -7,7 +7,8 @@
 //
 // Invariantes protegidos:
 //   - Determinismo: mismo análisis + misma seed + misma dificultad ⇒ mismo chart.
-//   - Rejilla: toda acción cae en un pulso o un contratiempo de la canción.
+//   - Rejilla: toda acción cae en un pulso, un contratiempo o (en canciones
+//     rectas de ≤ 115 BPM) una semicorchea de la canción.
 //   - Dinámica: la densidad sigue al arco (reposo < calma < groove < empuje < clímax).
 //   - Estructura: un clímax en la segunda mitad, el mundo acelera hacia él y
 //     nunca por debajo de la base, drops con respiración antes (el plan de
@@ -19,6 +20,8 @@
 //   - Emoción (playtest de la 6b): mientras la música suena no hay silencios de
 //     juego más largos que el máximo de su dificultad, y What's Up Danger en
 //     Extremo es denso y rápido de verdad.
+//   - Música (segundo playtest de la dificultad): fuera del pulso solo hay acción
+//     sobre un golpe que se oye. La exigencia de los acentos, en challenge.test.mjs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,8 +52,19 @@ function apmIn(chart, t0, t1) {
     return (obstacles(chart).filter((e) => e.t >= t0 && e.t < t1).length / Math.max(1e-6, t1 - t0)) * 60;
 }
 
-/** ¿Cae t en un beat o a mitad de dos beats de la lista (±tol)? */
-function onGrid(t, beats, tol = 0.002) {
+/**
+ * ¿Cae t en un hueco de la rejilla de la canción (±tol)? Beats y contratiempos y,
+ * si la canción admite semicorcheas (musicModel.js: recta y ≤ 115 BPM), también
+ * la "e" y la "a" de cada beat.
+ */
+function onGridOf(analysis, tol = 0.002) {
+    const model = buildMusicModel(analysis);
+    const quarters = model.bars.some((bar) => bar.sixteenths.length > 0) || (model.swing === 0.5 && model.beatPeriodS / 4 >= 0.13);
+    return (t) => onGrid(t, analysis.beats, tol, quarters);
+}
+
+/** ¿Cae t en un beat o a mitad de dos beats de la lista (±tol)? Con `quarters`, también a un cuarto. */
+function onGrid(t, beats, tol = 0.002, quarters = false) {
     let lo = 0;
     let hi = beats.length;
     while (lo < hi) {
@@ -60,7 +74,8 @@ function onGrid(t, beats, tol = 0.002) {
     }
     const a = beats[Math.max(0, lo - 1)];
     const b = beats[Math.min(beats.length - 1, lo)];
-    return [a, b, (a + b) / 2].some((c) => Math.abs(c - t) <= tol);
+    const points = quarters ? [a, b, (a + b) / 2, a + (b - a) / 4, a + (3 * (b - a)) / 4] : [a, b, (a + b) / 2];
+    return points.some((c) => Math.abs(c - t) <= tol);
 }
 
 test('determinismo: misma entrada, seed y dificultad ⇒ mismo chart byte a byte', () => {
@@ -87,12 +102,13 @@ test('formato 2: un chart generado se normaliza sin avisos y conserva velocidad,
     assert.equal(n.music.downbeats.length, analysis.downbeats.length);
 });
 
-test('rejilla: toda acción cae en un pulso o un contratiempo real, a cualquier tempo', () => {
+test('rejilla: toda acción cae en un pulso, un contratiempo o una semicorchea real, a cualquier tempo', () => {
     for (const bpm of [66, 92, 120, 146, 174]) {
         const analysis = makeSyntheticSong({ bpm, seed: bpm });
+        const inGrid = onGridOf(analysis);
         for (const difficulty of [1, 3, 5]) {
             const { chart } = buildChart(analysis, { seed: 1, difficulty });
-            const off = obstacles(chart).filter((e) => !onGrid(e.t, analysis.beats));
+            const off = obstacles(chart).filter((e) => !inGrid(e.t));
             assert.equal(off.length, 0, `${bpm} BPM, dificultad ${difficulty}: ${off.length} fuera de rejilla`);
             assert.ok(obstacles(chart).length > 20, `${bpm} BPM: solo ${obstacles(chart).length} acciones`);
         }
@@ -273,6 +289,9 @@ test('regresión del playtest de la 6b: What\'s Up Danger en Extremo es denso y 
     // "En lo difícil no se siente emoción": el nivel más difícil tenía 177
     // acciones, 85 por minuto en la zona roja a 665 px/s y 31 huecos de 1.5 s o
     // más. Se mide lo que se juega; la sensación la dirá el siguiente playtest.
+    // Tras el segundo playtest la zona roja ya no rellena contratiempos callados
+    // (el muro de guitarras golpea en negras): su densidad es la de sus golpes, y
+    // lo que aprieta son los acentos (challenge.test.mjs).
     const baked = JSON.parse(await readFile(path.join(ROOT, 'database/seeds/official/baked/whats-up-danger.json'), 'utf8'));
     const { analysis } = baked;
     const byDifficulty = [3, 4, 5].map((difficulty) => ({ difficulty, ...buildChart(analysis, { sha256: baked.audio.sha256, difficulty }) }));
@@ -281,7 +300,7 @@ test('regresión del playtest de la 6b: What\'s Up Danger en Extremo es denso y 
     const actionsIn = (t0, t1) => chart.events.filter((e) => (e.type === 'obstacle' || e.type === 'hold') && e.t >= t0 && e.t < t1).length;
 
     const climaxApm = (actionsIn(report.climax.t0, report.climax.t1) / (report.climax.t1 - report.climax.t0)) * 60;
-    assert.ok(climaxApm >= 110, `zona roja: ${climaxApm.toFixed(0)} acciones/min`);
+    assert.ok(climaxApm >= 90, `zona roja: ${climaxApm.toFixed(0)} acciones/min`);
     assert.ok(report.topSpeedPxS >= 950, `zona roja a ${report.topSpeedPxS} px/s`);
     const speed = speedProfileOf(chart);
     assert.equal(speed.speedAt((report.climax.t0 + report.climax.t1) / 2), report.topSpeedPxS, 'la zona roja es lo más rápido');
@@ -348,8 +367,9 @@ test('progresión: cada mecánica se estrena en su momento del arco, nunca antes
         const { chart } = buildChart(analysis, { seed: 11, difficulty });
         const obs = obstacles(chart);
         const first = (kind) => obs.find((e) => e.kind === kind)?.t ?? Infinity;
+        const firstAccent = obs.find((e) => OBSTACLE_KIND[e.kind].accentOf !== undefined)?.t ?? Infinity;
         assert.ok(first('PTERO') >= unlock.duck - 1e-9, `d${difficulty}: agachado en ${first('PTERO')} antes de ${unlock.duck}`);
-        assert.ok(first('CACTUS_WIDE') >= unlock.wide - 1e-9, `d${difficulty}: cactus ancho en ${first('CACTUS_WIDE')} antes de ${unlock.wide}`);
+        assert.ok(firstAccent >= unlock.accent - 1e-9, `d${difficulty}: acento en ${firstAccent} antes de ${unlock.accent}`);
         // Contratiempos solo tras su desbloqueo.
         const period = 60 / 90;
         for (const e of obs) {
@@ -358,7 +378,7 @@ test('progresión: cada mecánica se estrena en su momento del arco, nunca antes
         }
     }
     const easy = obstacles(buildChart(analysis, { seed: 11, difficulty: 1 }).chart);
-    assert.equal(easy.filter((e) => e.kind === 'CACTUS_WIDE').length, 0, 'Relajado no usa cactus anchos');
+    assert.equal(easy.filter((e) => OBSTACLE_KIND[e.kind].accentOf !== undefined).length, 0, 'Relajado no tiene acentos');
 });
 
 test('intro de tutorial, ventana inicial y descanso final', () => {
@@ -466,6 +486,7 @@ test('los 8 oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos
     for (const file of files) {
         const baked = JSON.parse(await readFile(path.join(dir, file), 'utf8'));
         const analysis = baked.analysis;
+        const inGrid = onGridOf(analysis, 0.065);
         for (const difficulty of [1, 2, 3, 4, 5]) {
             const { chart, report } = buildChart(analysis, { sha256: baked.audio.sha256, difficulty });
             const label = `${file} d${difficulty}→${report.difficulty}`;
@@ -474,10 +495,30 @@ test('los 8 oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos
             const obs = obstacles(chart);
             const v = validateChart(chart, { toleranceS: DIFFICULTY_PROFILES[report.difficulty].toleranceS });
             assert.ok(v.ok, `${label}: patrón imposible en t=${v.t} (${v.pattern})`);
-            const off = obs.filter((e) => !onGrid(e.t, analysis.beats, 0.065));
+            const off = obs.filter((e) => !inGrid(e.t));
             assert.equal(off.length, 0, `${label}: ${off.length} acciones fuera de la rejilla`);
             assert.ok(report.difficulty <= (report.ceiling ?? 5), `${label}: por encima del techo`);
             assert.equal(sections(chart).filter((s) => s.climax).length, 1, `${label}: un clímax`);
+        }
+    }
+});
+
+test('música: fuera del pulso solo hay acción sobre un golpe que se oye (8 oficiales × 5 dificultades)', async () => {
+    // Segundo playtest de la dificultad: en la zona roja de What's Up Danger 17 de
+    // 72 inversiones caían en contratiempos sin golpe ("no lo sentí acorde a la
+    // canción"). Un pulso sin golpe sigue valiendo (el pulso se siente aunque el
+    // detector no lo marque); un contratiempo o una semicorchea, no.
+    const dir = path.join(ROOT, 'database/seeds/official/baked');
+    for (const file of (await readdir(dir)).filter((f) => f.endsWith('.json'))) {
+        const baked = JSON.parse(await readFile(path.join(dir, file), 'utf8'));
+        const { analysis } = baked;
+        const onsets = analysis.onsets;
+        const hitNear = (t) => onsets.some(([ot, s]) => Math.abs(ot - t) <= 0.065 && s >= 0.2);
+        const onBeat = (t) => analysis.beats.some((b) => Math.abs(b - t) <= 0.002);
+        for (const difficulty of [1, 3, 5]) {
+            const { chart, report } = buildChart(analysis, { sha256: baked.audio.sha256, difficulty });
+            const silent = obstacles(chart).filter((e) => !onBeat(e.t) && !hitNear(e.t)).map((e) => e.t);
+            assert.deepEqual(silent, [], `${file} d${report.difficulty}: acciones fuera del pulso sin golpe`);
         }
     }
 });

@@ -154,3 +154,61 @@ test('formato 1: pulso reconstruido, compás deducido y energía desde la densid
     assert.ok(model.energyMean(50, 70) > model.energyMean(10, 30), 'la mitad más llena tiene más energía');
     assert.equal(model.sections.length, 1);
 });
+
+/**
+ * Análisis de formato 2 con pulso recto conocido: bombo en cada beat, golpes en
+ * la "e" y la "a" que se pidan y, opcionalmente, acordes (analizador 2).
+ */
+function straightSong(bpm, { sixteenths = [], chords = null, beats = 64 } = {}) {
+    const period = 60 / bpm;
+    const pairs = [];
+    const beatTimes = [];
+    for (let i = 0; i < beats; i++) {
+        const t = Math.round((0.5 + i * period) * 1000) / 1000;
+        beatTimes.push(t);
+        pairs.push([t, 0.8]);
+        for (const [frac, strength] of sixteenths) pairs.push([Math.round((t + period * frac) * 1000) / 1000, strength]);
+    }
+    pairs.sort((a, b) => a[0] - b[0]);
+    const analysis = {
+        ...format1(pairs, bpm, 0.5 + beats * period + 1),
+        formatVersion: 2,
+        beats: beatTimes,
+        downbeats: beatTimes.filter((_, i) => i % 4 === 0),
+        meter: 4,
+    };
+    if (chords !== null) analysis.tonal = { key: 'C:maj', chordConfidence: 0.8, chords, modulations: [] };
+    return analysis;
+}
+
+test('semicorcheas: los golpes reales de la "e" y la "a", solo si la canción es recta y le caben', () => {
+    // El bombo sincopado del hip-hop (What's Up Danger: el 30 % de sus golpes
+    // fuertes cae en semicorcheas) necesita un hueco propio en la rejilla.
+    const model = buildMusicModel(straightSong(95, { sixteenths: [[0.75, 0.7]] }));
+    const bar = model.bars[2];
+    assert.equal(bar.slots.length, 8, 'pulso y contratiempo siguen siendo la rejilla base');
+    assert.equal(bar.sixteenths.length, 4, 'una "a" con golpe por beat');
+    for (const s of bar.sixteenths) {
+        assert.equal(s.sub, 3);
+        assert.equal(s.onBeat, false);
+        assert.ok(Math.abs((s.pos % 1) - 0.75) < 1e-9, `posición ${s.pos}`);
+        assert.ok(s.strength >= 0.7 - 1e-6, 'con la fuerza de su golpe');
+    }
+    assert.ok(bar.slots.every((s) => s.sub === 0 || s.sub === 2), 'la rejilla base: pulso (0) y contratiempo (2)');
+    // Sin golpe en la semicorchea no hay hueco (nada que jugar ahí).
+    assert.equal(buildMusicModel(straightSong(95)).bars[2].sixteenths.length, 0);
+    // A 150 BPM la semicorchea dura 0.1 s: no se consideran.
+    assert.equal(buildMusicModel(straightSong(150, { sixteenths: [[0.75, 0.7]] })).bars[2].sixteenths.length, 0);
+});
+
+test('acordes: se marcan los pulsos donde cambia la armonía', () => {
+    const period = 60 / 100;
+    const at = (beat) => Math.round((0.5 + beat * period) * 1000) / 1000;
+    const chords = [[0, 'C:maj'], [at(8), 'A:min'], [at(16), 'A:min'], [at(20), 'F:maj']];
+    const model = buildMusicModel(straightSong(100, { chords }));
+    const marked = model.bars.flatMap((bar) => bar.slots.filter((s) => s.chord)).map((s) => s.t);
+    assert.deepEqual(marked, [at(8), at(20)], 'solo donde el acorde cambia (repetir etiqueta no es cambio)');
+    assert.ok(model.bars.every((bar) => bar.slots.every((s) => !s.chord || s.onBeat)), 'en el pulso');
+    // Sin análisis tonal, nada marcado.
+    assert.ok(buildMusicModel(straightSong(100)).bars.every((bar) => bar.slots.every((s) => s.chord === false)));
+});

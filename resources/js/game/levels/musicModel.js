@@ -17,9 +17,13 @@
 //
 // Rejilla: cada beat tiene dos huecos donde puede ir una acción, EN el pulso y
 // a CONTRATIEMPO (a mitad de beat, o donde caiga el swing si la canción lo
-// tiene). No hay semicorcheas: el salto completo dura 0.72 s y dos saltos
-// seguidos necesitan ≥ 0.67 s (medido con la física), así que un hueco más fino
-// solo serviría para agacharse, y eso ya lo cubre el contratiempo.
+// tiene). Dos acciones seguidas nunca caben a una semicorchea (el salto dura
+// 0.72 s), pero UNA acción sí puede caer en una: el bombo sincopado del hip-hop
+// ("1 · 2e 2& · 3& · 4e") vive ahí. Medido en los oficiales: What's Up Danger
+// tiene el 30 % de sus golpes fuertes en semicorcheas y Running With the Wolves
+// el 38 %. Por eso cada compás lleva además `sixteenths`: los golpes reales que
+// caen en la "e" y la "a" de cada beat, solo si la semicorchea dura lo bastante
+// (SIXTEENTH_MIN_S) y la canción va recta (con swing no hay semicorcheas rectas).
 //
 // Función pura: mismo análisis ⇒ mismo modelo. Sin audio, sin DOM.
 
@@ -29,13 +33,18 @@ const HIT_FLOOR = 0.12;
 /** Un intervalo entre beats mayor que esto (× periodo típico) es un hueco sin pulso. */
 const GAP_FACTOR = 1.8;
 
+/** Semicorchea más corta que se considera (≤ 115 BPM): por debajo, el contratiempo ya basta. */
+const SIXTEENTH_MIN_S = 0.13;
+
 /**
  * @typedef {Object} GridSlot
  * @property {number} t          Instante de canción del hueco (el del golpe si lo hay).
  * @property {number} beat       Índice del beat.
  * @property {number} bar        Índice del compás.
  * @property {number} pos        Posición en el compás, en beats (0, 0.5, 1, …).
- * @property {boolean} onBeat    true en el pulso; false a contratiempo.
+ * @property {boolean} onBeat    true en el pulso; false a contratiempo o en semicorchea.
+ * @property {0|1|2|3} sub       Posición dentro del beat: 0 pulso, 1 "e", 2 contratiempo, 3 "a".
+ * @property {boolean} chord     true si la armonía cambia en este pulso (acorde nuevo).
  * @property {number} metric     Peso métrico [0,1]: 1 el primer tiempo del compás.
  * @property {number} strength   Fuerza del golpe que cae en el hueco [0,1] (0 si ninguno).
  * @property {number} low        Reparto del golpe en graves, medios y agudos (suman 1).
@@ -52,6 +61,7 @@ const GAP_FACTOR = 1.8;
  * @property {number} t1
  * @property {number} beats   b1 − b0.
  * @property {GridSlot[]} slots  En orden temporal: pulso, contratiempo, pulso…
+ * @property {GridSlot[]} sixteenths  Golpes reales en semicorchea ("e" y "a"), en orden; vacío si no aplica.
  */
 
 /**
@@ -80,11 +90,16 @@ export function buildMusicModel(analysis) {
     const energy = readEnergy(analysis, onsets, durationSec);
     const swing = detectSwing(beats, onsets, period);
     const bars = buildBars(beats, isDownbeat, period, meter, durationSec);
-    for (const bar of bars) bar.slots = buildSlots(bar, beats, isDownbeat, onsets, period, swing, meter);
+    const sixteenths = swing === 0.5 && period / 4 >= SIXTEENTH_MIN_S;
+    for (const bar of bars) {
+        bar.slots = buildSlots(bar, beats, isDownbeat, onsets, period, swing, meter);
+        bar.sixteenths = sixteenths ? buildSixteenths(bar, beats, onsets, period) : [];
+    }
 
     const sections = readSections(analysis, durationSec, energy);
     const bands = readBands(analysis);
     const tonal = readTonal(analysis, durationSec);
+    markChordChanges(bars, tonal);
 
     return {
         formatVersion: analysis.formatVersion,
@@ -470,9 +485,45 @@ function buildSlots(bar, beats, isDownbeat, onsets, period, swing, meter) {
     return slots;
 }
 
-function makeSlot(t, onBeat, beat, bar, pos, metric, onsets, window, anchorT) {
+/**
+ * Semicorcheas con golpe: la "e" y la "a" de cada beat, en el instante del golpe
+ * real. Ventana estrecha (≤ 40 ms): nunca se solapa con la del pulso ni con la
+ * del contratiempo, así que un golpe no ocupa dos huecos.
+ */
+function buildSixteenths(bar, beats, onsets, period) {
+    const out = [];
+    for (let i = bar.b0; i < bar.b1; i++) {
+        const nextRaw = i + 1 < beats.length ? beats[i + 1] : beats[i] + period;
+        const span = nextRaw - beats[i] > period * GAP_FACTOR ? period : nextRaw - beats[i];
+        const window = Math.min(0.04, span * 0.08);
+        for (const [sub, frac] of [[1, 0.25], [3, 0.75]]) {
+            const slot = makeSlot(beats[i] + span * frac, false, i, bar.index, i - bar.b0 + frac, 0.2, onsets, window, null, sub);
+            if (slot.strength > 0) out.push(slot);
+        }
+    }
+    return out;
+}
+
+/** Marca los pulsos donde cambia el acorde (analizador 2; nada sin análisis tonal). */
+function markChordChanges(bars, tonal) {
+    if (tonal === null || tonal.chords.length < 2) return;
+    const changes = [];
+    for (let i = 1; i < tonal.chords.length; i++) {
+        if (tonal.chords[i][1] !== tonal.chords[i - 1][1]) changes.push(tonal.chords[i][0]);
+    }
+    let k = 0;
+    for (const bar of bars) {
+        for (const slot of bar.slots) {
+            if (!slot.onBeat) continue;
+            while (k < changes.length && changes[k] < slot.t - 0.08) k++;
+            if (k < changes.length && Math.abs(changes[k] - slot.t) <= 0.08) slot.chord = true;
+        }
+    }
+}
+
+function makeSlot(t, onBeat, beat, bar, pos, metric, onsets, window, anchorT, sub = onBeat ? 0 : 2) {
     const j = bestOnsetNear(onsets, t, window);
-    const slot = { t, beat, bar, pos, onBeat, metric, strength: 0, low: 1 / 3, mid: 1 / 3, high: 1 / 3 };
+    const slot = { t, beat, bar, pos, onBeat, sub, chord: false, metric, strength: 0, low: 1 / 3, mid: 1 / 3, high: 1 / 3 };
     if (j >= 0) {
         slot.strength = onsets.s[j];
         slot.low = onsets.low[j];

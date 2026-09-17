@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad). Pendientes: Ola 6c y Ola 7.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia). Pendientes: Ola 6c y Ola 7.
 
 ---
 
@@ -1369,6 +1369,91 @@ En What's Up Danger la zona roja pasa de 85 a **122 acciones/min** y de 665 a **
 - **En pantallas 16:10 (iPad, 720p) la velocidad máxima de Extremo da 0.87 s de lectura.**
 
 ---
+
+#### La dificultad que se juega: música y precisión (segundo playtest) ✅ (Sep 2026)
+
+> **Lo que se jugó.** Con el charter 8 "se siente más dificultad y está bien", pero sigue simple: **What's Up Danger en Extremo se pasó a la segunda**, y los demás niveles también se pasan. La antigravedad de What's Up Danger sí dio adrenalina ("hay partes donde debo moverme rápido"), con dos pegas. **Es la única parte así**: lo demás es "lo típico de esquivar y saltar". Y **no se sintió acorde a la canción**: no se pide que cada salto vaya al BPM, pero la música se tiene que notar. El propietario pidió analizar bien BPM, acordes, altos y bajos, y que cada dificultad se sienta más difícil que la anterior: un nivel Normal o Difícil no puede pasarse a la primera como uno Fácil.
+
+**Lo que se midió.** Se construyó un **jugador de referencia**: pulsa sobre el golpe con un error gaussiano de ±45 ms y juega el nivel con la física real (Monte Carlo, 150 partidas por nivel, sin el vuelo, donde se corrige mirando el túnel). Con el charter 8 superaba What's Up Danger en Extremo el **70 %** de las veces, Mi Fiesta en Difícil el 57 % y Dawn of Faith en Difícil **el 100 %**. Las causas:
+
+1. **Una acción suelta no exige nada.** Un cactus deja ±200 ms de margen a cualquier velocidad. Un cristal de la antigravedad perdona pulsar hasta ~200 ms tarde. Solo mataban las combinaciones rápidas (salto → agachado a una corchea), y en Dawn of Faith (65 BPM, saltos a un beat) no hay ninguna.
+2. **La exigencia dependía de la canción, no de la dificultad.** Con las mismas tablas, Difícil iba del 57 % al 100 %.
+3. **Relleno sin música en la zona roja.** El clímax de What's Up Danger es un muro de guitarras que golpea en negras (medido por bandas: bajo en cada beat, caja en 2 y 4, contratiempos casi callados). La regla de subdivisión por energía ponía cristales en contratiempos sin golpe: **17 de 72 inversiones** caían a más de 65 ms de cualquier golpe de fuerza ≥ 0.2. Y la memoria de frases llegaba a saltarse el golpe más fuerte (la caja del 4) por copiar esos contratiempos.
+4. **La rejilla no tenía semicorcheas.** El bombo sincopado del hip-hop vive en la "e" y la "a" del beat: **30 %** de los golpes fuertes de What's Up Danger, **38 %** de los de Running With the Wolves.
+
+**Qué cambió** (`CHARTER_VERSION = 9`, formato de chart igual, analizador igual):
+
+- **Música primero** (`musicModel.js`, `patterns.js`):
+  - Fuera del pulso **solo hay acción sobre un golpe que se oye** (fuerza ≥ 0.2). El clímax de Difícil y Extremo sigue jugando la subdivisión, pero solo la que suena. La regla por energía ya no existe.
+  - **Semicorcheas**: cada compás lleva `sixteenths`, los golpes reales en la "e" y la "a". Solo en canciones rectas donde la semicorchea dura ≥ 0.13 s (≤ 115 BPM). Se juegan si el golpe manda sobre el pulso y el contratiempo de al lado (`sixteenth` por dificultad, desde el primer empuje en Normal).
+  - **Groove del tramo**: cada posición del compás puntúa también por su fuerza media en los compases del tramo. El patrón sigue al bombo y la caja que se repiten, no a los golpes sueltos. La reserva del primer tiempo del compás siguiente cuenta con el mismo groove; sin eso, el riff perdía su "1".
+  - **Acordes**: los pulsos donde cambia la armonía (análisis tonal del analizador 2) quedan marcados y puntúan más, al elegir el golpe y al elegir los acentos.
+- **Acentos que exigen precisión** (`accents.js`, pieza nueva). Los golpes fuertes de cada tramo llevan una **variante** del obstáculo con menos margen. La acción sigue en su golpe: aprieta el obstáculo, no el ritmo.
+  - Las variantes viven en el registro: un kind con **`accentOf: 'X'`** es variante de acento de X. `accents.js` no conoce ninguna por nombre, así que añadir una es una entrada de registro.
+  - **Hileras de cactus** (`CACTUS_ROW_88` … `_328`, de 20 en 20, generadas en config.js y pixelart.js). Medido: 208 de largo dejan ±60-75 ms a 600 px/s; 328 dejan ±70-90 a 1000.
+  - **Cristales afilados** (`CRYSTAL_FLOOR/CEIL_SHARP_190` … `_110`: menos `leadMarginS`, del rosa del ptero). Llegan antes tras el golpe: pulsar tarde deja +50-105 ms y pulsar pronto sigue libre. Quien sigue el golpe los clava; quien los ve venir no pierde nada.
+  - **Qué golpes**: los que más suenan (fuerza × peso métrico, cambio de acorde, drop), hasta la cuota de la dificultad por nivel del arco y con sitio alrededor. **Se decide por frase**: las vueltas de un riff (enlazadas por la memoria de frases) llevan acento todas o ninguna.
+  - **Cuánto**: cada acento pide un margen: el mínimo de la dificultad × su nivel del arco (reposo ×1.5 … clímax ×1) × la apertura (hasta ×1.3 al empezar la canción, ×1 al 35 %) × su golpe (el más flojo del tramo, ×1.5). Sin el nivel ni la apertura, la mitad de las muertes de What's Up Danger caían en los segundos 15-21.
+  - **Encima, una escalera de holgura global** hasta la exigencia por minuto de la dificultad (`accent.hazardPerMin`), estimada para el jugador de referencia como Σ −ln(1 − p) de los acentos. Se queda el escalón más cercano. Así Dawn of Faith y Mi Fiesta piden lo mismo en Difícil: la primera, con acentos más estrechos.
+  - Tabla por dificultad (`accent` en `difficulty.js`): Relajado sin acentos (desbloqueo NEVER); Fácil 0.18 · mín ±0.14 · 0.05/min; Normal 0.4 · ±0.085 · 0.3/min; Difícil 0.55 · ±0.07 · 0.55/min; Extremo 0.7 · ±0.058 · 0.85/min.
+- **Exigencia medible** (`challenge.js`, pieza nueva): `REFERENCE_PLAYER` (±45 ms), `missChance`, `kindHazard` y **`referencePassRate(chart)`** (el Monte Carlo; lo usan tests y calibración, no se empaqueta: tree-shaking).
+- **Márgenes de salto sin simular** (`run.js::marginsS`, gancho opcional del contrato de modos). Integra el salto una vez y cruza su altura con los hitboxes. Frente al barrido fino del simulador: sesgo < 1 ms y error máximo 6 ms. `playability.timingMarginsS(kind, v)` da los dos lados del margen (`timingWindowS` es su suma). El charter consulta miles de márgenes y sigue costando lo mismo que el charter 8 (el validador domina).
+- **Densidades de Normal a Extremo algo más altas** (Extremo 24 · 66 · 98 · 126 · 160 acciones/min): con acciones solo sobre golpes, lo que limita la densidad es la música; la tabla deja de recortar donde sí los hay.
+- `unlock.wide` pasa a **`unlock.accent`**. Una variante que a esa velocidad deja más margen que la acción normal no cuenta como acento: el cactus ancho es bajo y a partir de ~600 px/s perdona más. El validador devuelve a su `accentOf` un acento que no se deja jugar.
+
+**Los 8 oficiales** (dificultad del manifiesto; jugador de referencia sin el vuelo, 150 partidas; charter 8 → 9):
+
+| Oficial (dificultad) | Acciones | Acentos | Fuera del pulso sin golpe | Supera con ±45 ms |
+|---|---|---|---|---|
+| Sugar Red (Normal, 40 s) | 33 → 35 | 1 → 10 | 0 → 0 | 1.00 → **0.83** |
+| Last Christmas (Relajado) | 21 → 21 | 0 → 0 | 0 → 0 | 1.00 → 1.00 |
+| HOPE (Fácil) | 60 → 60 | 2 → 1 | 0 → 0 | 0.87 → 0.87 |
+| Running With the Wolves (Normal) | 136 → 147 | 2 → 17 | 0 → 0 | 0.56 → **0.35** |
+| Time (Fácil) | 113 → 113 | 5 → 8 | 0 → 0 | 0.99 → 0.99 |
+| Mi Fiesta (Difícil) | 228 → 249 | 6 → 60 | 0 → 0 | 0.57 → **0.09** |
+| Dawn of Faith (Difícil) | 174 → 168 | 5 → 71 | 2 → 0 | 1.00 → **0.37** |
+| What's Up Danger (Extremo) | 255 → 255 | 7 → 100 | **17 → 0** | 0.70 → **0.03** |
+
+Con otros jugadores (supera con ±30 · ±35 · ±40 · ±45 ms):
+
+| Oficial | Charter 8 | Charter 9 |
+|---|---|---|
+| What's Up Danger (Extremo) | 0.94 · 0.86 · 0.78 · 0.70 | **0.73 · 0.43 · 0.14 · 0.03** |
+| Mi Fiesta (Difícil) | 0.95 · 0.83 · 0.72 · 0.57 | 0.90 · 0.67 · 0.33 · 0.09 |
+| Dawn of Faith (Difícil) | 1.00 · 1.00 · 1.00 · 1.00 | 0.97 · 0.86 · 0.62 · 0.37 |
+| Running With the Wolves (Normal) | 0.98 · 0.90 · 0.71 · 0.56 | 0.92 · 0.77 · 0.51 · 0.35 |
+
+Los 8 temas en las 5 dificultades, con ±45 ms: Relajado ≥ 0.97; Fácil 0.82-1.00; Normal 0.40-0.57 (las de 40 s, 0.82-0.85); Difícil 0.14-0.38 (las cortas, 0.51-0.62); Extremo 0.03-0.06 (las cortas, 0.18-0.55). **Dónde se muere** (What's Up Danger en Extremo): en el drop de 1:42 y en la zona roja. En la primera estrofa casi nada: la apertura y el nivel del arco lo apartan de ahí. En Dawn of Faith en Difícil, el 60 % de las muertes cae en el clímax.
+
+En la zona roja de What's Up Danger los cristales afilados caen en la caja (2 y 4) y en los primeros tiempos con cambio de acorde. En el drop de 1:42, el bombo del primer tiempo es siempre una hilera, la caja un agachado y el bombo sincopado de "2e" otra hilera.
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **259 JS** (+9): `challenge.test.mjs` (probabilidades del jugador de referencia; Monte Carlo determinista; márgenes del salto frente al simulador; registro de variantes; acentos sobre golpes fuertes y más estrechos con la dificultad; **el playtest como regresión**: Normal > Difícil > Extremo en What's Up Danger, Extremo ≤ 0.15 con ±45 ms y ≥ 0.35 con ±30, ≤ 25 % de las muertes en el primer cuarto, Dawn of Faith en Difícil ≤ 0.6); semicorcheas y acordes en `music-model`; "fuera del pulso solo sobre un golpe" en los 8 × 3; rejilla con semicorcheas; cristales que alternan de superficie aunque sean afilados. **70 PHP**, **104 Python** |
+| 8 oficiales × 5 dificultades | jugables con la tolerancia de su dificultad, en la rejilla y sin avisos |
+| E2E What's Up Danger (Extremo, 1280×720, bot con pulsaciones fechadas, colisiones activas) | el cliente carga el charter 9: 255 obstáculos, 52 acentos de salto y 48 cristales afilados; hilera de 248 junto al Dino a 734 px/s (1:41), cristales afilados en la zona roja a 982 px/s (2:45); **victoria al 100 %**, ~60 FPS |
+| Consola | solo el 401 del arranque anónimo y el favicon |
+| Oficiales y comunidad | re-horneados y re-sembrados; los 3 de la comunidad, re-charteados (`--charter-below=9`) |
+| Bundle | **191.45 KB gzip** (+2.96) |
+
+**Decisiones (vinculantes):**
+
+- **Fuera del pulso solo hay acción sobre un golpe que se oye.** El pulso se juega aunque el detector no lo marque; un contratiempo o una semicorchea callados, no.
+- **La rejilla tiene semicorcheas donde la canción las toca** (recta y ≤ 115 BPM), como huecos para una acción suelta: dos acciones seguidas siguen sin caber.
+- **La exigencia de un nivel la pone su dificultad, no su canción.** Se mide con un jugador de referencia (±45 ms) y los acentos se aprietan hasta la exigencia por minuto de cada dificultad.
+- **La precisión la dan los obstáculos, no el ritmo**: variantes de acento del registro (`accentOf`) sobre los golpes fuertes, decididas por frase.
+- **Se muere donde la música aprieta**: más margen en la calma y en el primer tercio de la canción.
+- **Un playtest de dificultad se protege con el jugador de referencia**, no con densidades: la densidad ya no dice lo difícil que es un nivel.
+
+**Limitaciones que quedan:**
+
+- **La sensación la dirá el próximo playtest.** El jugador de referencia es un modelo: error gaussiano sin despistes ni aprendizaje. Todo está en tablas: `ACCENT_RULES`, `accent` por dificultad, `REFERENCE_PLAYER`, `sixteenth`/`climaxOffbeat` por dificultad y `OFFBEAT_FLOOR`, `GROOVE_WEIGHT`, `CHORD_WEIGHT` en patterns.js.
+- **El vuelo no está calibrado** con el jugador de referencia (se corrige mirando). Y **los agachados no tienen acentos**: agacharse antes de tiempo es gratis, así que un ptero más rápido no exigiría nada a quien se adelanta.
+- **Las canciones cortas (40 s) quedan más fáciles** en Normal-Extremo: la exigencia es por minuto.
+- **La dificultad medida de las tarjetas** (`chartStats`) apenas nota los acentos: su margen medio lo dominan los obstáculos holgados. Sigue separando las dificultades y ninguna tarjeta cambia de estrellas; la medida buena es `referencePassRate`, demasiado cara para el navegador.
+- **Una canción con muchas combinaciones naturales** (Mi Fiesta: salto → agachado a 0.57 s) queda más exigente que su presupuesto: el presupuesto solo cuenta los acentos.
 
 #### Ola 6c — Siguientes momentos (pendiente)
 

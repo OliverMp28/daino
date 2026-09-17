@@ -433,7 +433,8 @@ test('alrededor de un portal no hay acciones; el estreno espera y va espaciado; 
                 }
                 assert.ok(inside.length >= 4, `${label}: ${inside.length} acciones`);
                 assert.ok(inside.every((e) => OBSTACLE_KIND[e.kind].mode === 'flip'), `${label}: dentro, solo cristales`);
-                inside.forEach((e, k) => assert.equal(e.kind, k % 2 === 0 ? 'CRYSTAL_FLOOR' : 'CRYSTAL_CEIL', `${label}: alternan en ${e.t}`));
+                // Un cristal afilado (acento) está en la superficie que le toca, como uno normal.
+                inside.forEach((e, k) => assert.equal(OBSTACLE_KIND[e.kind].surface, k % 2 === 0 ? 'floor' : 'ceiling', `${label}: alternan en ${e.t}`));
                 // Cada modo aparece una vez: siempre es su estreno.
                 assert.ok(inside[0].t - m.t0 >= MODE_RULES.introBeats * beat - 0.03, `${label}: primera inversión en ${inside[0].t}`);
                 assert.ok(inside[1].t - inside[0].t >= MODE_RULES.introGapS - 1e-3, `${label}: estreno espaciado`);

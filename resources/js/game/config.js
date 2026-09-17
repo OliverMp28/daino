@@ -215,6 +215,12 @@ export const MAX_BURST_PARTICLES = 140;
 
 // --------------------------- Obstáculos ---------------------------
 
+/** Largos de las hileras de cactus, en celdas del arte (ver `cactusRows`; pixelart.js los dibuja). */
+export const CACTUS_ROW_CELLS = Object.freeze(Array.from({ length: 13 }, (_, i) => 22 + 5 * i));
+
+/** Márgenes de adelanto de los cristales afilados, en ms (ver `sharpCrystals`). */
+export const SHARP_CRYSTAL_MARGINS_MS = Object.freeze([190, 160, 130, 110]);
+
 /**
  * Catálogo de tipos de obstáculo — REGISTRO ÚNICO Y EXTENSIBLE. Añadir un
  * obstáculo nuevo = dibujar su sprite en assets/pixelart.js + una entrada
@@ -232,21 +238,74 @@ export const MAX_BURST_PARTICLES = 140;
  *   action         Qué hace el jugador para superarlo: 'jump', 'duck' o 'flip'.
  *   role           Papel musical en el charter (Ola 5):
  *                    'jump'    salto normal, un golpe del pulso;
- *                    'accent'  salto que exige precisión, reservado a los
- *                              golpes fuertes (primer tiempo, drops);
  *                    'duck'    agacharse, para los sonidos brillantes y los
  *                              contratiempos;
- *                    'flip'    invertir la gravedad (el charter alterna suelo y techo).
+ *                    'flip'    invertir la gravedad (el charter alterna suelo y techo);
+ *                    'accent'  variante de acento de otro kind (ver `accentOf`):
+ *                              nunca se elige por papel, solo como acento.
  *   weight         Peso relativo entre kinds del MISMO papel (variedad
  *                  determinista con la seed del nivel).
+ *   accentOf       Kind del que es variante de ACENTO (levels/accents.js): la
+ *                  misma acción sobre un golpe fuerte, con menos margen de error.
+ *                  El charter elige, entre las variantes del kind de cada acción,
+ *                  la que deja el margen que pide la dificultad a la velocidad de
+ *                  ese golpe. Añadir una variante = una entrada con `accentOf`.
+ *   precision      true en las variantes que solo son justas a partir de cierta
+ *                  velocidad (las hileras largas): no valen a cualquier velocidad
+ *                  ni junto a cualquier cosa, así que las pruebas genéricas de
+ *                  "todo kind se juega solo" no las incluyen.
+ *   leadMarginS    Antigravedad: adelanto propio sobre lo que tarda en despejarse
+ *                  (por defecto FLIP_MODE.leadMarginS). Menos adelanto = el cristal
+ *                  llega antes tras el golpe y pulsar tarde deja menos margen.
  */
 export const OBSTACLE_KIND = Object.freeze({
     CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], mode: 'run', surface: 'floor', action: 'jump', role: 'jump', weight: 1 },
-    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', weight: 1 },
+    CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', accentOf: 'CACTUS_SMALL', weight: 1 },
+    ...cactusRows(),
     PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, mode: 'run', surface: 'floor', action: 'duck', role: 'duck', weight: 1 },
     CRYSTAL_FLOOR: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'floor', action: 'flip', role: 'flip', weight: 1 },
     CRYSTAL_CEIL: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'ceiling', action: 'flip', role: 'flip', weight: 1 },
+    ...sharpCrystals(),
 });
+
+/**
+ * Hileras de saguaros de 88 a 328 de largo (tras el segundo playtest de la dificultad). Un
+ * cactus suelto deja ±200 ms de margen a cualquier velocidad: saltarlo es fácil
+ * aunque el nivel vaya rápido. Una hilera larga obliga a clavar el salto sin
+ * mover el golpe: la acción sigue en su tiempo y el margen lo decide la longitud.
+ * Medido con el simulador (salto completo, cactus de 96 de alto): 208 de largo
+ * deja −60/+75 ms a 600 px/s y 328 deja −70/+90 a 1000. El charter elige la
+ * hilera por el margen que pide la dificultad a la velocidad de cada golpe.
+ * Mismo alto que el saguaro suelto: lo que cambia la exigencia es el largo. De
+ * 5 en 5 celdas (20 de mundo): a 600 px/s, 20 de largo son ~17 ms de margen por lado.
+ */
+function cactusRows() {
+    const out = {};
+    for (const cells of CACTUS_ROW_CELLS) {
+        const w = cells * PIXEL_SCALE;
+        out[`CACTUS_ROW_${w}`] = { w, h: 96, altitude: 0, sprites: [`cactusRow${cells}`], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', accentOf: 'CACTUS_SMALL', weight: 1, precision: true };
+    }
+    return out;
+}
+
+/**
+ * Cristales afilados de la antigravedad (tras el mismo playtest): los acentos de
+ * la zona roja. Con el adelanto normal (0.24 s sobre lo que tarda en despejarse)
+ * pulsar hasta ~200 ms tarde sigue salvando; uno afilado llega antes tras el golpe.
+ * Medido con el simulador, tras otro cristal a un beat: 130 ms de adelanto dejan
+ * +80 ms a 600 px/s y +105 a 1000; pulsar pronto sigue siendo libre (quien los
+ * ve venir se adelanta sin castigo, quien sigue el golpe los clava). Del mismo
+ * rosa que el ptero: peligro.
+ */
+function sharpCrystals() {
+    const out = {};
+    for (const ms of SHARP_CRYSTAL_MARGINS_MS) {
+        for (const [surface, base] of [['floor', 'CRYSTAL_FLOOR'], ['ceiling', 'CRYSTAL_CEIL']]) {
+            out[`${base}_SHARP_${ms}`] = { w: 52, h: 64, altitude: 0, sprites: ['crystalSharp'], mode: 'flip', surface, action: 'flip', role: 'accent', accentOf: base, weight: 1, leadMarginS: ms / 1000 };
+        }
+    }
+    return out;
+}
 
 /** Padding del hitbox del obstacle (más ajustado que el del Dino). */
 export const OBSTACLE_HITBOX_PADDING = { top: 6, right: 6, bottom: 4, left: 6 };

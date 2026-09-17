@@ -105,10 +105,11 @@ export const FLIP_MODE_DEF = Object.freeze({
      *
      * El margen deja la pulsación en el golpe con holgura por los dos lados en
      * los patrones apretados (suelo, techo, suelo… a un beat): medido en
-     * tests/js/modes.test.mjs.
+     * tests/js/modes.test.mjs. Un kind puede declarar el suyo (`leadMarginS`):
+     * los cristales afilados de los acentos llegan antes tras el golpe.
      */
     leadS(def) {
-        return clearTimeS(def) + FLIP_MODE.leadMarginS;
+        return clearTimeS(def) + (def.leadMarginS ?? FLIP_MODE.leadMarginS);
     },
 });
 

@@ -15,7 +15,7 @@
 // (decisión del rediseño visual, Jul 2026). NO se copian los PNGs del legacy.
 
 import { Texture } from 'pixi.js';
-import { PIXEL_SCALE } from '../config.js';
+import { CACTUS_ROW_CELLS, PIXEL_SCALE } from '../config.js';
 
 /**
  * Factor de escala de celda → unidades de mundo. 4 ⇒ un dino de 21 celdas = 84.
@@ -50,6 +50,7 @@ const PALETTE = {
     V: '#c08bff', // cristal
     v: '#7d4fd6', // sombra cristal
     Y: '#f3e6ff', // brillo cristal
+    H: '#ffd6e2', // brillo del cristal afilado (acento: el rosa del ptero, peligro)
     U: '#b58cff', // línea del techo
     // Vuelo (Ola 6b): techo en el oro del modo (MODE_COLORS.fly)
     F: '#ffd166', // línea del techo
@@ -177,6 +178,42 @@ const cactusSmall = [
     '...gGGGGg...',
 ];
 
+/** El saguaro con los brazos más abajo: una hilera no parece un sello repetido. */
+const cactusSmallLow = [
+    ...cactusSmall.slice(0, 3),
+    '....GGGG....',
+    '....GGGG....',
+    '....GLGG....',
+    ...cactusSmall.slice(3, 11),
+    ...cactusSmall.slice(14),
+];
+
+/**
+ * Hilera de saguaros que se tocan (config.js, CACTUS_ROW_*), de `width` celdas:
+ * los justos para no separarse más de 10 celdas, repartidos por igual y
+ * alternando la altura de los brazos. Se genera: trece hileras escritas a mano
+ * serían ilegibles en un diff.
+ *
+ * @param {number} width  Celdas de largo (≥ 22).
+ */
+function cactusRow(width) {
+    const n = Math.max(2, Math.ceil((width - 12) / 10) + 1);
+    const rows = Array.from({ length: 24 }, () => Array(width).fill('.'));
+    for (let k = 0; k < n; k++) {
+        const x0 = Math.round((k * (width - 12)) / (n - 1));
+        const sprite = k % 2 === 0 ? cactusSmall : cactusSmallLow;
+        for (let y = 0; y < 24; y++) {
+            for (let x = 0; x < 12; x++) {
+                if (sprite[y][x] !== '.') rows[y][x0 + x] = sprite[y][x];
+            }
+        }
+    }
+    return rows.map((r) => r.join(''));
+}
+
+const cactusRows = {};
+for (const cells of CACTUS_ROW_CELLS) cactusRows[`cactusRow${cells}`] = cactusRow(cells);
+
 // Cluster de 3 cactus. Grid 25×17 → 100×68 px.
 const cactusWide = [
     '...........GGG...........',
@@ -292,6 +329,10 @@ const crystal = [
     '...vvvvvvv...',
 ];
 
+// Cristal afilado (acento de la antigravedad, config.js `sharpCrystals`): el mismo
+// grupo en el rosa del ptero, para que se lea como peligro.
+const crystalSharp = crystal.map((row) => row.replaceAll('V', 'P').replaceAll('v', 'p').replaceAll('Y', 'H'));
+
 // Franja del techo: la tira del suelo reflejada, con su línea en el violeta del
 // modo. La fila 10 es la línea; la 11, los bultos que cuelgan hacia el pasillo.
 const ceiling = ground.slice().reverse().map((row) => row.replaceAll('E', 'U'));
@@ -344,10 +385,10 @@ const chevronDown = chevronUp.slice().reverse();
 
 const DEFS = {
     dinoRunA, dinoRunB, dinoJump, dinoDead, dinoDuckA, dinoDuckB,
-    cactusSmall, cactusWide,
+    cactusSmall, cactusWide, ...cactusRows,
     pteroA, pteroB,
     ground, cloud, dot,
-    crystal, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
+    crystal, crystalSharp, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
 };
 
 // --------------------------- Skins (palette-swap) ---------------------------

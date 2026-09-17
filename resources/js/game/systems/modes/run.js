@@ -19,9 +19,10 @@ import {
     JUMP_CUT_MULTIPLIER,
     JUMP_VELOCITY,
     MODE_COLORS,
+    PHYSICS_STEP_S,
 } from '../../config.js';
-import { standingHitbox } from '../geometry.js';
-import { BODY_EVENT } from './body.js';
+import { DINO_CENTER_X, obstacleHitbox, standingHitbox } from '../geometry.js';
+import { BODY_EVENT, bodyState } from './body.js';
 
 function jump(body) {
     if (body.dead) return false;
@@ -141,4 +142,69 @@ export const RUN_MODE = Object.freeze({
     leadS(def) {
         return def.actionLeadS ?? JUMP_VELOCITY / GRAVITY;
     },
+
+    /**
+     * Márgenes de error de un salto aislado sobre un obstáculo del suelo, sin
+     * simular una partida: el salto completo se integra UNA vez con el paso de la
+     * física (`jumpArc`) y el margen sale de cuándo va por encima del obstáculo
+     * frente a cuándo se solapan en horizontal, con los mismos hitboxes que la
+     * partida. Lo usa `playability.timingMarginsS` (el charter lo consulta miles
+     * de veces al elegir acentos). null para lo que no es un salto sobre algo
+     * apoyado en el suelo: eso se mide simulando.
+     *
+     * Contrastado con el barrido fino del simulador en 7 kinds a 350-1050 px/s:
+     * sesgo < 1 ms y error máximo 6 ms (tests/js/challenge.test.mjs).
+     *
+     * @param {object} def
+     * @param {number} speedPxS
+     * @returns {{ early: number, late: number } | null}
+     */
+    marginsS(def, speedPxS) {
+        if (def.action !== 'jump' || (def.surface ?? 'floor') !== 'floor' || def.altitude !== 0 || !(speedPxS > 0)) return null;
+        const G = 1000;
+        const body = bodyState(G);
+        const dino = standingHitbox(body, { x: 0, y: 0, w: 0, h: 0 });
+        const box = obstacleHitbox(def, DINO_CENTER_X - def.w / 2, G - def.h, { x: 0, y: 0, w: 0, h: 0 });
+        // Con el centro del obstáculo sobre el del Dino, cuánto mundo le falta
+        // para dejar de solapar por cada lado: antes del cruce ya solapa desde
+        // `reachBefore` de distancia y sigue haciéndolo `reachAfter` después.
+        const reachBefore = dino.x + dino.w - box.x;
+        const reachAfter = box.x + box.w - dino.x;
+        // Va por encima mientras la base de su hitbox no baja de la cima del obstáculo.
+        const clearY = box.y - (dino.y + dino.h - body.y);
+        const arc = jumpArc();
+        let first = -1;
+        let last = -1;
+        for (let k = 0; k < arc.length; k++) {
+            if (arc[k] > clearY) continue;
+            if (first < 0) first = k;
+            last = k;
+        }
+        if (first < 0) return { early: 0, late: 0 };
+        // El paso k del arco se comprueba k pasos después de pulsar, más medio
+        // paso de media (la pulsación cae en cualquier punto de la rejilla). Al
+        // bajar, el choque lo detecta el paso SIGUIENTE al último por encima, y
+        // aterrizar lo retrasa otro medio: +2 pasos, medido.
+        const dt = PHYSICS_STEP_S;
+        const lead = this.leadS(def);
+        const late = lead - (first + 0.5) * dt - reachBefore / speedPxS;
+        const early = (last + 2) * dt - lead - reachAfter / speedPxS;
+        return late < 0 || early < 0 ? { early: 0, late: 0 } : { early, late };
+    },
 });
+
+/** Y (esquina superior del box de pie) tras cada paso de un salto completo desde un suelo en 1000. */
+let arcCache = null;
+function jumpArc() {
+    if (arcCache !== null) return arcCache;
+    const body = bodyState(1000);
+    jump(body);
+    const ys = [];
+    for (let i = 0; i < 400; i++) {
+        RUN_MODE.integrate(body, PHYSICS_STEP_S, 1000);
+        ys.push(body.y);
+        if (body.grounded) break;
+    }
+    arcCache = Float64Array.from(ys);
+    return arcCache;
+}
