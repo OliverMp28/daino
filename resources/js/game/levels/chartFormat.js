@@ -91,9 +91,14 @@ export const CHART_FORMAT_VERSION = 4;
  * solo sobre golpes que suenan (con semicorcheas, groove del tramo y cambios de
  * acorde) y acentos con variantes que exigen precisión (hileras de cactus,
  * cristales afilados), calibrados con un jugador de referencia (tras el segundo
- * playtest de la dificultad).
+ * playtest de la dificultad). 10: progresión de velocidad más marcada en Normal,
+ * Difícil y Extremo (marcha y nivel del arco más pronunciados, base y techo de
+ * cada dificultad más altos); medido: no reduce por sí sola lo que supera el
+ * jugador de referencia (el margen de un acento se recalcula contra la velocidad
+ * de cada instante), así que sube el ritmo y baja el tiempo de lectura sin ser,
+ * todavía, el ajuste de exigencia que pidió el segundo playtest.
  */
-export const CHARTER_VERSION = 9;
+export const CHARTER_VERSION = 10;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */

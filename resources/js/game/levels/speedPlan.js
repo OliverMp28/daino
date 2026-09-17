@@ -54,16 +54,22 @@ export const SPEED_RULES = Object.freeze({
      * Subida de cada marcha, × `speedAmp` de la dificultad. Tras el playtest de
      * la 6b ("los cambios de velocidad se sienten poco, la zona roja no parece
      * zona roja"): 0.11 → 0.14, y el clímax de 0.24 a 0.34. En What's Up Danger
-     * (Extremo) los escalones pasan de +15/+23/+27 % a +21/+32/+34 %.
+     * (Extremo) los escalones pasan de +15/+23/+27 % a +21/+32/+34 %. Pedido
+     * aparte (Sep 2026, "aumenta la velocidad o la progresión, solo eso"): 0.14
+     * → 0.19. Medido: no baja por sí solo lo que supera el jugador de referencia
+     * (accents.js recalcula el margen de cada acento contra la velocidad de ese
+     * instante, así que un acento más rápido no es necesariamente más estrecho);
+     * sube el ritmo y acorta el tiempo de lectura, que es lo que se pidió.
      */
-    gearBoost: 0.14,
+    gearBoost: 0.19,
     /**
      * Subida por nivel del arco (reposo, calma, groove, empuje, clímax), ×
      * `speedAmp`. Solo acelera: a menos velocidad el margen de cada salto se
      * ESTRECHA (hallazgo de la Ola 2), así que frenar por debajo de la base
-     * volvería la calma más difícil.
+     * volvería la calma más difícil. Empuje 0.12 → 0.18 y clímax 0.34 → 0.46 en
+     * el mismo pedido de Sep 2026.
      */
-    levelBoost: Object.freeze([0, 0, 0, 0.12, 0.34]),
+    levelBoost: Object.freeze([0, 0, 0, 0.18, 0.46]),
     /**
      * Techo absoluto; cada dificultad tiene el suyo por debajo
      * (`DifficultyProfile.maxSpeedPxS`: de 660 en Relajado a 1000 en Extremo).

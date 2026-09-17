@@ -89,6 +89,12 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  * depende de la dificultad, las marchas y el clímax aceleran más y cada
  * dificultad tiene su techo. Relajado sigue siendo para empezar.
  *
+ * Sep 2026 ("aumenta la velocidad o la progresión, solo eso"): `baseSpeed` y
+ * `maxSpeedPxS` suben en Normal (860→940), Difícil (940→980) y Extremo
+ * (1.24→1.32; el techo 1000 no sube más — es donde toda pantalla apaisada
+ * todavía lee cada obstáculo ≥ 0.85 s antes, ver world-view.test.mjs). Relajado
+ * y Fácil no se tocan.
+ *
  * @type {Record<number, DifficultyProfile>}
  */
 export const DIFFICULTY_PROFILES = Object.freeze({
@@ -137,8 +143,8 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         maxRestS: 2,
         unlock: { duck: STAGE.FIRST_GROOVE, accent: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_DRIVE, sixteenth: STAGE.FIRST_DRIVE, combo: STAGE.FIRST_DRIVE },
         speedAmp: 1.1,
-        baseSpeed: 1.06,
-        maxSpeedPxS: 860,
+        baseSpeed: 1.14,
+        maxSpeedPxS: 940,
         offbeat: Object.freeze({ strength: 0.35, ratio: 0.75 }),
         calmBeatStrength: 0.45,
         climaxOffbeat: null,
@@ -157,8 +163,8 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         maxRestS: 1.8,
         unlock: { duck: STAGE.START, accent: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, sixteenth: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_GROOVE },
         speedAmp: 1.3,
-        baseSpeed: 1.14,
-        maxSpeedPxS: 940,
+        baseSpeed: 1.22,
+        maxSpeedPxS: 980,
         offbeat: Object.freeze({ strength: 0.3, ratio: 0.65 }),
         calmBeatStrength: 0.35,
         climaxOffbeat: Object.freeze({ strength: 0.25 }),
@@ -176,7 +182,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         maxRestS: 1.4,
         unlock: { duck: STAGE.START, accent: STAGE.START, offbeat: STAGE.FIRST_GROOVE, sixteenth: STAGE.FIRST_GROOVE, combo: STAGE.START },
         speedAmp: 1.5,
-        baseSpeed: 1.24,
+        baseSpeed: 1.32,
         maxSpeedPxS: 1000,
         offbeat: Object.freeze({ strength: 0.25, ratio: 0.55 }),
         calmBeatStrength: 0.3,
