@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia), y la **Ola 6c** ✅ (anillos de salto, vuelo en frases encadenadas con la altura de la melodía, efectos nuevos del chart y exigencia por dificultad igual en cualquier canción). Pendiente: Ola 7.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia), y la **Ola 6c** ✅ (anillos de salto, vuelo en frases encadenadas con la altura de la melodía, efectos nuevos del chart y exigencia por dificultad igual en cualquier canción). La Ola 7 (ediciones del autor y editor) queda **aplazada como futura actualización**.
 
 ---
 
@@ -1485,6 +1485,19 @@ Tras el playtest de la 6b y del ajuste de velocidad ("lo veo pasable, no noté p
 - **Basic Pitch descartado por ahora**: el CQT propio da el contorno que hace falta y no cuesta memoria.
 - **Uso**: solo alturas RELATIVAS dentro del tramo de vuelo (las notas agudas, arriba). Sin melodía, se decide por el ritmo. Con una melodía que sube de 55 a 75, las cimas del Dino pasan de 60-100 a 120-216.
 
+**Pulido tras jugarla** (Sep 2026): **cada mecánica se explica con su dibujo.**
+
+- **El orbe de doble salto** (ver arriba) y, al activarlo, **una voltereta hacia delante** del Dino mientras sube (`DOUBLE_JUMP_FX.spinS` 0.38 s, sobre el centro del cuerpo) y **un soplo de aire bajo los pies**, como si pisara el aire. Es el gesto clásico del doble salto y se entiende sin leer nada.
+- **El vuelo es un PROPULSOR.** Se jugaba como una mochila cohete (mantener sube, soltar cae en línea recta), pero el Dino no llevaba nada que lo explicara: "no lo siento modo vuelo con nave". Ahora:
+  - al cruzar el portal aparece una **mochila propulsora** en la espalda, con correa al pecho y la franja del oro del modo;
+  - **llama** en diagonal hacia atrás que parpadea mientras se mantiene y queda en **brasa** al soltar;
+  - **llamarada al encender** y **bocanada de humo al apagar**, desde la tobera (`Dino.jetNozzle`, con la inclinación de ese frame);
+  - la mochila se desvanece al salir del modo.
+
+  El aviso y el mapa dicen **"Propulsor"**, con el texto "Mantén Espacio para encender el propulsor; suelta para caer". En el código el modo sigue siendo `fly`. Las físicas no cambian: el túnel y su validación siguen igual.
+- `entities/Dino.js` pasa a montarse en capas (`_spin` → `_rig` → cuerpo, mochila y llama): en Pixi v8 un Sprite no admite hijos, y así la mochila sigue al cuerpo en cualquier pose. Todo el arte sigue siendo código en `pixelart.js` (`jetpack`, `jetFlameA/B/Idle`, `orbA/B/Lit`). +0.9 KB gzip. Con `prefers-reduced-motion`, ni voltereta ni partículas.
+- Verificado en el navegador: doble salto en Sugar Red (voltereta a media vuelta en la captura) y propulsor en Dawn of Faith (llama al subir, brasa al caer). Victoria al 100 % en los dos y sin errores.
+
 **4. Efectos nuevos del chart** (`levels/fxPlan.js`, registro `FX_PLANNERS`; `songDirector.FX_KINDS`).
 
 | fx | Cuándo | Qué se ve |
@@ -1543,6 +1556,7 @@ Objetivo del user: **3★ se pasa al segundo o tercer intento; 4★ cuesta cinco
 - **El vuelo se valida con quien corrige mirando** (`FLIGHT_PLAYER`), y las frases vuelven al suelo al acabar.
 - **La melodía da alturas relativas dentro de un tramo**, nunca notas absolutas.
 - **Un efecto `fx` es solo visual** y un registro (`FX_PLANNERS` + `FX_KINDS`).
+- **Cada mecánica se explica con su dibujo**: un elemento nuevo no puede compartir forma ni color con otro que hace algo distinto (el aro hueco cian se leía como un portal), y lo que hace el Dino tiene que verse en el Dino (la mochila del propulsor, la voltereta del doble salto).
 - **La exigencia es por canción** y se mide con las vecinas en su sitio.
 - **El margen mínimo de cada dificultad es un suelo**: las aperturas del acento (arco, principio, reparto) solo lo abren y, si falta exigencia, se cierran hasta él.
 
@@ -1556,14 +1570,59 @@ Objetivo del user: **3★ se pasa al segundo o tercer intento; 4★ cuesta cinco
 
 ---
 
-### Ola 7 — Overrides manuales y editor
+### Ola 7 — Ediciones del autor y editor de niveles 💤 (aplazada: futura actualización)
 
-**Objetivo.** Poder tocar a mano un momento concreto sin perder la generación automática.
+> **Decisión (Sep 2026, tras la Ola 6c):** se aplaza. Es la pieza más compleja que queda y hoy aporta poco frente a pulir cómo se juega y cómo se ve. Se guarda como **actualización futura, para anunciarla como sorpresa** cuando el juego esté publicado y haya autores que suban canciones. Esta sección deja el diseño pensado para que quien la retome no empiece de cero.
 
-**Alcance.**
+**Qué es.** Que el AUTOR de un nivel pueda retocar momentos concretos de SU nivel (quitar un obstáculo, poner otro, cambiar uno por una variante, fijar uno) sin renunciar a la generación automática: el charter sigue haciendo el nivel entero y las ediciones van encima.
 
-- Capa **`chart_overrides`** separada de `chart_json`: mover, añadir, borrar o fijar elementos concretos. Se aplica *después* de generar, así que **regenerar el chart no destruye las ediciones**.
-- Editor visual sobre el propio runtime: scrub por la canción, colocar, previsualizar en el sitio.
+**Qué NO es.**
+
+- **No es una herramienta para arreglar los niveles oficiales ni ningún nivel a mano.** Un nivel que suena mal se sigue arreglando con reglas generales del analizador y del charter, y el playtest se convierte en test de regresión. Los oficiales no llevan ediciones.
+- No es un editor desde cero (tipo Geometry Dash). El punto de partida siempre es el chart generado.
+- No cambia qué modos existen ni sus reglas. Mover dónde va un modo, como mucho, en una segunda fase y solo entre los tramos que el reparto admite.
+
+**Sobre qué se apoya (ya existe).**
+
+| Pieza | Por qué la hace posible |
+|---|---|
+| Chart versionado con `music` separado de `events` (Ola 3, §"formato") | Las ediciones tocan `events`; el análisis no se toca |
+| Posición de todo derivada del reloj de la canción (`physics.obstacleLeftX`, `speedProfile`, `spawner`) | Saltar a cualquier instante (scrub) es gratis: el mundo se coloca desde el tiempo, no se simula |
+| `playability.validateChart` + `virtualPlayer` (Olas 5-6c) | Cada edición se valida con la tolerancia de la dificultad: nada injugable llega a publicarse |
+| `challenge.referencePassRate` | Enseñar al autor cuánto cambió la exigencia con sus ediciones |
+| `normalizeChart` / `ChartValidator.php` | Datos no confiables del cliente, validados en los dos lados |
+| Estado "listo para publicar" y chart congelado al publicar (ajustes de la Ola 5) | Momento natural para editar: antes de publicar |
+| `Progress::invalidateForLevel` y la regla "una marca vale para el chart con el que se hizo" | Qué hacer con las marcas si un chart editado cambia |
+| Panel de desarrollo y `godMode` | Semilla del "probar desde aquí" |
+
+**Diseño propuesto.**
+
+1. **Ediciones como capa aparte**: `levels.chart_overrides_json` (o una tabla `level_overrides`), una lista de operaciones:
+   `{ op: 'remove' | 'add' | 'replace' | 'lock', at: { bar, beat, sub }, kind? }`.
+   - Se anclan a una **posición MUSICAL** (compás, pulso, subdivisión de `music.beats`/`downbeats`), no a segundos: si un charter o un analizador nuevo mueve un poco los golpes, la edición sigue en su golpe. Si no encuentra su golpe (±1 hueco de rejilla), queda "sin encajar" y se le enseña al autor; nunca se aplica en otro sitio en silencio.
+2. **`levels/overrides.js` (puro)**: `applyOverrides(chart, overrides, model)` → `{ chart, report }`, justo después de `buildChart`. Luego `validateChart` con la tolerancia de la dificultad: una edición que lo vuelve injugable se rechaza con su motivo (qué choca y dónde). Determinista y con tests como el resto del charter.
+3. **Cuándo se puede editar**: solo con el nivel privado o "listo para publicar". Al publicar, el chart (con sus ediciones) se congela como hoy. Editar un nivel ya publicado = nueva versión que invalida las marcas (`Progress::invalidateForLevel`) y se avisa antes. Lo más sencillo es no permitirlo en la primera versión.
+4. **Re-chartear**: cuando sube `CHARTER_VERSION`, el worker (`scripts/lib/chartFromAnalysis.mjs`) vuelve a aplicar las ediciones de los niveles privados; las que ya no encajan se guardan aparte y se le enseñan al autor ("3 ediciones ya no encajan con la nueva versión").
+5. **Servidor**: `POST/GET /api/levels/{id}/overrides` (solo el autor), validación en `ChartValidator` (lista cerrada de ops, kinds del registro, límites de tamaño), y el chart resultante recalculado en el servidor, igual que las variantes de dificultad. El cliente nunca manda el chart final.
+6. **Editor sobre el propio juego** (escritorio primero):
+   - El mapa de la canción del HUD como línea de tiempo, con la rejilla de pulsos y los tramos.
+   - Scrub: pausar, arrastrar, y el mundo se coloca solo en ese instante.
+   - Paleta con los kinds del registro permitidos en ese modo y dificultad (`OBSTACLE_KIND`).
+   - Validación en vivo: marcas rojas donde no se puede jugar, con la exigencia antes/después.
+   - "Probar desde aquí": una GameSession que empieza en un instante.
+
+**Lo que falta construir** (no existe hoy):
+
+- `AudioEngine`: reproducir desde un instante (seek/offset). `GameSession`, `fixedStep`, `spawner` y `beatClock`: arrancar en un instante distinto de 0.
+- `levels/overrides.js` y sus tests: determinismo, re-chart que conserva, rechazo de lo injugable, ediciones sin encajar.
+- Migración de las ediciones, endpoints y validación PHP.
+- La UI del editor (`ui/editor/…`), cargada bajo demanda como el charter para no pesar en el bundle principal.
+
+**Riesgos que hay que decidir al retomarla.**
+
+- Las reglas globales del charter (presupuesto de exigencia de los acentos, anillos solo si son necesarios, huecos de `PAIR_GAP`) pueden quedar rotas por una edición. El validador garantiza que sea jugable, no que suene bien. Propuesta: tras aplicar las ediciones, recalcular la exigencia y enseñarla, sin reequilibrar el resto a escondidas.
+- La dificultad del nivel es la que eligió el autor. Si con sus ediciones sale muy por debajo o muy por encima de la banda de esa dificultad, se avisa o se bloquea (decidir entonces).
+- Tamaño: 2-3 sesiones de trabajo, más el playtest del propio editor.
 
 ---
 
@@ -1580,7 +1639,7 @@ Ola 3 (chart + sincronía) ◀─────────┘
                     └──> Ola 5 (charter musical)
                                 │
                                 ├──> Ola 6a (bases de modos + antigravedad) ──> Ola 6b (reparto + vuelo) ──> Ola 6c (anillos, frases de vuelo, melodía, fx)
-                                └──> Ola 7 (editor y overrides)
+                                └──> Ola 7 (editor y ediciones del autor) — aplazada: futura actualización
 ```
 
 - **Olas 0, 1 y 2** son independientes entre sí y de todo lo demás. Sesiones cortas, resultado visible inmediato.

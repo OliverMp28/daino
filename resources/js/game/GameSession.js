@@ -69,7 +69,7 @@ import { countMechanicSeen, countModeSeen } from '../ui/settings.js';
 import {
     DT_CAP_S, DINO_SIZE, MODE_COLORS, OBSTACLE_KIND,
     SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
-    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX, FLY_JET, JUMP_RING_FX,
+    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX, FLY_JET, JUMP_RING_FX, DOUBLE_JUMP_FX,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -164,6 +164,9 @@ export class GameSession {
         this._course = createFlightCourse(this.chart.events);
         this._tunnel = null;
         this._jetT = 0;
+        this._jetColor = 0;
+        this._wasThrusting = false;
+        this._nozzle = { x: 0, y: 0 };
         this._climaxGlow = 0;
         this._dropT = Infinity;       // segundos desde el último drop/lift (∞ = ninguno)
         this._momentStrength = 1;     // 1 drop, < 1 lift
@@ -201,7 +204,7 @@ export class GameSession {
         this._groundY = groundY;
 
         // Dino (con el skin elegido por el user en AJUSTES).
-        this.dino = new Dino({ skinId: this.skinId });
+        this.dino = new Dino({ skinId: this.skinId, reducedMotion: this.engine.reducedMotion });
         this.dino.y = groundY - DINO_SIZE.h;
         layers.gameLayer.addChild(this.dino);
 
@@ -434,24 +437,7 @@ export class GameSession {
             }
         }
 
-        // Propulsión: mientras se mantiene en vuelo, chispas desde la cola.
-        if (this.dino.mode === 'fly' && this.dino.flyHeld > 0 && !this.engine.reducedMotion) {
-            this._jetT += dt;
-            if (this._jetT >= FLY_JET.periodS) {
-                this._jetT = 0;
-                this._bursts.burst({
-                    x: this.dino.x + 14,
-                    y: this.dino.y + DINO_SIZE.h - 12,
-                    count: 1,
-                    color: FLY_JET.color,
-                    speedMin: FLY_JET.speedMin,
-                    speedMax: FLY_JET.speedMax,
-                    gravity: 260,
-                    lifeS: FLY_JET.lifeS,
-                    upBias: -0.6,
-                });
-            }
-        }
+        this._tickJetpack(dt);
 
         // Score: por ahora, score = floor(tiempo de canción * 100).
         this._score = Math.floor(shownTime * 100);
@@ -832,9 +818,72 @@ export class GameSession {
         return hit;
     }
 
-    /** Un anillo vuelve a impulsar al Dino: chispas en su color alrededor del cuerpo. */
+    /**
+     * Propulsor (modo vuelo): chispas desde la tobera mientras se mantiene, una
+     * llamarada al encenderlo y humo al soltar. La llama del sprite la lleva el Dino.
+     */
+    _tickJetpack(dt) {
+        const dino = this.dino;
+        const thrusting = dino.mode === 'fly' && dino.flyHeld > 0 && !dino.dead;
+        const was = this._wasThrusting;
+        this._wasThrusting = thrusting;
+        if (this.engine.reducedMotion || dino.mode !== 'fly') return;
+        const n = dino.jetNozzle(this._nozzle);
+        const flame = (count) => {
+            this._jetColor = (this._jetColor + 1) % FLY_JET.colors.length;
+            this._bursts.burst({
+                x: n.x,
+                y: n.y,
+                count,
+                color: FLY_JET.colors[this._jetColor],
+                speedMin: FLY_JET.speedMin,
+                speedMax: FLY_JET.speedMax,
+                gravity: 260,
+                lifeS: FLY_JET.lifeS,
+                upBias: -0.6,
+            });
+        };
+        if (thrusting && !was) flame(FLY_JET.ignition);
+        if (!thrusting && was) {
+            this._bursts.burst({
+                x: n.x,
+                y: n.y,
+                count: FLY_JET.cutoff,
+                color: FLY_JET.smokeColor,
+                speedMin: 20,
+                speedMax: 70,
+                gravity: -60,
+                lifeS: 0.5,
+                upBias: 0.3,
+            });
+        }
+        if (!thrusting) return;
+        this._jetT += dt;
+        if (this._jetT >= FLY_JET.periodS) {
+            this._jetT = 0;
+            flame(1);
+        }
+    }
+
+    /**
+     * El orbe vuelve a impulsar al Dino (doble salto): chispas en su color
+     * alrededor del cuerpo y un soplo de aire bajo los pies, como si pisara el aire.
+     * La voltereta la hace el Dino (onGesture 'ring').
+     */
     _onTriggerFired() {
         if (this.engine.reducedMotion || this.dino === null) return;
+        const puff = DOUBLE_JUMP_FX.puff;
+        this._bursts.burst({
+            x: this.dino.x + DINO_SIZE.w * 0.5,
+            y: this.dino.y + DINO_SIZE.h,
+            count: puff.count,
+            color: puff.color,
+            speedMin: puff.speedMin,
+            speedMax: puff.speedMax,
+            gravity: 0,
+            lifeS: puff.lifeS,
+            upBias: -0.45,
+        });
         this._bursts.burst({
             x: this.dino.x + DINO_SIZE.w * 0.5,
             y: this.dino.y + DINO_SIZE.h * 0.5,

@@ -59,6 +59,11 @@ const PALETTE = {
     R: '#ffb057', // borde del orbe y chevrón encendido
     r: '#ff6f2c', // cuerpo del orbe y chevrón apagado
     Q: '#ffffff', // brillo
+    // Mochila propulsora del modo vuelo (Ola 6c): acero oscuro con la franja del
+    // oro del modo (F); la llama usa Q · F · R · r. Los skins no la tocan.
+    M: '#8e9ad6', // borde de la mochila
+    m: '#3d4577', // cuerpo de la mochila y correa
+    k: '#171a30', // tobera
     // Portal: en grises para teñirlo con el color de cada modo (Sprite.tint)
     O: '#ffffff', // aro
     o: '#a6a6a6', // aro interior
@@ -126,6 +131,50 @@ const dinoDead = [
     '........WW..WW.......',
     '........WWW.WWW......',
 ];
+
+/**
+ * Capa de 21×21 (la rejilla del dino de pie) con dibujo solo en las filas dadas:
+ * se pinta ENCIMA del dino con el mismo ancla, así que no hay desfases que cuadrar.
+ * @param {Record<number, string>} rows  fila → 21 caracteres
+ */
+function dinoOverlay(rows) {
+    return Array.from({ length: 21 }, (_, y) => rows[y] ?? '.....................');
+}
+
+// Mochila propulsora (modo vuelo): a la espalda, con la correa cruzando el pecho
+// y la tobera inclinada hacia atrás y abajo, para que la llama salga por detrás del
+// cuerpo (debajo de la mochila está el lomo). Sin ella el Dino "subía y caía" sin
+// que nada lo explicara.
+const jetpack = dinoOverlay({
+    3: '......MMM............',
+    4: '.....MmmmM...........',
+    5: '.....MmFmM...........',
+    6: '.....MmFmM...........',
+    7: '.....MmmmM...........',
+    8: '.....MmFmMmmmmmm.....',
+    9: '.....MmmmM...........',
+    10: '......MMM............',
+    11: '.....kk..............',
+});
+
+// Llama de la tobera, en diagonal hacia atrás: dos frames mientras se mantiene
+// (parpadea) y una brasa sin empuje.
+const jetFlameA = dinoOverlay({
+    12: '....QF...............',
+    13: '...FR................',
+    14: '..Rr.................',
+    15: '..r..................',
+});
+const jetFlameB = dinoOverlay({
+    12: '....QQ...............',
+    13: '...FQF...............',
+    14: '..RFR................',
+    15: '.Rr..................',
+    16: '.r...................',
+});
+const jetFlameIdle = dinoOverlay({
+    12: '....r................',
+});
 
 // Agachado: cuerpo alargado y bajo. Grid 26×12 → 104×48 px.
 const DINO_DUCK_BODY = [
@@ -435,6 +484,7 @@ const chevronDown = chevronUp.slice().reverse();
 
 const DEFS = {
     dinoRunA, dinoRunB, dinoJump, dinoDead, dinoDuckA, dinoDuckB,
+    jetpack, jetFlameA, jetFlameB, jetFlameIdle,
     cactusSmall, cactusWide, ...cactusRows,
     pteroA, pteroB,
     ground, cloud, dot,

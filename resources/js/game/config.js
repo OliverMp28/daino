@@ -211,10 +211,28 @@ export const MODE_FX = Object.freeze({
  */
 export const FLY_JET = Object.freeze({
     periodS: 0.04,
-    color: 0xffd166,
+    /** Colores de las chispas de la llama (se alternan). */
+    colors: Object.freeze([0xffd166, 0xff9a3c]),
     speedMin: 80,
     speedMax: 200,
     lifeS: 0.32,
+    /** Chispas al encender el propulsor (empezar a mantener). */
+    ignition: 7,
+    /** Bocanadas de humo al apagarlo (soltar). */
+    cutoff: 4,
+    smokeColor: 0x5a6499,
+});
+
+/**
+ * Doble salto (orbe, Ola 6c): el Dino da una voltereta hacia delante mientras
+ * sube y suelta un soplo de aire bajo los pies. Es lo que cuenta "segundo salto"
+ * sin leer nada. Solo visual.
+ *   spinS       Duración de la vuelta completa.
+ *   puff        Partículas del soplo, de qué color y a qué velocidad.
+ */
+export const DOUBLE_JUMP_FX = Object.freeze({
+    spinS: 0.38,
+    puff: Object.freeze({ count: 9, color: 0xf2f5ff, speedMin: 70, speedMax: 170, lifeS: 0.26 }),
 });
 
 // --------------------------- Animación ---------------------------

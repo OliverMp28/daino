@@ -1,4 +1,6 @@
-// Modo VUELO — mantener para subir, soltar para bajar (Ola 6b).
+// Modo VUELO — mantener para subir, soltar para bajar (Ola 6b). Para el jugador
+// es el PROPULSOR (Ola 6c): el Dino se pone una mochila cohete (entities/Dino.js),
+// que es lo que explica por qué sube mientras mantiene y cae en cuanto suelta.
 //
 // La antigravedad se juega a golpes: cada pulsación, un cambio. El vuelo se juega
 // con NOTAS MANTENIDAS: mientras la nota suena, el Dino sube; cuando acaba, baja.
@@ -23,9 +25,9 @@ import { BODY_EVENT } from './body.js';
 /** @type {import('./index.js').MovementMode} */
 export const FLY_MODE_DEF = Object.freeze({
     id: 'fly',
-    label: 'Vuelo',
+    label: 'Propulsor',
     color: MODE_COLORS.fly,
-    hint: Object.freeze({ keys: 'Mantén Espacio para subir', touch: 'Mantén el dedo en la pantalla para subir' }),
+    hint: Object.freeze({ keys: 'Mantén Espacio para encender el propulsor; suelta para caer', touch: 'Mantén el dedo para encender el propulsor; suelta para caer' }),
     actions: Object.freeze(['hold']),
     /** Tras cruzar el portal: el Dino puede venir del final de un salto (boca del túnel). */
     settleS: FLY_MODE.entryOpenS,
