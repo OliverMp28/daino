@@ -25,7 +25,7 @@
 // enseña casi el mismo mundo. El fondo (shader) y el hudLayer (destellos a
 // pantalla completa) siguen en píxeles de pantalla.
 //
-// Escenario (fase E1, doc 11): el engine es dueño de la ESCENA (scenes/registry.js)
+// Escenario (T01): el engine es dueño de la ESCENA (scenes/registry.js)
 // y de la HORA del cielo. La partida empuja la hora de su plan (setSkyHour) y el
 // menú usa la de la escena; cada frame en que cambia, scenes/skyModel.js la
 // convierte en el cielo del shader y el color de las capas del escenario.
@@ -73,7 +73,7 @@ let timeAccum = 0;         // segundos desde init — siempre avanza salvo pausa
 let worldSpeed = SCENERY.menuSpeed;  // px/s del scroll del scenery
 let musicIntensity = 0;    // intensidad del tramo de la canción (Ola 5), 0 en el menú
 
-// --- Escenario (fase E1) ---
+// --- Escenario (T01) ---
 let scene = resolveScene(DEFAULT_SCENE);
 let skyHour = null;              // hora que empuja la partida; null = la del menú
 const skyState = createSkyState();
@@ -420,7 +420,7 @@ function tick(ticker) {
     if (particleLayer.tick) particleLayer.tick(dt, rms * (0.6 + 0.9 * musicIntensity));
 }
 
-// --------------------------- Escenario (fase E1) ---------------------------
+// --------------------------- Escenario (T01) ---------------------------
 
 /** Hora del cielo: la del panel dev si está fijada, la de la partida o la del menú. */
 function currentSkyHour() {
@@ -470,7 +470,7 @@ export function setSkyHour(hour) {
     skyHour = Number.isFinite(hour) ? hour : null;
 }
 
-/** Cambia de escena (panel dev; en la fase E2, la del nivel). */
+/** Cambia de escena (panel dev; en el T02, la del nivel). */
 export function setScene(id) {
     scene = resolveScene(id);
     scenery?.setScene(scene);

@@ -1,4 +1,4 @@
-// Modelo del cielo y registro de escenas (fase E1, doc 11): de una hora a lo que
+// Modelo del cielo y registro de escenas (T01): de una hora a lo que
 // se ve, y el guardián de legibilidad a todas las horas de todas las escenas.
 
 import { test } from 'node:test';

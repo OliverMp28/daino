@@ -301,7 +301,7 @@ const ground = [
     'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
 ];
 
-// Nubes (fase E1, doc 11): en claros, porque la hora del cielo las tiñe. Cuerpo
+// Nubes (T01): en claros, porque la hora del cielo las tiñe. Cuerpo
 // blanco con la sombra abajo; el color lo pone `Sprite.tint` (entities/scenery/
 // Clouds.js). Grid 20×8 → 80×32 y 28×10 → 112×40.
 const cloud = [

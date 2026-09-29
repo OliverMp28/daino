@@ -663,7 +663,7 @@ function setState(next) {
 
     // El dino ambiente del scenery solo corre en el menú.
     engineApi?.setAmbientDinoVisible?.(next === STATE.MENU);
-    // En el menú, el cielo del menú de la escena (fase E1): la partida ya no
+    // En el menú, el cielo del menú de la escena (T01): la partida ya no
     // empuja su hora. Se llega aquí bajo el fundido a negro: no se ve el salto.
     if (next === STATE.MENU) engineApi?.setSkyHour?.(null);
 

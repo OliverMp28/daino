@@ -3,7 +3,7 @@
 // partida): el menú scrollea suave a SCENERY.menuSpeed y la partida a gameSpeed,
 // así el mundo "arranca" al empezar a jugar en vez de aparecer.
 //
-// Desde la fase E1 (doc 11) es un COMPOSITOR: las capas (cordilleras, nubes,
+// Desde el T01 es un COMPOSITOR: las capas (cordilleras, nubes,
 // suelo…) las declara la escena (scenes/registry.js) y cada `type` tiene su
 // implementación (entities/scenery/). La hora del cielo las tiñe (`light`).
 //

@@ -1,4 +1,4 @@
-// Color para el escenario (fase E1, doc 11): conversiones, interpolación y
+// Color para el escenario (T01): conversiones, interpolación y
 // medidas de legibilidad. Puro y sin Pixi: lo usan la paleta del cielo, el
 // guardián de legibilidad y los tests.
 //

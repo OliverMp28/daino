@@ -1,4 +1,4 @@
-// Guardián de legibilidad del escenario (fase E1, doc 11 §2.3).
+// Guardián de legibilidad del escenario (T01, doc 11 §2.3).
 //
 // El cielo cambia con la hora, pero lo que se juega no puede perderse delante
 // de él. Para cada altura donde puede haber juego, compara el color de lo que

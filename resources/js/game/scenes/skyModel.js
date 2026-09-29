@@ -1,4 +1,4 @@
-// Modelo del cielo (fase E1, doc 11): de una HORA a todo lo que se ve.
+// Modelo del cielo (T01): de una HORA a todo lo que se ve.
 //
 // La hora es continua y puede pasar de 24 (5:00 del día siguiente = 29): así el
 // reloj de un nivel nunca retrocede al cruzar la medianoche. De ella salen la

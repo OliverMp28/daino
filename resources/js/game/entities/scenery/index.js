@@ -1,6 +1,6 @@
-// Tipos de capa del escenario (fase E1, doc 11): el `type` de cada capa de una
+// Tipos de capa del escenario (T01): el `type` de cada capa de una
 // escena (scenes/registry.js) elige aquí su implementación. Una capa nueva (el
-// mar de la escena "Costa", fase E2) es un módulo con la misma forma y una
+// mar de la escena "Costa", T02) es un módulo con la misma forma y una
 // entrada en este mapa:
 //
 //   create(def, { width, height, groundY }) → {

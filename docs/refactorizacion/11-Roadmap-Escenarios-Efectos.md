@@ -2,14 +2,16 @@
 
 > **Qué es este documento.** El user quiere trabajar dos frentes visuales, cada uno con su propia sesión para darle el enfoque que merece:
 >
-> 1. **Escenario** (fases **E**): el cielo y el paisaje. Que el paso del tiempo se sienta (día → atardecer → noche con luna → amanecer) y que la arquitectura permita, más adelante, **escenas con personalidad e historia** por nivel (el ejemplo del user: un nivel con "One Day" de Piratas del Caribe con el mar en el horizonte, un barco que aparece y el destello verde).
-> 2. **Efectos al ritmo de la música** (fases **V**): varios efectos, progresivos, que no aparezcan todos en todos los niveles, que se integren en el escenario sin estorbar la vista, que den a cada canción su identidad de color, y un **panel dev** para activarlos por nombre ("el efecto X quítalo").
+> 1. **Escenario** (trabajos **T01** y **T02**): el cielo y el paisaje. Que el paso del tiempo se sienta (día → atardecer → noche con luna → amanecer) y que la arquitectura permita, más adelante, **escenas con personalidad e historia** por nivel (el ejemplo del user: un nivel con "One Day" de Piratas del Caribe con el mar en el horizonte, un barco que aparece y el destello verde).
+> 2. **Efectos al ritmo de la música** (trabajo **T03**): varios efectos, progresivos, que no aparezcan todos en todos los niveles, que se integren en el escenario sin estorbar la vista, que den a cada canción su identidad de color, y un **panel dev** para activarlos por nombre ("el efecto X quítalo").
 >
 > Se trabaja primero el escenario. Los efectos, en otra sesión.
 >
 > **Autoridad.** Por debajo de 04, 05, 06, 07, `vout-integration/`, 09 y 10. Refina el doc 06 §3: la Capa 1 deja de ser "el fondo audio-reactivo" y pasa a ser **el cielo del escenario con los efectos encima** (ver §2.4). Para todo lo que es nivel, charter o sincronía, manda el 10.
 >
-> **Estado:** E0 ✅ y E1 ✅ (Sep 2026). Siguiente: playtest humano del ciclo; después V1 (efectos) o E2 (escenas por nivel), en sesiones aparte.
+> **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
+>
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 y T03 sin empezar.
 
 ---
 
@@ -17,7 +19,7 @@
 
 - [1. Diagnóstico](#1-diagnóstico)
 - [2. Decisiones vinculantes](#2-decisiones-vinculantes)
-- [3. Las fases](#3-las-fases)
+- [3. Los trabajos y sus olas](#3-los-trabajos-y-sus-olas)
 - [4. Orden y dependencias](#4-orden-y-dependencias)
 - [5. Riesgos](#5-riesgos)
 - [6. Ideas descartadas (con motivo)](#6-ideas-descartadas-con-motivo)
@@ -28,7 +30,7 @@
 
 ### 1.A Qué hay hoy en el fondo
 
-Inventario antes de E1. La última columna es la clave de todo este documento: hoy **escenario y efectos viven mezclados en las mismas fórmulas**.
+Inventario antes del T01. La última columna es la clave de todo este documento: hoy **escenario y efectos viven mezclados en las mismas fórmulas**.
 
 | Elemento | Dónde | Qué lo mueve | ¿Escenario o efecto? |
 |---|---|---|---|
@@ -37,7 +39,7 @@ Inventario antes de E1. La última columna es la clave de todo este documento: h
 | Sol synthwave (cian→rosa con rendijas) | `background.frag` | baja con `uProgress`; late con el beat | escenario + efecto |
 | Halo del sol | `background.frag` | base constante + graves, pulso, drops | escenario + efecto |
 | Glow del horizonte (rosa y cian) | `background.frag` | base constante + graves, pulso, build, flash, agudos | escenario + efecto |
-| **Ondas senoidales** | `background.frag` | medios + RMS | efecto — **quitado en E0** |
+| **Ondas senoidales** | `background.frag` | medios + RMS | efecto — **quitado en la T01.1** |
 | Ecualizador pixel (40 barras) | `background.frag` | FFT, intensidad del tramo | efecto |
 | Tinte del clímax, destello al beat, break desaturado, giro por cambio de tonalidad | `background.frag` | estructura de la canción (Olas 5 y 6c) | efecto |
 | Viñeta | `background.frag` | fija | escenario |
@@ -48,7 +50,7 @@ Inventario antes de E1. La última columna es la clave de todo este documento: h
 | Líneas de velocidad | `entities/SpeedLines.js` | `speedCues` | efecto de juego |
 | Drop, lift y marcha: destello, golpe de cámara, ola de partículas | `GameSession.js` | eventos del chart | efecto de juego |
 
-### 1.B El efecto borroso eran las "ondas senoidales" (quitado en E0)
+### 1.B El efecto borroso eran las "ondas senoidales" (quitado en la T01.1)
 
 Lo que el user describió ("una especie de nube o difuminación con formas circulares en todo el fondo, se mueve de derecha a izquierda y palpita con el ritmo") era un resto del shader v1 del Bloque 4 que sobrevivió al rediseño:
 
@@ -62,11 +64,11 @@ col += vec3(wave) * (0.018 + mid * 0.10 + rms * 0.06);
 - Es **gris** (`vec3(wave)`) y **aditivo** sobre toda la pantalla: lava los colores y emborrona el cielo.
 - En el menú suma 0.018 (no se ve). En partida, con medios a 0.5 y RMS a 0.3, llega a ~0.11, y hasta ~0.18 con la música a tope, sobre un cielo de 0.02-0.18: **multiplica el brillo por zonas y late con la canción**.
 
-Verificado con capturas de What's Up Danger en 0:24 y 0:44 (bandas de niebla gris en el tercio superior y la franja media) y después del cambio en 1:07 (cielo limpio). `uMid` y `uRMS` siguen declarados: son parte del bus de audio que usará la fase V.
+Verificado con capturas de What's Up Danger en 0:24 y 0:44 (bandas de niebla gris en el tercio superior y la franja media) y después del cambio en 1:07 (cielo limpio). `uMid` y `uRMS` siguen declarados: son parte del bus de audio que usará el T03.
 
 ### 1.C Las barras del ecualizador se esconden detrás de las montañas
 
-El user: "se ve bien, solo que a veces parece escondido". Es literal: las barras suben desde el horizonte `bin² × (0.11 + 0.09 · intensidad)` de la altura, 0.03-0.13 con la música típica y como mucho 0.20. La cordillera lejana mide 40-130 unidades de 620 (0.065-0.21) y **se dibuja encima** (el escenario va sobre el shader). Solo asoman por los valles. Es trabajo de V1: el ecualizador necesita su propio plano, no el fondo del fondo.
+El user: "se ve bien, solo que a veces parece escondido". Es literal: las barras suben desde el horizonte `bin² × (0.11 + 0.09 · intensidad)` de la altura, 0.03-0.13 con la música típica y como mucho 0.20. La cordillera lejana mide 40-130 unidades de 620 (0.065-0.21) y **se dibuja encima** (el escenario va sobre el shader). Solo asoman por los valles. Es trabajo de la T03.1: el ecualizador necesita su propio plano, no el fondo del fondo.
 
 ### 1.D Legibilidad: los sprites están pensados para un cielo oscuro
 
@@ -119,12 +121,12 @@ Por qué así: en una canción típica el día cubre intro, estrofas y estribill
 ### 2.4 Escenario ≠ efectos
 
 - **Escenario**: lo que existe aunque no suene nada. Depende de la hora (y de la escena), nunca del audio.
-- **Efecto**: lo que reacciona a lo que suena o a la estructura. Tiene **nombre**, vive en un registro (fase V1) y se puede apagar.
-- Las bases constantes del halo del sol y del glow del horizonte pasan a la paleta del cielo. Lo que late se queda como efecto, igual que está, hasta V1.
+- **Efecto**: lo que reacciona a lo que suena o a la estructura. Tiene **nombre**, vive en un registro (T03.1) y se puede apagar.
+- Las bases constantes del halo del sol y del glow del horizonte pasan a la paleta del cielo. Lo que late se queda como efecto, igual que está, hasta la T03.1.
 
 ### 2.5 Una escena es un registro
 
-Una escena declara su paleta, su ciclo, sus astros (dónde sale y se pone el sol, cómo es la luna) y sus capas (`ridge`, `clouds`, `ground`… y en E2 `sea`, props y cues). Añadir una escena es una entrada del registro más, si hace falta, un tipo de capa nuevo. Nada del juego ni del charter cambia.
+Una escena declara su paleta, su ciclo, sus astros (dónde sale y se pone el sol, cómo es la luna) y sus capas (`ridge`, `clouds`, `ground`… y en el T02 `sea`, props y cues). Añadir una escena es una entrada del registro más, si hace falta, un tipo de capa nuevo. Nada del juego ni del charter cambia.
 
 ### 2.6 El menú, al atardecer synthwave
 
@@ -132,25 +134,47 @@ Elegido por el user frente a "hora real del jugador" y "noche con luna": sol con
 
 ### 2.7 Todo lo que se ve tiene nombre
 
-Cada elemento del escenario (y, en V1, cada efecto) tiene un id y una etiqueta en español, y un interruptor en el panel dev. Así el user y el desarrollo hablan de lo mismo ("la neblina del horizonte", "el filo de las crestas") en vez de adivinar.
+Cada elemento del escenario (y, desde la T03.1, cada efecto) tiene un id y una etiqueta en español, y un interruptor en el panel dev. Así el user y el desarrollo hablan de lo mismo ("la neblina del horizonte", "el filo de las crestas") en vez de adivinar.
 
 ---
 
-## 3. Las fases
+## 3. Los trabajos y sus olas
 
-### E0 — Quitar las ondas ✅ (Sep 2026)
+### Lista de control
+
+- [ ] **T01 — Escenario vivo**: el cielo y el paisaje cuentan la canción.
+  - [x] T01.1 — Quitar la niebla borrosa del fondo (Sep 2026).
+  - [x] T01.2 — Ciclo del cielo (día, atardecer, noche con luna, amanecer) anclado a la canción, escenario en capas y panel dev "Cielo" (Sep 2026).
+  - [x] T01.3 — Luna con más detalle y magia (Sep 2026).
+  - [ ] T01.4 — Playtest humano del ciclo y ajustes de tablas.
+- [ ] **T02 — Escenas con personalidad e historia**: cada nivel puede tener su escenario.
+  - [ ] T02.1 — Escena por nivel (base de datos, manifest, selector de quien sube).
+  - [ ] T02.2 — Momentos de la historia (cues) anclados al cielo y a la canción.
+  - [ ] T02.3 — Primera escena propia, "Costa": mar, barco y destello verde.
+  - [ ] T02.4 — Clima (lluvia, niebla, nieve).
+  - [ ] T02.5 — Escena elegida por el carácter de la canción.
+- [ ] **T03 — Efectos al ritmo de la música**: lo que reacciona a lo que suena.
+  - [ ] T03.1 — Registro de efectos con nombre, panel "Efectos" y ecualizador fuera de las montañas.
+  - [ ] T03.2 — Efectos nuevos, progresivos y repartidos por canción.
+  - [ ] T03.3 — Legibilidad y presupuesto de los efectos.
+
+---
+
+### T01 — Escenario vivo
+
+#### ✅ T01.1 — Quitar la niebla borrosa (Sep 2026)
 
 Ver §1.B.
 
-### E1 — Ciclo del cielo y escenario vivo ✅ (Sep 2026)
+#### ✅ T01.2 — Ciclo del cielo y escenario vivo (Sep 2026)
 
-#### Qué se construyó (y en qué se desvió del plan, con motivo)
+##### Qué se construyó (y en qué se desvió del plan, con motivo)
 
 - **Núcleo puro** `resources/js/game/scenes/`, sin Pixi y probado en Node:
   - `color.js`: hex↔sRGB, OKLab (para interpolar sin grises sucios: del azul del día al naranja del ocaso en sRGB sale un marrón) y contraste WCAG.
   - `palettes.js`: `SKY_PALETTES.synthwave`, keyframes por **elevación del sol** (tarde y alba con listas propias, que comparten el pleno día y la noche cerrada: pasar de una a otra no da saltos), `samplePalette` sin asignaciones por frame.
   - `skyModel.js`: `skyStateAt(hora, escena, out)` → sol (posición, tamaño, colores, rendijas, halo), luna, estrellas (visibilidad y giro), lucero, colores de cielo, nubes, montañas y suelo; `skyColorAt` (el mismo degradado que el shader, para el guardián y el CSS); `SKY_PHASES`.
-  - `skyClock.js`: `planSky` (§2.1) con `SKY_HOURS`, `SKY_RULES` y `SKY_CYCLES` (`journey`, y `fixed` para escenas de hora quieta); `hourAt`, `timeAtHour`, `phaseAt`, `events` (`eveningStart`, `sunDown`, `nightfall`, `dawnStart`, `sunrise`: los anclajes para los cues de E2) y `epilogue`.
+  - `skyClock.js`: `planSky` (§2.1) con `SKY_HOURS`, `SKY_RULES` y `SKY_CYCLES` (`journey`, y `fixed` para escenas de hora quieta); `hourAt`, `timeAtHour`, `phaseAt`, `events` (`eveningStart`, `sunDown`, `nightfall`, `dawnStart`, `sunrise`: los anclajes para los cues del T02) y `epilogue`.
   - `registry.js`: `SCENES` (la "Cordillera"), `SKY_ELEMENTS` (lo que pinta el shader, con su hueco en `uShow0/uShow1`), `sceneElements`, `resolveScene`, `sceneCycle`.
   - `readability.js`: el guardián (§2.3).
 - **`assets/palette.js`**: la paleta del pixel art sale de `pixelart.js` (que importa Pixi) para que el guardián mida los mismos colores que se dibujan.
@@ -167,7 +191,7 @@ Desviaciones del plan:
 - **Umbral de 2.5:1 para los obstáculos de color** en vez de 3:1 (§2.3, con la maqueta).
 - **Halo ancho del sol de día reducido** (0.30 → 0.16): las primeras capturas mostraban medio cielo lavado.
 
-#### Verificación — hecha, con medidas reales
+##### Verificación — hecha, con medidas reales
 
 - **Tests**: `tests/js/sky-clock.test.mjs` (8: los 8 oficiales como regresión, 500 estructuras sintéticas con hora monótona y continua, noche en el drop, sin estructura, epílogo, ciclo fijo) y `tests/js/sky-model.test.mjs` (10: sol, luna, estrellas y lucero por hora, la luna cruza y el cielo gira, el menú synthwave, continuidad del color, **guardián a 620 horas** — cada 3 minutos de 0:00 a 7:00 del día siguiente — sin un fallo, el guardián detecta un cielo pastel, nubes por encima del juego, registro completo, degradado CSS). **295 JS** en verde; PHP y Python sin tocar.
 - **Continuidad**: el minuto de cielo que más cambia (el ocaso, 18:13) se mueve 0.0126 en OKLab; un salto visible es del orden de 0.05.
@@ -175,7 +199,7 @@ Desviaciones del plan:
 - Capturas a cada hora en el menú y en partida (con obstáculos y HUD); `prefers-reduced-motion` emulado: el degradado CSS y los tintes siguen la hora; el panel dev apaga cada elemento por su nombre.
 - **Bundle**: 185.46 KB gzip (176.04 antes, umbral 200). Los módulos nuevos pesan 9.87 KB gzip frente a 1.54 del `Scenery.js` anterior; el resto es el texto del shader, que crece 3.4 KB porque sus comentarios viajan en el bundle (`vite-plugin-glsl` con `compress: false`).
 
-#### Limitaciones que quedan
+##### Limitaciones que quedan
 
 - **Falta el playtest humano** del reparto de horas (¿se siente la calma antes de la noche?, ¿el amanecer del final llega a tiempo?). Todo está en tablas: `SKY_HOURS`, `SKY_RULES`, las paletas y la escena, y el panel dev deja ver cualquier hora al momento.
 - **Alba rápida si el outro es corto**: en What's Up Danger dura 13 s (de noche a sol asomando).
@@ -183,25 +207,50 @@ Desviaciones del plan:
 - El disco del sol cruza el carril de los obstáculos en el ocaso y el amanecer (pequeño y en décimas; ya pasaba con el sol de antes).
 - Con `prefers-reduced-motion` no hay sol, luna ni estrellas: solo el degradado y los tintes.
 - En pantallas de muy poca altura de mundo (< ~450) las nubes no caben por encima del juego y no salen.
-- La luna siempre llena: las fases (una por nivel, por ejemplo) son personalidad de E2.
-- Los comentarios del shader viajan en el bundle: `compress: true` de `vite-plugin-glsl` solo en build ahorraría ~2-3 KB gzip (probarlo con el bundle real antes; V3 o Bloque 8).
+- La luna siempre llena: las fases (una por nivel, por ejemplo) son personalidad del T02.
+- Los comentarios del shader viajan en el bundle: `compress: true` de `vite-plugin-glsl` solo en build ahorraría ~2-3 KB gzip (probarlo con el bundle real antes; T03.3 o Bloque 8).
 
-### E2 — Escenas con personalidad e historia (futuro)
+#### ✅ T01.3 — Luna con más detalle y magia (Sep 2026)
+
+Tras ver la T01.2, el user: la luna "se ve muy simple al moverse con esos píxeles grandes… poco mágica". Sigue siendo pixel art, pero:
+- A **media celda del arte** (solo la luna): más detalle sin salirse del estilo.
+- **Volumen**: esfera iluminada desde arriba a la derecha con el brillo en 5 escalones (como un sprite con su paleta); sombra fría y luz cálida.
+- **Mares** con ruido suave y **5 cráteres** con el borde encendido.
+- **Magia alrededor**: corona cercana, luz ancha que baña el cielo, halo lunar tenue en anillo (~3.4 radios) y un destello que titila en su borde.
+- Radio de 0.042 a 0.05 del alto de pantalla. El resplandor usa el mismo borde pixelado que el disco: con el círculo exacto quedaba un contorno de celdas oscuras.
+
+#### ⬜ T01.4 — Playtest humano del ciclo
+
+Jugar niveles largos y cortos y ajustar las tablas (`SKY_HOURS`, `SKY_RULES`, `palettes.js`, la escena): ¿se siente la calma antes de la noche?, ¿el amanecer final llega a tiempo?, ¿el día se lee como día? El panel dev "Cielo" enseña cualquier hora al momento. Con esto se marca el T01.
+
+### T02 — Escenas con personalidad e historia
+
+#### ⬜ T02.1 — Escena por nivel
 
 - **Escena por nivel**: columna `levels.scene` (NULL = la de siempre), `scene` en el manifest de oficiales, selector para quien sube la canción (junto a la dificultad) y lectura en el runtime.
+#### ⬜ T02.2 — Momentos de la historia (cues)
+
 - **Cues**: momentos de la historia de una escena anclados a eventos del cielo (`planSky(...).events`: `eveningStart`, `sunDown`, `nightfall`, `dawnStart`, `sunrise`; y `timeAtHour` para cualquier otra hora) o de la canción (inicio del clímax, drops, secciones, final). Un cue es `{ prop, from, to }` o `{ fx, at }`.
+#### ⬜ T02.3 — Primera escena propia: "Costa"
+
 - **Primera escena propia, "Costa"** (el ejemplo del user): capa de mar en el horizonte con reflejo del sol y de la luna, costa o acantilado a un lado; el **barco** aparece en el horizonte al alba; el **destello verde** (el "rayo verde" real, que se ve sobre el mar en el último instante del ocaso o el primero del orto) en `sunDown`. Historia de Will y Elizabeth: se separan al anochecer y el barco vuelve con el amanecer del final del nivel.
+#### ⬜ T02.4 — Clima
+
 - **Clima** como props de escena con su propia línea de tiempo: lluvia, niebla, nieve.
+#### ⬜ T02.5 — Escena por el carácter de la canción
+
 - **Elección de escena por el carácter de la canción**, como `MODE_CASTING` elige los modos: tonalidad, energía, bandas y percusividad del análisis del servidor proponen una escena, y quien sube puede cambiarla.
 - Opcional: la hora real del jugador en el menú (descartada como menú por defecto en §2.6, puede ser un ajuste).
 
-### V1 — Registro de efectos y panel "Efectos" (siguiente sesión de efectos)
+### T03 — Efectos al ritmo de la música
+
+#### ⬜ T03.1 — Registro de efectos y panel "Efectos" (siguiente sesión de efectos)
 
 - Registro `EFFECTS` con id, etiqueta, qué señal lo mueve (bandas, FFT, pulso, estructura, tonalidad), qué capa pinta y su ganancia. Migrar lo que ya late: ecualizador, pulso del sol, glow de graves, estrellas por agudos, motas, línea del suelo, tinte del clímax, giro de tonalidad, destello del drop.
 - Panel dev: por efecto, encendido, **solo** (ver ese efecto sin los demás) e intensidad. Así el user puede decir "el ecualizador del horizonte, bájale intensidad".
 - **Sacar el ecualizador de detrás de las montañas** (§1.C): su propio plano entre crestas o sobre la cordillera.
 
-### V2 — Efectos nuevos, progresivos y repartidos por canción
+#### ⬜ T03.2 — Efectos nuevos, progresivos y repartidos por canción
 
 Ideas del user y propuestas, a decidir en su sesión:
 - **Estrellas vivas**: las estrellas del escenario vibran con los golpes y en el clímax se alargan hacia el espectador (salto a la velocidad de la luz). Solo existen de noche, así que no aparecen en todos los niveles por construcción.
@@ -210,7 +259,7 @@ Ideas del user y propuestas, a decidir en su sesión:
 - Anillos del sol en los primeros tiempos del clímax; aurora en tramos de calma nocturnos.
 - **Reparto**: qué efectos tiene un nivel lo decide el carácter de la canción (`EFFECT_CASTING`, como los modos), y se desbloquean con el arco (intro mínima, clímax máximo). Un nivel enseña 2-4 efectos, no todos.
 
-### V3 — Legibilidad y presupuesto de los efectos
+#### ⬜ T03.3 — Legibilidad y presupuesto de los efectos
 
 El guardián de legibilidad también para los efectos (brillo máximo en la franja jugable), coste de cada efecto en `RenderProfile` (el tier bajo apaga los caros) y efectos apagados con `prefers-reduced-motion`, como hoy.
 
@@ -219,12 +268,12 @@ El guardián de legibilidad también para los efectos (brillo máximo en la fran
 ## 4. Orden y dependencias
 
 ```
-E0 ──► E1 ──► E2 (escenas por nivel, cues, Costa)
-         └──► V1 ──► V2 ──► V3
+T01 (escenario vivo) ──► T02 (escenas por nivel, cues, Costa)
+                    └─► T03 (efectos): T03.1 ──► T03.2 ──► T03.3
 ```
 
-- E1 va primero porque separa escenario y efectos (§1.F): V1 registra efectos sobre un cielo que ya no los necesita.
-- E2 y V1 no dependen entre sí. E2 necesita E1 (registro de escenas, eventos del cielo). V2 necesita V1 (registro) y aprovecha E1 (estrellas, luna y hora como lienzo).
+- El T01 va primero porque separa escenario y efectos (§1.F): la T03.1 registra efectos sobre un cielo que ya no los necesita.
+- T02 y T03 no dependen entre sí: se pueden hacer en cualquier orden. El T02 necesita el T01 (registro de escenas, eventos del cielo). La T03.2 necesita la T03.1 (registro) y aprovecha el T01 (estrellas, luna y hora como lienzo).
 
 ---
 
@@ -233,8 +282,8 @@ E0 ──► E1 ──► E2 (escenas por nivel, cues, Costa)
 | Riesgo | Mitigación |
 |---|---|
 | El día azul intenso no se lee como "día" | Sol blanco-dorado grande con halo, nubes blancas y neblina clara en el horizonte (detrás de las montañas, fuera de la franja jugable). Revisión con capturas a cada hora. |
-| Un obstáculo cruza el sol del atardecer (rosa sobre disco rosa) | Ya pasaba (captura de 1:07 en §1.B). El disco es pequeño y se cruza en décimas. El sol vive en la mitad derecha (E1): nunca delante del Dino. |
-| Coste del shader (luna, estrellas giradas, estrella fugaz) | Sin bucles, cálculos locales con recorte por distancia, se quitan las ondas. Medido en E1: 60 FPS en todas las fases de What's Up Danger (p95 17.1 ms). |
+| Un obstáculo cruza el sol del atardecer (rosa sobre disco rosa) | Ya pasaba (captura de 1:07 en §1.B). El disco es pequeño y se cruza en décimas. El sol vive en la mitad derecha (T01.2): nunca delante del Dino. |
+| Coste del shader (luna, estrellas giradas, estrella fugaz) | Sin bucles, cálculos locales con recorte por distancia, se quitan las ondas. Medido en la T01.2: 60 FPS en todas las fases de What's Up Danger (p95 17.1 ms). |
 | Teñir `Graphics` cada frame rehace el lote | Tintes cuantizados a 8 bits por canal y aplicados solo cuando cambian. |
 | `prefers-reduced-motion` no tiene shader | Variables CSS del cielo por hora (≤ 2 Hz); los tintes del escenario siguen la hora. Sol, luna y estrellas no se dibujan (limitación aceptada). |
 

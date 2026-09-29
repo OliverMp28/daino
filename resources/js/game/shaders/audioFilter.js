@@ -1,4 +1,4 @@
-// Fábrica del Filter del fondo: el cielo del escenario (fase E1, doc 11) con los
+// Fábrica del Filter del fondo: el cielo del escenario (T01) con los
 // efectos de la música encima. Vive en la Capa 1 del engine.
 //
 // PixiJS v8 strict:
@@ -78,7 +78,7 @@ export function createAudioFilter() {
                 uCalm:       { value: 0.0, type: 'f32' },
                 uHue:        { value: 0.0, type: 'f32' },
             },
-            // Cielo del escenario (fase E1): lo rellena `setSky` con el estado de
+            // Cielo del escenario (T01): lo rellena `setSky` con el estado de
             // scenes/skyModel.js. Posiciones en fracción del cielo (0 arriba, 1
             // horizonte). Ver background.frag.
             skyUniforms: {

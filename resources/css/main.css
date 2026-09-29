@@ -1234,7 +1234,7 @@ body:not([data-app-state="MENU"]) #auth-anchor {
 
 @media (prefers-reduced-motion: reduce) {
     /* Sin shader, el cielo es este degradado: el engine vuelca en --daino-sky-*
-       los colores de la hora del cielo (fase E1, doc 11), a 2 Hz como mucho. El
+       los colores de la hora del cielo (T01), a 2 Hz como mucho. El
        día, el ocaso y la noche siguen llegando, sin movimiento. */
     body {
         background: linear-gradient(to bottom,
@@ -2868,7 +2868,7 @@ dialog.daino-rotate p { margin: 0 0 1.2rem; line-height: 1.45; color: color-mix(
 
 .daino-devtools__row input { accent-color: var(--color-daino-beat); cursor: pointer; }
 
-/* Sección "Cielo" (fase E1, doc 11). El panel crece: se desplaza si no cabe. */
+/* Sección "Cielo" (T01). El panel crece: se desplaza si no cabe. */
 .daino-devtools__panel {
     max-height: calc(100dvh - 4.5rem);
     overflow-y: auto;

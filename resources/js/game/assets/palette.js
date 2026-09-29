@@ -24,7 +24,7 @@ export const PALETTE = Object.freeze({
     E: '#8b9aff', // línea de borde superior — periwinkle brillante
     D: '#12152e', // relleno tierra
     s: '#333b66', // motas
-    // Nube (fase E1): en claros, porque la hora la tiñe (Sprite.tint). El cuerpo
+    // Nube (T01): en claros, porque la hora la tiñe (Sprite.tint). El cuerpo
     // es blanco y su sombra un gris azulado: de día queda blanca con volumen, al
     // atardecer toma el color del cielo y de noche es una silueta.
     n: '#ffffff', // cuerpo de la nube

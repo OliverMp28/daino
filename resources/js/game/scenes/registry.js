@@ -1,8 +1,8 @@
-// Registro de escenas (fase E1, doc 11 §2.5): UNA ESCENA ES UNA ENTRADA.
+// Registro de escenas (T01, doc 11 §2.5): UNA ESCENA ES UNA ENTRADA.
 //
 // Una escena declara su paleta (palettes.js), su ciclo (skyClock.js), cómo se
 // mueven sus astros y qué capas pinta el escenario (entities/scenery/). Añadir
-// una escena nueva (la "Costa" de la fase E2, con el mar, el barco y el destello
+// una escena nueva (la "Costa" del T02, con el mar, el barco y el destello
 // verde) es una entrada aquí y, si hace falta, un tipo de capa nuevo; ni el juego
 // ni el charter cambian.
 //
@@ -15,7 +15,7 @@ import { SKY_PALETTES } from './palettes.js';
 /**
  * @typedef {object} SceneDef
  * @property {string} id
- * @property {string} label         Nombre para el panel dev (y, en E2, para quien sube).
+ * @property {string} label         Nombre para el panel dev (y, con el T02, para quien sube).
  * @property {keyof typeof SKY_PALETTES} palette
  * @property {keyof typeof SKY_CYCLES} cycle
  * @property {number} menuHour      Hora del cielo en el menú.
@@ -51,7 +51,7 @@ export const SCENES = deepFreeze({
         // (que ocupa ~0.33-0.67). Descartados por las capturas del E2E.
         sun: { rise: 6.25, set: 18.5, maxElev: 62, maxDepth: 40, riseX: 0.72, setX: 0.82, peak: 0.3, curve: 0.55 },
         // Sale por la izquierda pero fuera de la columna del Dino (x ≈ 0.1-0.19).
-        moon: { rise: 19.25, set: 30.5, riseX: 0.3, setX: 0.86, peak: 0.16, curve: 0.6, radius: 0.042 },
+        moon: { rise: 19.25, set: 30.5, riseX: 0.3, setX: 0.86, peak: 0.16, curve: 0.6, radius: 0.05 },
         // ~1.2° por hora: en una noche de doce horas el cielo gira unos 15°.
         starRotPerHour: 0.021,
         luceros: [

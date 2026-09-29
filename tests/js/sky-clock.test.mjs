@@ -1,4 +1,4 @@
-// Reloj del cielo (fase E1, doc 11 §2.1): el cielo cuenta la canción. Sin Pixi ni
+// Reloj del cielo (T01, doc 11 §2.1): el cielo cuenta la canción. Sin Pixi ni
 // DOM: mismo chart, mismas horas.
 
 import { test } from 'node:test';

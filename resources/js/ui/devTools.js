@@ -8,7 +8,7 @@
 //   feedback "en el golpe" siguen vivos) pero no termina el run. El estado vive
 //   en `window.__daino.godMode`, que `GameSession._physicsStep` lee en vivo.
 //
-//   Cielo (fase E1, doc 11) — para revisar el escenario sin jugar un nivel
+//   Cielo (T01) — para revisar el escenario sin jugar un nivel
 //   entero: la hora y la fase del cielo, las anclas del plan del nivel en curso,
 //   fijar la hora (`window.__daino.sky.hour`, que el engine lee en vivo),
 //   recorrer el ciclo entero en 24 s, apagar los efectos de la música para ver
@@ -168,7 +168,7 @@ export function mountDevTools() {
     fx.row.title = 'Apagado: se ve el escenario solo, sin lo que late con la música';
     panel.appendChild(fx.row);
 
-    // Escena (en la fase E2 habrá más de una).
+    // Escena (con el T02 habrá más de una).
     const sceneRow = el('label', 'daino-devtools__row', 'Escena ');
     const sceneSelect = document.createElement('select');
     for (const s of Object.values(SCENES)) {

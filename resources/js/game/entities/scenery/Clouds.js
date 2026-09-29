@@ -1,4 +1,4 @@
-// Capa `clouds` del escenario (fase E1, doc 11): nubes a la deriva.
+// Capa `clouds` del escenario (T01): nubes a la deriva.
 //
 // Cada nube es su cuerpo más dos filos de luz (assets/pixelart.js, `edgeRows`):
 // el de arriba lo enciende el sol alto o la luna, el de abajo el sol bajo del

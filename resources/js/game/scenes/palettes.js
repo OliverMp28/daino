@@ -1,4 +1,4 @@
-// Paletas del cielo (fase E1, doc 11): cómo se ve cada hora.
+// Paletas del cielo (T01): cómo se ve cada hora.
 //
 // Una paleta son dos listas de keyframes indexados por la ELEVACIÓN DEL SOL en
 // grados (no por la hora): la luz depende de lo alto que está el sol, y así la

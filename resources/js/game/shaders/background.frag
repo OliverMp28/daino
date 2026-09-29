@@ -1,4 +1,4 @@
-// Fondo de Daino — v3 (fase E1, doc 11): el CIELO DEL ESCENARIO con los
+// Fondo de Daino — v3 (T01): el CIELO DEL ESCENARIO con los
 // efectos de la música encima.
 //
 // Capa 1 del z-stack visual (doc 06 §3): cubre el 100% del viewport, debajo del
@@ -26,7 +26,7 @@
 //
 //   EFECTOS (audioUniforms) — lo que reacciona a la música: FFT (uFFT), bandas,
 //   pulso del beat y la estructura de la canción (Olas 5 y 6c). En idle (menú)
-//   uShaderMode = 0 y el shader no los lee. Los registra la fase V1.
+//   uShaderMode = 0 y el shader no los lee. Los registrará la T03.1.
 //
 // Recibe el FFT como textura 256x1 (sampler2D uFFT), no como uniforms
 // individuales — saturaría el bus uniform (doc 07 §D.2, doc 09 §2.4).
@@ -100,6 +100,25 @@ vec3 hueShift(vec3 c, float a) {
 
 float hash21(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+// Ruido de valor suave (para los mares de la luna).
+float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+               mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// Cráter: hundido oscuro con el borde de arriba-derecha iluminado (la luz viene
+// de ahí). m y c en radios de la luna; r = radio del cráter.
+vec2 crater(vec2 m, vec2 c, float r) {
+    vec2 d = (m - c) / r;
+    float l = length(d);
+    float pit = 1.0 - step(0.78, l);
+    float rim = step(0.78, l) * (1.0 - step(1.08, l)) * clamp(dot(normalize(d + 1e-4), vec2(0.6, -0.8)), 0.0, 1.0);
+    return vec2(pit, rim);
 }
 
 void main(void) {
@@ -241,23 +260,53 @@ void main(void) {
     }
 
     // ---------- Luna ----------
-    // Pixelada: se evalúa en el centro de la celda del arte, con mares fijos más
-    // oscuros y el borde (limbo) algo apagado. Halo frío y suave alrededor.
+    // Pixel art a MEDIA celda del arte (más detalle que el resto sin perder el
+    // estilo): una esfera iluminada desde arriba a la derecha, mares con ruido
+    // suave, cráteres con el borde encendido y el brillo en 5 escalones (como un
+    // sprite con su paleta). Alrededor, la magia: corona cercana, luz ancha que
+    // baña el cielo, un halo lunar tenue en anillo y un destello que titila.
     if (uMoonColor.a > 0.001 && uShow0.z > 0.5) {
         vec2 mp = vec2(uMoonPos.x, uMoonPos.y * uHorizon) * uFrame;
         float mr = uMoonRadius * sunUnit;
+        float a = uMoonColor.a * aboveHorizon;
         float dm = length(px - mp) / mr;
-        col += uMoonColor.rgb * 0.16 * exp(-max(dm - 1.0, 0.0) * 1.8) * step(1.0, dm) * uMoonColor.a * aboveHorizon;
-        vec2 m = ((floor(px / uCell) + 0.5) * uCell - mp) / mr;
+        float outR = max(dm - 1.0, 0.0);
+        float cellM = uCell * 0.5;
+        vec2 m = ((floor(px / cellM) + 0.5) * cellM - mp) / mr;
         float r = length(m);
+        // Fuera = fuera del disco PIXELADO: con el círculo exacto quedaba un borde
+        // de celdas sin luna ni resplandor.
+        float outside = step(1.0, r);
+        vec3 glowCol = mix(uMoonColor.rgb, vec3(0.62, 0.72, 1.0), 0.45);
+        col += glowCol * (0.34 * exp(-outR * 3.2) + 0.11 * exp(-outR * 0.55)) * outside * a;
+        // Halo de 22° (un anillo muy tenue a ~3.4 radios).
+        col += glowCol * 0.045 * exp(-pow((dm - 3.4) / 0.28, 2.0)) * a;
+
         if (r < 1.0) {
-            float maria = step(length(m - vec2(-0.30, -0.22)), 0.30)
-                        + step(length(m - vec2(0.26, 0.12)), 0.22)
-                        + step(length(m - vec2(-0.08, 0.40)), 0.17)
-                        + step(length(m - vec2(0.38, -0.36)), 0.12);
-            vec3 mc = uMoonColor.rgb * (1.0 - 0.2 * min(maria, 1.0)) * (1.0 - 0.18 * smoothstep(0.7, 1.0, r));
-            col = mix(col, mc, uMoonColor.a * aboveHorizon);
+            vec3 nrm = vec3(m.x, -m.y, sqrt(1.0 - r * r));
+            float lit = clamp(dot(nrm, normalize(vec3(0.45, 0.35, 0.82))), 0.0, 1.0);
+            float nn = vnoise(m * 2.2 + 3.1) * 0.65 + vnoise(m * 5.3 + 7.7) * 0.35;
+            float maria = smoothstep(0.5, 0.6, nn);
+            vec2 c1 = crater(m, vec2(-0.42, 0.30), 0.20);
+            vec2 c2 = crater(m, vec2(0.30, -0.40), 0.14);
+            vec2 c3 = crater(m, vec2(0.12, 0.52), 0.11);
+            vec2 c4 = crater(m, vec2(0.55, 0.18), 0.09);
+            vec2 c5 = crater(m, vec2(-0.18, -0.10), 0.08);
+            float pits = max(max(max(c1.x, c2.x), max(c3.x, c4.x)), c5.x);
+            float rims = max(max(max(c1.y, c2.y), max(c3.y, c4.y)), c5.y);
+            float b = 0.66 + 0.32 * lit - 0.17 * maria - 0.13 * pits + 0.16 * rims;
+            b *= 1.0 - 0.1 * smoothstep(0.85, 1.0, r);
+            b = floor(clamp(b, 0.0, 1.2) * 5.0 + 0.5) / 5.0;
+            // Sombra fría y luz cálida: la luna no es gris plano.
+            vec3 mc = mix(uMoonColor.rgb * vec3(0.55, 0.62, 0.9), uMoonColor.rgb * vec3(1.04, 1.02, 0.96), clamp(b, 0.0, 1.0)) * max(b, 0.55);
+            col = mix(col, mc, a);
         }
+        // Destello: una cruz fina de celdas que titila en el borde encendido.
+        vec2 gp = mp + vec2(0.62, -0.62) * mr;
+        vec2 gc = floor((px - gp) / cellM + 0.5);
+        float tw = 0.5 + 0.5 * sin(uTime * 1.7);
+        float glint = ((gc.x == 0.0 && abs(gc.y) <= 2.0) || (gc.y == 0.0 && abs(gc.x) <= 2.0)) ? (gc == vec2(0.0) ? 1.0 : 0.45) : 0.0;
+        col += vec3(0.95, 0.97, 1.0) * glint * tw * 0.8 * a * outside;
     }
 
     // ---------- Sol ----------
@@ -301,7 +350,7 @@ void main(void) {
     // ---------- Ecualizador pixel desde el horizonte (solo partida) ----------
     // Barras DISCRETAS con hueco entre ellas, 3 taps promediados por barra, altura
     // contenida y alpha que se desvanece hacia la punta. (La cordillera tapa buena
-    // parte: la fase V1 le da su propio plano, doc 11 §1.C.)
+    // parte: la T03.1 le da su propio plano, doc 11 §1.C.)
     if (uShaderMode > 0.5 && uv.y < uHorizon) {
         const float BARS = 40.0;
         float slot = floor(uv.x * BARS);

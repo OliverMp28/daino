@@ -1,4 +1,4 @@
-// Capa `ridge` del escenario (fase E1, doc 11): una cordillera en parallax.
+// Capa `ridge` del escenario (T01): una cordillera en parallax.
 //
 // Cresta poligonal generada una vez por tamaño de vista y dibujada dos veces
 // seguidas (patrón periódico): el scroll da la vuelta sin que se note. Las

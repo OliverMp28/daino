@@ -1,4 +1,4 @@
-// Reloj del cielo (fase E1, doc 11 §2.1): qué hora del día es en cada instante
+// Reloj del cielo (T01, doc 11 §2.1): qué hora del día es en cada instante
 // de la canción. EL CIELO CUENTA LA CANCIÓN.
 //
 // En una canción típica el día cubre la intro, las estrofas y los estribillos;

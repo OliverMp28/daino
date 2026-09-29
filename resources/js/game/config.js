@@ -461,7 +461,7 @@ export const MAX_PHYSICS_CATCHUP_S = 5;
 
 // --------------------------- Scenery ---------------------------
 // Las capas del escenario (cordilleras, nubes, suelo) y sus números viven en la
-// escena que las declara (scenes/registry.js, fase E1).
+// escena que las declara (scenes/registry.js, T01).
 
 export const SCENERY = Object.freeze({
     /** Velocidad de scroll ambiente en px/s cuando NO hay partida (menú). */

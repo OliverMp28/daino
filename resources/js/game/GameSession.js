@@ -26,7 +26,7 @@
 //     clímax se enciende también en el HUD.
 //   - En un drop: destello, golpe de cámara y ola de partículas justo en el
 //     primer tiempo, que es donde el charter pone la acción.
-//   - El cielo cuenta la canción (fase E1, doc 11): de la tarde al atardecer, la
+//   - El cielo cuenta la canción (T01): de la tarde al atardecer, la
 //     noche con el clímax y el amanecer con el final (scenes/skyClock.js).
 //   - Pulsar exactamente en el golpe suelta un destello a los pies del Dino.
 //   - Pasado el último obstáculo, "¡Superado!" mientras la canción termina.
@@ -144,7 +144,7 @@ export class GameSession {
             ? createBeatClock(beats, this.chart.music.beatPeriodS, this.chart.music.downbeats ?? [])
             : createBeatClock(obstacleEvents(this.chart).map((e) => e.t), this.chart.music.beatPeriodS);
         this._director = createSongDirector(this.chart);
-        // Hora del cielo de cada instante (fase E1): el plan se ancla a la
+        // Hora del cielo de cada instante (T01): el plan se ancla a la
         // estructura del chart, con el ciclo de la escena vigente.
         this._sky = planSky(
             { sections: this.chart.events.filter((e) => e.type === 'section'), durationSec: this._durationSec },
