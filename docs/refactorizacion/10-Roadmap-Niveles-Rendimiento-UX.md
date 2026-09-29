@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia). Pendientes: Ola 6c y Ola 7.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia), y la **Ola 6c** ✅ (anillos de salto, vuelo en frases encadenadas con la altura de la melodía, efectos nuevos del chart y exigencia por dificultad igual en cualquier canción). Pendiente: Ola 7.
 
 ---
 
@@ -999,7 +999,7 @@ A la velocidad máxima del charter (690) toda pantalla apaisada da ≥ 1.26 s de
 
 ---
 
-### Ola 6 — Vocabulario de juego ampliado
+### Ola 6 — Vocabulario de juego ampliado ✅
 
 **Objetivo.** Que no todo sea saltar. Que un nivel pueda tener momentos.
 
@@ -1457,14 +1457,101 @@ En la zona roja de What's Up Danger los cristales afilados caen en la caja (2 y 
 
 **Ajuste posterior: más velocidad y progresión (Sep 2026, "que se sienta un poco más emocionante") ✅.** Pedido explícito: subir solo la velocidad/progresión (no densidad ni exigencia de los acentos), dejando Relajado y Fácil igual. `CHARTER_VERSION = 10`. `speedPlan.js::SPEED_RULES`: `gearBoost` 0.14→0.19, `levelBoost` empuje 0.12→0.18 y clímax 0.34→0.46. `difficulty.js`, solo Normal/Difícil/Extremo: `baseSpeed`/`maxSpeedPxS` 1.06/860→1.14/940 (Normal), 1.14/940→1.22/980 (Difícil), 1.24/1000→1.32/1000 (Extremo; el techo absoluto no sube — sigue siendo donde toda pantalla apaisada lee cada obstáculo ≥ 0.85 s antes). **Medido con el jugador de referencia (±45 ms): el efecto sobre si se supera o no es pequeño y no siempre baja** (Sugar Red 0.83→0.86, Running With the Wolves 0.35→0.42, Mi Fiesta 0.09→0.10, Dawn of Faith 0.35→0.29, What's Up Danger 0.02→0.03). La razón: el margen de un acento (`timingMarginsS`) CRECE con la velocidad para un obstáculo del mismo tamaño (una hilera de 300 de largo pasa de −35/+60 ms a 750 px/s a −85/+110 a 1000), y `accentVariant` recalcula qué variante usar contra la velocidad de cada instante, así que el nivel se autocompensa. Subir solo la velocidad hace el nivel más rápido de leer y de ritmo, no necesariamente más difícil de superar: para bajar de verdad cuántos lo pasan (lo que pidió el playtest anterior) hace falta tocar `accent.marginS`/`accent.hazardPerMin` en `difficulty.js`, que sigue pendiente porque este pedido fue "solo velocidad". Oficiales re-horneados y re-sembrados; comunidad re-charteada (`--charter-below=10`). Tests: 259 JS (sin cambios de aserciones, solo de datos), 70 PHP. Bundle sin cambio (191.45 KB gzip: solo cambiaron constantes, no código nuevo).
 
-#### Ola 6c — Siguientes momentos (pendiente)
+#### Ola 6c — Siguientes momentos ✅ (Sep 2026)
 
-Sobre el reparto y los dos modos, y solo después del playtest de la 6b:
+Tras el playtest de la 6b y del ajuste de velocidad ("lo veo pasable, no noté problemas"). Los cuatro puntos del plan, más una calibración de la exigencia que la acompaña: con los anillos y el vuelo encadenado se podía, por fin, pedir lo que se había pedido para las dificultades altas. `CHARTER_VERSION` 11 (la ola) y **12** (la calibración de las canciones cortas); **formato de chart 5**; **analizador 3**.
 
-- **Jugador virtual como política** para el vuelo: frases de notas encadenadas sin volver al suelo, validadas con quien corrige mirando.
-- **Anillos y orbes en el aire** (pulsar en el aire para volver a saltar): una acción nueva dentro de correr que rompe el techo de densidad del salto.
-- **Altura de las notas siguiendo la melodía** (contorno melódico; Basic Pitch solo tras medir memoria en un VPS del tamaño real).
-- **Eventos `fx` nuevos** del chart cableados al runtime (hoy `drop` y `lift`).
+**1. Anillos de salto** — una acción nueva dentro de correr.
+
+- **Qué es.** Un aro en el aire (`RING_JUMP`, `trigger: 'jump'` en el registro): si el Dino está dentro de su zona y se pulsa, vuelve a saltar (`JUMP_RING.impulsePxS` 760). Rompe el techo de densidad del salto: dos golpes a 0.15-0.66 s se juegan saltando y volviendo a saltar en el aire.
+- **Contrato de modos.** Gancho opcional `trigger(body, def)` en `systems/modes/` (`run.js` devuelve `'ring'`); `geometry.triggerZone`; `physics.applyTrigger`. El activador no es sólido: `playability.toSimObstacles` solo devuelve sólidos y `toSimTriggers` los activadores; `simulateRun({ triggers })` comprueba el aro tras integrar, en el mismo orden que `GameSession._physicsStep`.
+- **Dónde** (`patterns.js`, `RING_RULES`, `canRing`): sobre el golpe que sigue a un salto demasiado cerca para volver a saltar desde el suelo. `PAIR_GAP` medido con el simulador: `jumpRing` 0.15-0.66 s, `ringJump = 0.67 + 2·tol`, `ringDuck = 0.2 + 110/v + tol`. `dropOrphanRings` quita el que se queda sin su salto.
+- **Con qué** (`levels/rings.js`, pieza nueva): un anillo que se puede ignorar no es una acción. Cada uno lleva el obstáculo más corto que **se supera pulsando en el aro y NO sin pulsar** (`ringHazard`, simulación local). Un cactus basta desde ~0.24 s tras el salto; antes, una hilera. Si ninguno cumple, el anillo se quita.
+- **Por dificultad** (`unlock.ring`, `ring { share, strength }`): Relajado y Fácil nunca; Normal desde el primer empuje; Difícil y Extremo desde el primer groove.
+- **Runtime**: sprite del aro con dos frames, chispas al activarlo (`JUMP_RING_FX`), `spawner.triggerAt/markTriggerUsed`, aviso de controles las 3 primeras partidas (`settings.countMechanicSeen`, `hint` en el registro).
+
+**2. Vuelo en frases encadenadas** — el jugador virtual como política.
+
+- **Quien juega mira el túnel** (`virtualPlayer.FLIGHT_PLAYER`: `correctionGain` 0.7, `maxCorrectionS` 0.25). En cada esquina del camino pulsa o suelta donde su recta se juntaría con la del camino, corrigiendo una parte del desvío. Medido con frases aleatorias (90-150 BPM): con ganancia 1 bastaría la holgura de la 6b; con 0.5 hacían falta 25-40 unidades más; con 0.7, unas 10. El jugador ciego se conserva (`flightPlayer: null`) para demostrar en los tests que acumula error.
+- **Frases** (`flightCharter.js`, reescrito): dentro de `fly.chainBars` compases (0 · 0 · 2 · 4 · 8 por dificultad) las notas se encadenan por el aire, incluso ligadas; al acabar la frase, el Dino vuelve al suelo (error a cero). Estreno: las dos primeras notas separadas y en el pulso.
+- **Holgura por dificultad** (`fly.comfortPx`: 42 · 38 · 34 · 30 · 24). Medido: el vuelo era lo que más mataba en tramos tranquilos (la mitad de las muertes de Dawn of Faith en Difícil).
+- **`referencePassRate` cuenta el vuelo** por defecto (`flight: false` para comparar con medidas anteriores).
+
+**3. Altura de las notas con la melodía** — analizador 3.
+
+- `analyzer/daino_analyzer/melody.py` (pieza nueva, **sin dependencias ni modelos**): sobre el CQT que ya calcula `tonal.py` (ahora compartido: `constant_q`, `ConstantQ`), blanqueo por octava, saliencia por suma de 3 armónicos con preferencia por lo agudo, camino por Viterbi con coste por semitono y sonoridad relativa a la canción. Medido con melodías sintéticas sobre acordes, bajo y batería: 89-100 % de acierto (sin la preferencia por lo agudo, 0-6 %: seguía a la fundamental de los acordes). En los 8 oficiales, altura mediana 60-74 (la voz) en vez de 54-64 (los acordes). < 0.5 s por canción.
+- Análisis: bloque `melody { hopSec, pitch, voicedRatio }` (`schema.py`, `ChartValidator::validateMelody`); todo lo de la versión 2 sale idéntico. `sonify --melody` la hace sonar encima de la canción.
+- **Basic Pitch descartado por ahora**: el CQT propio da el contorno que hace falta y no cuesta memoria.
+- **Uso**: solo alturas RELATIVAS dentro del tramo de vuelo (las notas agudas, arriba). Sin melodía, se decide por el ritmo. Con una melodía que sube de 55 a 75, las cimas del Dino pasan de 60-100 a 120-216.
+
+**4. Efectos nuevos del chart** (`levels/fxPlan.js`, registro `FX_PLANNERS`; `songDirector.FX_KINDS`).
+
+| fx | Cuándo | Qué se ve |
+|---|---|---|
+| `build` | los compases de subida hacia un drop | el fondo y el suelo se van tensando hasta el golpe (`uBuild`) |
+| `break` | un tramo en reposo tras uno con cuerpo, ≥ 2 s | el color se apaga (`uCalm`), el mundo contiene la respiración, sin líneas de velocidad |
+| `key` | una modulación del analizador 2, pasado el segundo 8 | el cielo cambia de tono en proporción al salto (`uHue`) |
+
+`drop` y `lift` siguen como en la Ola 5. Solo visuales: ni el simulador ni la física los leen, así que un efecto nuevo no cambia si un nivel se supera.
+
+**5. Exigencia: cada dificultad promete lo mismo en cualquier canción.**
+
+Objetivo del user: **3★ se pasa al segundo o tercer intento; 4★ cuesta cinco o más y no todo el mundo llega; 5★ casi nadie**. Con el jugador de referencia (±45 ms), superar ~1/N de las partidas.
+
+- **Presupuesto por canción, no por minuto** (`accent.hazard` total: 0.02 · 0.1 · 0.7 · 1.6 · 3.0), menos lo que el nivel ya exige sin acentos (`restHazard`, Monte Carlo del chart sin acentos, `CHARTER_RULES.restRuns` 32). Por minuto, una canción de 40 s salía tres veces más fácil.
+- **Márgenes en contexto** (`challenge.createContextMargins`): cada acento se mide con sus vecinas en su sitio (ventana de ±0.95 s, bisección de 4 pasos, memoria por forma). Medido en Sugar Red (Difícil): una hilera seguida de un agachado mataba el 24 % de las partidas en un solo punto, y el margen aislado la daba por holgada.
+- **Cuota que se amplía** (`shareSteps`, `relaxedStrength`) si ni con el margen mínimo se llega.
+- **Charter 12 — las canciones cortas.** Medido tras la ola: en los clips de 40 s el presupuesto no se gastaba (Sugar Red en Extremo: 0.69 de 2.94; se superaba el 42 %). Dos causas, dos arreglos generales:
+  - **Las hileras se quedaban cortas arriba.** El margen de una hilera crece con la velocidad: a 1000 px/s la de 328 px aún perdonaba ±82 ms. La escalera llega ahora a **408 px** (`CACTUS_ROW_CELLS`, 17 entradas; el sprite se genera). A velocidades bajas esas hileras no se eligen solas.
+  - **Las aperturas del acento no se cerraban.** En 40 s casi todo cae en la apertura (primer 35 %) y en tramos de calma, así que el margen pedido salía ×1.5-1.9 del mínimo. Último tramo de la escalera (`closings` 0.85 · 0.7 · 0.6 · 0.5): cierra las aperturas **hasta el margen mínimo de la dificultad, nunca por debajo** (`Math.max(1, …)`). Una canción larga llega al presupuesto antes y no pisa esos escalones: sus charts no cambian.
+  - Memoria de márgenes aislados al px/s (`isolatedMargins`): el charter de un Extremo largo pasa de 2.5 s a 1.9 s.
+
+**Los 8 oficiales en las 5 dificultades** (charter 12, jugador de referencia ±45 ms, 200 partidas, con vuelo):
+
+| Oficial | Duración | Relajado | Fácil | Normal | Difícil | Extremo |
+|---|---|---|---|---|---|---|
+| Last Christmas | 39 s | 1.00 | 0.99 | 0.71 | 0.36 | 0.07 |
+| Sugar Red | 40 s | 1.00 | 0.99 | 0.58 | 0.41 | 0.22 |
+| HOPE | 79 s | 1.00 | 0.81 | — | — | — |
+| Time | 166 s | 1.00 | 0.98 | — | — | — |
+| Running With the Wolves | 164 s | 1.00 | 0.97 | 0.41 | 0.15 | 0.01 |
+| Mi Fiesta | 194 s | 0.99 | 0.95 | 0.47 | 0.22 | 0.05 |
+| Dawn of Faith | 197 s | 0.99 | 0.98 | 0.59 | 0.26 | — |
+| What's Up Danger | 216 s | 0.99 | 0.96 | 0.61 | 0.32 | 0.07 |
+
+(— = la canción no admite esa dificultad: su techo.) **Normal 0.41-0.71, Difícil 0.15-0.41, Extremo 0.01-0.22**; en canciones enteras, Extremo 0.01-0.07. Por precisión, What's Up Danger en Extremo: ±20 ms 1.00 · ±25 ms 0.95 · ±30 ms 0.90 · ±35 ms 0.60 · ±45 ms 0.07. Durísimo, no imposible.
+
+**Qué lleva cada oficial** (su dificultad del manifiesto): What's Up Danger (Extremo) 11 anillos, un vuelo de 10 notas con 5 encadenadas y siguiendo la melodía, 2 subidas, 2 drops y un break; Mi Fiesta (Difícil) 14 anillos y un break; Dawn of Faith (Difícil) un vuelo de 11 notas (5 encadenadas); Running With the Wolves (Normal) un vuelo de 8 (4 encadenadas); HOPE un cambio de tonalidad y un break.
+
+**Carga más ligera.** El charter, `analyze.js` y `chartStats.js` se cargan cuando hacen falta (una canción local): un nivel del catálogo trae su chart hecho. Bundle principal **174.83 KB gzip** (antes de separarlo, 197.71) + chunk del charter 22.29 KB.
+
+**Verificación.**
+
+| Qué | Resultado |
+|---|---|
+| Tests | **276 JS**: `rings.test.mjs` (el aro es necesario y suficiente, cae en su golpe, simulador = runtime), `fx.test.mjs`, `flight.test.mjs` (el ciego acumula error, quien mira pasa; frases encadenadas; melodía), `challenge.test.mjs` (**bandas por dificultad** en canciones enteras; 5★ superable con ±20 ms), `charter`, `modes`, `music-model`, formato 5. **71 PHP** (formato 5, análisis 3). **109 Python** (`test_melody.py`: melodías sintéticas sobre acordes, bajo y batería; saltos de octava; silencios) |
+| E2E What's Up Danger (Extremo, 1280×720, bot con el jugador virtual, colisiones activas) | charter 12 servido (307 eventos); los **11 anillos se activan en su instante** (±20 ms: un paso de física); túnel de vuelo con las notas encadenadas y el aviso VUELO; pasillo de antigravedad con el drop a 1000 px/s; break con el cielo apagado y sin líneas; **victoria al 100 %**, 59.5 FPS de media |
+| Consola | solo el 401 del arranque anónimo y el favicon |
+| Oficiales y comunidad | re-horneados y re-sembrados; los 3 de la comunidad re-charteados (`--charter-below=12`) |
+| Bundle | 174.83 KB gzip + 22.29 KB (charter, bajo demanda) |
+
+**Decisiones (vinculantes):**
+
+- **Un activador es una entrada de registro con `trigger`**, no un obstáculo especial: el modo decide qué hace (`trigger` en el contrato de modos), el simulador y el runtime lo aplican en el mismo orden.
+- **Un anillo solo existe si es necesario y suficiente**: pulsar en él salva lo que viene y no pulsar no.
+- **El vuelo se valida con quien corrige mirando** (`FLIGHT_PLAYER`), y las frases vuelven al suelo al acabar.
+- **La melodía da alturas relativas dentro de un tramo**, nunca notas absolutas.
+- **Un efecto `fx` es solo visual** y un registro (`FX_PLANNERS` + `FX_KINDS`).
+- **La exigencia es por canción** y se mide con las vecinas en su sitio.
+- **El margen mínimo de cada dificultad es un suelo**: las aperturas del acento (arco, principio, reparto) solo lo abren y, si falta exigencia, se cierran hasta él.
+
+**Limitaciones que quedan:**
+
+- **Los clips muy cortos siguen algo más fáciles** en Extremo (Sugar Red, 40 s: 0.22): no tienen golpes fuertes con sitio suficientes para gastar el presupuesto sin inventar acentos. En canciones enteras, Extremo queda en 0.01-0.07.
+- **La melodía se comprueba de oído** (`sonify --melody`): un solo o un sintetizador que tape la voz también es "la melodía"; en pasajes sin melodía sigue la voz más aguda del acompañamiento.
+- **El jugador de referencia es un modelo** (error gaussiano, sin despistes ni aprendizaje). El siguiente playtest dirá si 3★/4★/5★ se sienten como se pidió; todo está en tablas (`accent` y `ring` y `fly` por dificultad, `ACCENT_RULES`, `RING_RULES`, `FLIGHT_PLAYER`, `FX_RULES`, `JUMP_RING`).
+- **Los agachados siguen sin acentos** (agacharse antes es gratis).
+- El suite JS tarda ~3 min (charts reales y Monte Carlo en paralelo).
 
 ---
 
@@ -1491,7 +1578,7 @@ Ola 3 (chart + sincronía) ◀─────────┘
                     │
                     └──> Ola 5 (charter musical)
                                 │
-                                ├──> Ola 6a (bases de modos + antigravedad) ──> Ola 6b (reparto + vuelo) ──> Ola 6c
+                                ├──> Ola 6a (bases de modos + antigravedad) ──> Ola 6b (reparto + vuelo) ──> Ola 6c (anillos, frases de vuelo, melodía, fx)
                                 └──> Ola 7 (editor y overrides)
 ```
 

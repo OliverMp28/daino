@@ -75,7 +75,8 @@ const COMFORTABLE_WINDOW_S = 0.35;
 export function chartStats(chart) {
     const speed = speedProfileOf(chart);
     const obstacles = chart.events
-        .filter((e) => e.type === 'obstacle' && OBSTACLE_KIND[e.kind] !== undefined)
+        // Un activador (anillo, Ola 6c) no es una acción: la cuenta su obstáculo.
+        .filter((e) => e.type === 'obstacle' && OBSTACLE_KIND[e.kind] !== undefined && OBSTACLE_KIND[e.kind].trigger === undefined)
         // Cada acción se mide a la velocidad a la que su obstáculo cruza al Dino.
         .map((e) => ({ t: e.t, air: OBSTACLE_KIND[e.kind].altitude > 0, windowS: timingWindowS(e.kind, speed.speedAt(e.t + actionLeadS(OBSTACLE_KIND[e.kind]))) }));
     // Una nota del vuelo admite el error que su túnel absorbe: la holgura cubre

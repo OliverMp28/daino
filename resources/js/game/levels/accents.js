@@ -26,19 +26,23 @@
 //      aprieta, no en la intro) y por su golpe (el más flojo de su tramo, más
 //      holgado). Encima, una escalera de holgura global, de más holgada a más
 //      estrecha, hasta el escalón cuya exigencia para el jugador de referencia
-//      (challenge.js) queda más cerca de la que pide la dificultad por minuto de
-//      juego. Así una canción de saltos separados a 65 BPM y una de 104 BPM llena
-//      de golpes piden lo mismo en Difícil.
+//      (challenge.js) queda más cerca de la que pide la dificultad PARA LA
+//      CANCIÓN ENTERA (Ola 6c: antes era por minuto, y una canción de 40 s salía
+//      tres veces más fácil que una de 3 min con la misma dificultad). Si con el
+//      margen mínimo no llega, entran más golpes como acento (hasta toda la cuota
+//      posible): una canción corta aprieta más golpes.
 //   3. CON QUÉ variante. La que deja el margen más estrecho sin bajar del pedido,
-//      a la velocidad con la que cruza (`accentVariant`).
+//      a la velocidad con la que cruza y CON SUS VECINAS (`accentVariant`, Ola 6c:
+//      una hilera seguida de un agachado deja menos margen que sola, y medida sola
+//      creaba "muros" donde moría una de cada cuatro partidas).
 //
 // Todo lo ajustable está en ACCENT_RULES y en `accent` de cada dificultad
 // (difficulty.js). Cambiar cualquiera altera los charts: sube CHARTER_VERSION.
 
 import { OBSTACLE_KIND } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
-import { timingMarginsS } from '../systems/playability.js';
-import { kindHazard } from './challenge.js';
+import { timingMarginsS, toSimTriggers } from '../systems/playability.js';
+import { createContextMargins, hazardOf, missChance } from './challenge.js';
 import { pairGap } from './patterns.js';
 
 export const ACCENT_RULES = Object.freeze({
@@ -67,6 +71,35 @@ export const ACCENT_RULES = Object.freeze({
     scales: Object.freeze([3, 2.5, 2.1, 1.8, 1.55, 1.35, 1.2, 1.1, 1]),
     /** En el margen mínimo, los acentos flojos se acercan a los fuertes en estos pasos (× spread). */
     finalSpreads: Object.freeze([0.75, 0.5, 0.25, 0]),
+    /**
+     * Último recurso: cierra las APERTURAS (nivel del arco, principio de la
+     * canción, reparto) hacia el margen mínimo de la dificultad, que nunca se
+     * cruza. Lo necesitan las canciones cortas: en 40 s casi todo cae dentro de
+     * la apertura y en tramos de calma, así que el margen pedido salía ×1.5-1.9
+     * del mínimo y el nivel no llegaba ni a un tercio de su exigencia (Sugar Red
+     * en Extremo: 0.84 de 2.94). Una canción larga llega al presupuesto mucho
+     * antes y no pisa estos escalones.
+     */
+    closings: Object.freeze([0.85, 0.7, 0.6, 0.5]),
+    /**
+     * Si ni el margen mínimo llega a la exigencia, la cuota de acentos se multiplica
+     * por estos factores, por orden, hasta llegar (Ola 6c). En los pasos `relaxed`
+     * también valen golpes más flojos (`relaxedStrength`) y acciones sin holgura
+     * alrededor: el margen de cada acento ya se mide con sus vecinas, así que no
+     * puede quedar por debajo del pedido. Lo necesitan las canciones cortas: Last
+     * Christmas en Extremo (39 s) tenía 5 acentos con la cuota normal.
+     */
+    shareSteps: Object.freeze([
+        Object.freeze({ factor: 1, relaxed: false }),
+        Object.freeze({ factor: 1.5, relaxed: false }),
+        Object.freeze({ factor: 2.2, relaxed: true }),
+        Object.freeze({ factor: 3, relaxed: true }),
+    ]),
+    relaxedStrength: 0.25,
+    /** Presupuesto mínimo de los acentos, en fracción del de la dificultad. */
+    minBudgetShare: 0.15,
+    /** Por debajo de esta fracción del presupuesto, se prueba la cuota siguiente. */
+    shortfall: 0.85,
 });
 
 /**
@@ -75,6 +108,7 @@ export const ACCENT_RULES = Object.freeze({
  * @property {number} hazard    Exigencia de los acentos para el jugador de referencia (muertes esperadas).
  * @property {number} budget    Exigencia que pedía la dificultad para esta canción.
  * @property {number} scale     Escalón de holgura con el que se quedó (1 = el margen mínimo).
+ * @property {number} share     Factor de cuota con el que se quedó (1 = la de la dificultad).
  */
 
 /**
@@ -91,35 +125,66 @@ export const ACCENT_RULES = Object.freeze({
  * @param {{ speedAt: (t: number) => number }} ctx.speed
  * @param {(mechanic: string, t: number) => boolean} ctx.unlocked
  * @param {{ plan: Array<{ mode: string, tIn: number, tOut: number }> }} ctx.modes
+ * @param {Array<{ t: number, mode: string }>} [ctx.simModes]  Cambios de modo (para medir en contexto).
+ * @param {number} [ctx.restHazard]  Lo que el nivel ya exige sin acentos: se descuenta del presupuesto.
  * @param {number} ctx.introActions  Las primeras acciones (tutorial) nunca llevan acento.
  * @param {number} ctx.durationSec   Duración de la canción (la apertura se mide sobre ella).
  * @returns {AccentSummary}
  */
 export function assignAccents(actions, ctx) {
     const rule = ctx.profile.accent ?? null;
-    const summary = { accents: 0, hazard: 0, budget: 0, scale: 0 };
-    if (rule === null) return summary;
-    const chosen = chooseAccents(actions, ctx, rule);
-    if (chosen.length === 0) return summary;
+    const summary = { accents: 0, hazard: 0, budget: 0, scale: 0, share: 0 };
+    if (rule === null || actions.length === 0) return summary;
+    // Los acentos ponen lo que falta hasta la exigencia de la dificultad, y algo
+    // siempre (los golpes fuertes se subrayan aunque el nivel ya exija bastante).
+    summary.budget = Math.max(ACCENT_RULES.minBudgetShare * rule.hazard, rule.hazard - (ctx.restHazard ?? 0));
 
-    summary.budget = rule.hazardPerMin * playedMinutes(actions, ctx.modes);
-    // Escalón a escalón hasta pasar del presupuesto; se queda el más cercano (en
-    // proporción) de los dos últimos: pasarse de largo también es fallar. Si ni el
-    // margen mínimo llega, se queda en él: la canción no da para más.
+    // Márgenes en contexto: cada acción con sus vecinas tal como están (kinds normales).
+    const sim = actions.map((a) => {
+        const def = OBSTACLE_KIND[a.kind];
+        return { t: a.t, kind: a.kind, def, cross: a.t + actionLeadS(def) };
+    });
+    const triggers = toSimTriggers(actions.filter((a) => a.type === 'ring').map((a) => ({ t: a.t, type: 'obstacle', kind: a.ring })));
+    const context = createContextMargins({ obstacles: sim, triggers, speed: ctx.speed, modes: ctx.simModes ?? [] });
+    const indexOf = new Map(actions.map((a, i) => [a, i]));
+
     let best = null;
-    for (const [scale, spread] of ladder()) {
-        const targets = chosen.map((a) => rule.marginS * scale * (1 + spread * (a.accentRank ?? 0)) * shapeFactor(a, ctx));
-        const kinds = chosen.map((a, k) => accentVariant(a.kind, a.t, targets[k], ctx));
-        const hazard = kinds.reduce((sum, kind, k) => sum + (kind === null ? 0 : kindHazard(kind, chosen[k].t, ctx.speed.speedAt)), 0);
-        const step = { targets, kinds, hazard, scale };
-        if (hazard < summary.budget - 1e-9) {
-            best = step;
-            continue;
+    let bestChosen = [];
+    for (const step of ACCENT_RULES.shareSteps) {
+        const factor = step.factor;
+        const chosen = chooseAccents(actions, ctx, rule, step);
+        // Un paso que no añade golpes no cambia nada; el siguiente (más relajado) quizá sí.
+        if (chosen.length === 0 || chosen.length <= bestChosen.length) continue;
+        const marginsOf = chosen.map((a) => (kind) => context(indexOf.get(a), kind));
+        // Escalón a escalón hasta pasar del presupuesto; se queda el más cercano (en
+        // proporción) de los dos últimos: pasarse de largo también es fallar.
+        let found = null;
+        for (const [scale, spread] of ladder()) {
+            // El margen mínimo de la dificultad es un SUELO: el sitio en la canción
+            // (arco, apertura) y el reparto solo lo abren, y en los últimos
+            // escalones se cierran hasta él (nunca por debajo).
+            const targets = chosen.map((a) => rule.marginS * Math.max(1, scale * (1 + spread * (a.accentRank ?? 0)) * shapeFactor(a, ctx)));
+            const kinds = chosen.map((a, k) => accentVariant(a.kind, a.t, targets[k], ctx, marginsOf[k]));
+            const hazard = kinds.reduce((sum, kind, k) => {
+                if (kind === null) return sum;
+                const m = marginsOf[k](kind);
+                return sum + hazardOf(missChance(m.early, m.late));
+            }, 0);
+            const step = { targets, kinds, hazard, scale, share: factor };
+            if (hazard < summary.budget - 1e-9) {
+                found = step;
+                continue;
+            }
+            if (found === null || Math.log(hazard / summary.budget) < Math.log(summary.budget / Math.max(found.hazard, 1e-6))) found = step;
+            break;
         }
-        if (best === null || Math.log(hazard / summary.budget) < Math.log(summary.budget / Math.max(best.hazard, 1e-6))) best = step;
-        break;
+        best = found;
+        bestChosen = chosen;
+        // Si ni con el margen mínimo llega, más golpes como acento; si llega, basta.
+        if (found.hazard >= ACCENT_RULES.shortfall * summary.budget) break;
     }
-    chosen.forEach((a, k) => {
+    if (best === null) return summary;
+    bestChosen.forEach((a, k) => {
         if (best.kinds[k] === null) return;
         a.kind = best.kinds[k];
         a.accentTarget = best.targets[k];
@@ -128,6 +193,7 @@ export function assignAccents(actions, ctx) {
     summary.hazard = Math.round(best.hazard * 1000) / 1000;
     summary.budget = Math.round(summary.budget * 1000) / 1000;
     summary.scale = best.scale;
+    summary.share = best.share;
     return summary;
 }
 
@@ -140,26 +206,60 @@ export function assignAccents(actions, ctx) {
  * @param {number} t
  * @param {number} targetS
  * @param {{ profile: { toleranceS: number }, speed: { speedAt: (t: number) => number } }} ctx
+ * @param {((kind: string) => { early: number, late: number }) | null} [marginsOf]
+ *        Márgenes de la acción con un kind EN SU SITIO (challenge.createContextMargins).
+ *        Sin él, aislados.
  * @returns {string | null}
  */
-export function accentVariant(baseKind, t, targetS, ctx) {
-    const plain = timingMarginsS(baseKind, ctx.speed.speedAt(t + actionLeadS(OBSTACLE_KIND[baseKind])));
-    const plainSide = Math.min(plain.early, plain.late);
-    let best = null;
-    let bestMargin = Infinity;
-    for (const kind of variantsOf(baseKind)) {
-        const def = OBSTACLE_KIND[kind];
-        const m = timingMarginsS(kind, ctx.speed.speedAt(t + actionLeadS(def)));
-        const side = Math.min(m.early, m.late);
+export function accentVariant(baseKind, t, targetS, ctx, marginsOf = null) {
+    const isolated = (kind) => isolatedMargins(kind, ctx.speed.speedAt(t + actionLeadS(OBSTACLE_KIND[kind])));
+    const narrow = (m) => Math.min(m.early, m.late);
+    const plainSide = narrow((marginsOf ?? isolated)(baseKind));
+    // De la más estrecha a la más holgada (aislada): la primera que, en su sitio,
+    // deja el margen pedido. En su sitio el margen nunca es mayor que aislada, así que
+    // las que aisladas ya no llegan no hace falta medirlas.
+    const candidates = variantsOf(baseKind)
+        .map((kind) => ({ kind, alone: isolated(kind) }))
+        .filter((c) => narrow(c.alone) >= targetS - 1e-9 && c.alone.early + c.alone.late >= ACCENT_RULES.windowFactor * ctx.profile.toleranceS)
+        .sort((x, y) => narrow(x.alone) - narrow(y.alone));
+    if (candidates.length === 0) return null;
+    const fits = (c) => {
+        const m = marginsOf === null ? c.alone : marginsOf(c.kind);
+        const side = narrow(m);
         // Una variante que a esta velocidad deja MÁS margen que la acción normal no
         // es un acento (el cactus ancho es bajo: a partir de ~600 px/s perdona más).
-        if (side >= plainSide || side < targetS - 1e-9 || m.early + m.late < ACCENT_RULES.windowFactor * ctx.profile.toleranceS) continue;
-        if (side < bestMargin) {
-            bestMargin = side;
-            best = kind;
-        }
+        return side < plainSide && side >= targetS - 1e-9 && m.early + m.late >= ACCENT_RULES.windowFactor * ctx.profile.toleranceS;
+    };
+    if (marginsOf === null) return candidates.find(fits)?.kind ?? null;
+    // En su sitio el margen crece con el índice (variantes de más apretada a más
+    // holgada): se busca la primera que llega por bisección, no una a una.
+    if (fits(candidates[0])) return candidates[0].kind;
+    let lo = 0;
+    let hi = candidates.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (fits(candidates[mid])) hi = mid - 1;
+        else lo = mid;
     }
-    return best;
+    const chosen = candidates[Math.min(lo + 1, candidates.length - 1)];
+    return fits(chosen) ? chosen.kind : null;
+}
+
+/**
+ * Márgenes de un kind aislado a una velocidad, con memoria al px/s. Cada escalón
+ * de la escalera mide todas las variantes de cada acento (17 hileras × ~13
+ * escalones × ~90 acentos en un Extremo largo) y la velocidad es constante por
+ * tramo: sin la memoria, el charter dedicaba a esto casi tanto como al validador.
+ */
+const marginCache = new Map();
+function isolatedMargins(kind, speedPxS) {
+    const key = `${kind}@${Math.round(speedPxS)}`;
+    let m = marginCache.get(key);
+    if (m === undefined) {
+        m = timingMarginsS(kind, speedPxS);
+        marginCache.set(key, m);
+    }
+    return m;
 }
 
 /** Kinds con `accentOf === baseKind`, en el orden del registro (memoria). */
@@ -174,10 +274,10 @@ function variantsOf(baseKind) {
 }
 
 /** Cuánto suena como acento una acción (0 si no lo es). */
-function accentScore(a) {
+function accentScore(a, minStrength = ACCENT_RULES.minStrength) {
     if (a.forced) return 10;
     const chord = a.slot.chord === true;
-    if (a.slot.strength < ACCENT_RULES.minStrength && !chord) return 0;
+    if (a.slot.strength < minStrength && !chord) return 0;
     return a.slot.strength * (0.5 + 0.5 * a.slot.metric) + (chord ? ACCENT_RULES.chordBonus : 0);
 }
 
@@ -190,7 +290,9 @@ function accentScore(a) {
  * fuerte, hasta su cuota. Cada acción queda con `accentRank`: 0 el grupo más
  * fuerte de su tramo, 1 el más flojo de los elegidos.
  */
-function chooseAccents(actions, ctx, rule) {
+function chooseAccents(actions, ctx, rule, step = ACCENT_RULES.shareSteps[0]) {
+    const factor = step.factor;
+    const minStrength = step.relaxed ? ACCENT_RULES.relaxedStrength : ACCENT_RULES.minStrength;
     const { profile, arc, speed, unlocked } = ctx;
     const roomy = (i) => {
         const a = actions[i];
@@ -209,6 +311,8 @@ function chooseAccents(actions, ctx, rule) {
     const bySegment = new Map();
     actions.forEach((a, i) => {
         if (i < ctx.introActions || variantsOf(a.kind).length === 0 || !unlocked('accent', a.t)) return;
+        // Un anillo y el salto que lo lleva ya son una figura que exige: sin acento encima.
+        if (a.type === 'ring' || actions[i + 1]?.type === 'ring') return;
         const list = bySegment.get(a.segment) ?? [];
         list.push(i);
         bySegment.set(a.segment, list);
@@ -216,14 +320,14 @@ function chooseAccents(actions, ctx, rule) {
 
     const out = new Set();
     for (const [segment, list] of bySegment) {
-        const quota = Math.round(Math.min(1, rule.share * ACCENT_RULES.levelFactor[arc.segments[segment].level]) * list.length);
+        const quota = Math.round(Math.min(1, rule.share * factor * ACCENT_RULES.levelFactor[arc.segments[segment].level]) * list.length);
         const groups = new Map();
         for (const i of list) {
             const root = rootOf(actions[i]);
             const group = groups.get(root) ?? { score: 0, first: actions[i].t, members: [], roomy: 0 };
-            group.score = Math.max(group.score, accentScore(actions[i]));
+            group.score = Math.max(group.score, accentScore(actions[i], minStrength));
             group.members.push(actions[i]);
-            if (roomy(i)) group.roomy++;
+            if (step.relaxed || roomy(i)) group.roomy++;
             groups.set(root, group);
         }
         // Un grupo entra si la mayoría de sus vueltas tiene sitio: el riff no pierde
@@ -256,13 +360,16 @@ function chooseAccents(actions, ctx, rule) {
 /**
  * Escalera de holgura, de más holgada a más estrecha: primero se estrecha el
  * margen de todos con los flojos algo más holgados; en el mínimo, los flojos se
- * acercan a los fuertes. Pares [escala del margen mínimo, reparto].
+ * acercan a los fuertes; y si aún falta exigencia, se cierran las aperturas del
+ * sitio en la canción (`closings`) hasta el margen mínimo, nunca por debajo.
+ * Pares [escala del margen mínimo, reparto].
  */
 function ladder() {
     const R = ACCENT_RULES;
     return [
         ...R.scales.map((scale) => [scale, R.spread]),
         ...R.finalSpreads.map((k) => [1, R.spread * k]),
+        ...R.closings.map((scale) => [scale, 0]),
     ];
 }
 
@@ -276,16 +383,4 @@ function shapeFactor(a, ctx) {
     const progress = ctx.durationSec > 0 ? (a.accentShapeT ?? a.t) / ctx.durationSec : 1;
     const opening = progress >= R.opening.progress ? 1 : R.opening.factor - (R.opening.factor - 1) * (progress / R.opening.progress);
     return R.levelMargin[level] * opening;
-}
-
-/** Minutos de juego con obstáculos: de la primera a la última acción, sin los tramos de vuelo. */
-function playedMinutes(actions, modes) {
-    if (actions.length < 2) return 0;
-    const t0 = actions[0].t;
-    const t1 = actions[actions.length - 1].t;
-    let seconds = t1 - t0;
-    for (const span of modes.plan) {
-        if (span.mode === 'fly') seconds -= Math.max(0, Math.min(t1, span.tOut) - Math.max(t0, span.tIn));
-    }
-    return Math.max(0, seconds) / 60;
 }

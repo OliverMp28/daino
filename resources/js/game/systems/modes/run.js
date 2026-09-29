@@ -17,6 +17,7 @@ import {
     GRAVITY,
     JUMP_BUFFER_S,
     JUMP_CUT_MULTIPLIER,
+    JUMP_RING,
     JUMP_VELOCITY,
     MODE_COLORS,
     PHYSICS_STEP_S,
@@ -27,13 +28,17 @@ import { BODY_EVENT, bodyState } from './body.js';
 function jump(body) {
     if (body.dead) return false;
     if (!body.grounded && body.coyoteT <= 0) return false;
-    body.vy = -JUMP_VELOCITY;
+    launch(body, JUMP_VELOCITY);
+    return true;
+}
+
+function launch(body, velocity) {
+    body.vy = -velocity;
     body.grounded = false;
     body.coyoteT = 0;
     body.jumpHeld = true;
     body.ducking = false;
     body.fastFall = false;
-    return true;
 }
 
 /** @type {import('./index.js').MovementMode} */
@@ -115,6 +120,21 @@ export const RUN_MODE = Object.freeze({
             default:
                 return null;
         }
+    },
+
+    /**
+     * Activador atravesado (Ola 6c). Un anillo de salto vuelve a impulsar al Dino
+     * si hay una pulsación de salto pendiente: hecha dentro del aro o guardada un
+     * pelín antes (jump buffer), igual que al aterrizar. En el suelo no hace nada:
+     * ahí la pulsación ya fue un salto normal.
+     *
+     * @returns {string | null}  'ring' si se activó.
+     */
+    trigger(body, def) {
+        if (def.trigger !== 'jump' || body.dead || body.grounded || body.jumpBufferT <= 0) return null;
+        body.jumpBufferT = 0;
+        launch(body, JUMP_RING.impulsePxS);
+        return 'ring';
     },
 
     hitbox(body, out) {

@@ -117,17 +117,24 @@ export function wallsFor(alt, margin) {
  * soltarla pronto deja al Dino una tolerancia por debajo al subir, y al soltar
  * pronto baja mientras el camino aún sube (medido con el simulador). Y como la
  * altura es la suma de todo lo mantenido, esos desvíos se ACUMULAN nota tras
- * nota; por eso el charter hace que el camino vuelva al suelo entre notas
- * (flightCharter.js): el suelo pone el desvío a cero.
+ * nota; a ciegas por eso el camino debía volver al suelo entre notas, y desde la
+ * Ola 6c el jugador virtual corrige mirando el túnel (virtualPlayer.FLIGHT_PLAYER).
+ *
+ * `comfortPx` (Ola 6c) ensancha el túnel por encima de lo justo: con solo la
+ * tolerancia, cada esquina del camino exigía la precisión de un acento y el vuelo
+ * (un momento de calma) era donde más moría el jugador de referencia (medido: la
+ * mitad de las muertes de Dawn of Faith en Difícil). Lo pone cada dificultad
+ * (`fly.comfortPx`).
  *
  * @param {number} toleranceS
  * @param {number} minSpeedPxS
+ * @param {number} [comfortPx=0]
  */
-export function flightMargin(toleranceS, minSpeedPxS) {
+export function flightMargin(toleranceS, minSpeedPxS, comfortPx = 0) {
     const rate = Math.max(FLY_MODE.climbPxS, FLY_MODE.divePxS);
     const halfWidth = (DINO_SIZE.w - DINO_HITBOX_PADDING.left - DINO_HITBOX_PADDING.right) / 2;
     const slope = rate * (halfWidth / Math.max(1, minSpeedPxS));
-    return Math.ceil(3 * rate * toleranceS + slope + FLY_MODE.baseMarginPx);
+    return Math.min(FLY_MARGIN_RANGE.max, Math.ceil(3 * rate * toleranceS + slope + FLY_MODE.baseMarginPx + comfortPx));
 }
 
 /**

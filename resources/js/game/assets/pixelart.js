@@ -54,6 +54,10 @@ const PALETTE = {
     U: '#b58cff', // línea del techo
     // Vuelo (Ola 6b): techo en el oro del modo (MODE_COLORS.fly)
     F: '#ffd166', // línea del techo
+    // Anillo de salto (Ola 6c): cian del "en el golpe" (ON_BEAT), con destellos
+    R: '#8fe0ff', // aro
+    r: '#3f8fc4', // cara interior del aro
+    Q: '#ffffff', // destello
     // Portal: en grises para teñirlo con el color de cada modo (Sprite.tint)
     O: '#ffffff', // aro
     o: '#a6a6a6', // aro interior
@@ -373,6 +377,38 @@ function portalRows(w, h, phase) {
 const portalA = portalRows(14, 82, 0);
 const portalB = portalRows(14, 82, 1);
 
+/**
+ * Anillo de salto (Ola 6c, config.js `RING_JUMP`): un aro alto y estrecho de doble
+ * línea, con dos destellos que giran por el borde entre frames. Generado como el
+ * portal, más pequeño y sin teñir. Grid 12×26 → 48×104 de mundo.
+ */
+function ringRows(w, h, phase) {
+    const rows = [];
+    const cx = w / 2;
+    const cy = h / 2;
+    for (let y = 0; y < h; y++) {
+        let row = '';
+        for (let x = 0; x < w; x++) {
+            const dx = (x + 0.5 - cx) / (w / 2);
+            const dy = (y + 0.5 - cy) / (h / 2);
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 1 || d < 0.62) {
+                row += '.';
+                continue;
+            }
+            // Destellos: dos puntos opuestos del borde que avanzan un cuarto de vuelta por frame.
+            const angle = Math.atan2(dy, dx) / (2 * Math.PI) + 0.5;
+            const glint = Math.abs(((angle * 4 + phase) % 2) - 0.25) < 0.12 && d > 0.8;
+            row += glint ? 'Q' : d > 0.8 ? 'R' : 'r';
+        }
+        rows.push(row);
+    }
+    return rows;
+}
+
+const ringA = ringRows(12, 26, 0);
+const ringB = ringRows(12, 26, 1);
+
 // Flechas del portal (se tiñen): hacia arriba y hacia abajo. Grid 9×5 → 36×20 px.
 const chevronUp = [
     '....O....',
@@ -389,6 +425,7 @@ const DEFS = {
     pteroA, pteroB,
     ground, cloud, dot,
     crystal, crystalSharp, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
+    ringA, ringB,
 };
 
 // --------------------------- Skins (palette-swap) ---------------------------

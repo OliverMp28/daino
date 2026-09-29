@@ -160,6 +160,32 @@ export const FLY_MODE = Object.freeze({
     entryOpenS: 0.5,
 });
 
+/**
+ * Anillo de salto (Ola 6c): un aro en el aire que, si se pulsa saltar mientras el
+ * Dino lo atraviesa, lo vuelve a impulsar hacia arriba. Rompe el techo de densidad
+ * del salto: dos saltos seguidos necesitan ≥ 0.68 s (hay que aterrizar), pero un
+ * salto y su anillo caben a un contratiempo, que es donde la música los pide.
+ *
+ *   impulsePxS  Velocidad hacia arriba al activarse. Menos que un salto desde el
+ *               suelo (900): el Dino ya va alto y un segundo salto completo lo
+ *               sacaría de las pantallas más bajas (medido: ≤ 280 de altura).
+ *   zonePadX/Y  El aro se activa con esta holgura alrededor de su dibujo, como
+ *               los orbes de Geometry Dash: se ve un aro y se perdona el borde.
+ *   leadS       El centro del aro cruza al Dino esto DESPUÉS del golpe. Pulsar
+ *               pronto se guarda (jump buffer) y dispara al entrar; pulsar tarde
+ *               solo vale mientras se atraviesa: así el margen queda centrado en
+ *               el golpe (medido: ±130 ms a 1000 px/s, ±170 a 650).
+ */
+export const JUMP_RING = Object.freeze({
+    impulsePxS: 760,
+    zonePadX: 36,
+    zonePadY: 24,
+    leadS: 0.06,
+});
+
+/** Lo que se ve al activar un anillo (solo visual). */
+export const JUMP_RING_FX = Object.freeze({ color: 0x8fe0ff, sparks: 14 });
+
 /** Color de cada modo: su portal, su franja en el mapa de la canción y su aviso. */
 export const MODE_COLORS = Object.freeze({ run: 0x7fe6ff, flip: 0xc08bff, fly: 0xffd166 });
 
@@ -215,8 +241,18 @@ export const MAX_BURST_PARTICLES = 140;
 
 // --------------------------- Obstáculos ---------------------------
 
-/** Largos de las hileras de cactus, en celdas del arte (ver `cactusRows`; pixelart.js los dibuja). */
-export const CACTUS_ROW_CELLS = Object.freeze(Array.from({ length: 13 }, (_, i) => 22 + 5 * i));
+/**
+ * Largos de las hileras de cactus, en celdas del arte (ver `cactusRows`;
+ * pixelart.js los dibuja). La escalera llega hasta 102 celdas (408 px) porque un
+ * acento tiene que seguir apretando a la velocidad máxima del juego: el margen de
+ * una hilera CRECE con la velocidad (cruza antes), así que a 1000 px/s la de 328
+ * px todavía perdona ±82 ms y una canción corta y rápida no podía gastar su
+ * presupuesto de exigencia (Sugar Red en Extremo gastaba 0.69 de 2.94). Con
+ * 348-408 px el techo baja a ±42 ms y el charter vuelve a tener con qué apretar
+ * arriba; a velocidades bajas esas hileras no se eligen solas (su margen se
+ * vuelve 0 y accents.js las descarta).
+ */
+export const CACTUS_ROW_CELLS = Object.freeze(Array.from({ length: 17 }, (_, i) => 22 + 5 * i));
 
 /** Márgenes de adelanto de los cristales afilados, en ms (ver `sharpCrystals`). */
 export const SHARP_CRYSTAL_MARGINS_MS = Object.freeze([190, 160, 130, 110]);
@@ -257,9 +293,22 @@ export const SHARP_CRYSTAL_MARGINS_MS = Object.freeze([190, 160, 130, 110]);
  *   leadMarginS    Antigravedad: adelanto propio sobre lo que tarda en despejarse
  *                  (por defecto FLIP_MODE.leadMarginS). Menos adelanto = el cristal
  *                  llega antes tras el golpe y pulsar tarde deja menos margen.
+ *   trigger        (Ola 6c) No es un obstáculo sino un ACTIVADOR: no se choca con
+ *                  él; si el jugador pulsa mientras el Dino lo atraviesa, el modo
+ *                  vigente aplica su efecto (`MovementMode.trigger`: 'jump' vuelve a
+ *                  saltar en el aire). No tiene `action` propia: la pulsación la
+ *                  pide el obstáculo que lo acompaña en el mismo instante.
+ *   zone           Holgura del activador alrededor de su dibujo ({ padX, padY }).
+ *   hint           Cómo se explica las primeras partidas en que aparece
+ *                  ({ label, keys, touch, color }).
  */
 export const OBSTACLE_KIND = Object.freeze({
     CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], mode: 'run', surface: 'floor', action: 'jump', role: 'jump', weight: 1 },
+    RING_JUMP: {
+        w: 48, h: 104, altitude: 120, sprites: ['ringA', 'ringB'], animPeriodS: 0.14, mode: 'run', surface: 'floor',
+        trigger: 'jump', role: 'ring', actionLeadS: JUMP_RING.leadS, zone: { padX: JUMP_RING.zonePadX, padY: JUMP_RING.zonePadY }, weight: 1,
+        hint: { label: 'Anillo', keys: 'Pulsa Espacio dentro del aro: vuelves a saltar', touch: 'Toca dentro del aro: vuelves a saltar', color: 0x8fe0ff },
+    },
     CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', accentOf: 'CACTUS_SMALL', weight: 1 },
     ...cactusRows(),
     PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, mode: 'run', surface: 'floor', action: 'duck', role: 'duck', weight: 1 },

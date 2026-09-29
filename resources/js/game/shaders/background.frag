@@ -29,6 +29,14 @@
 //                oscurece y salen más estrellas. El final se ve llegar.
 //   uClimax    — [0,1] el clímax: tinte del cielo y ecualizador encendidos.
 //   uFlash     — [0,1] destello de un drop, decae en unas décimas.
+//
+// Ola 6c — los efectos del plan del charter (levels/fxPlan.js, systems/songDirector.js):
+//   uBuild     — [0,1] la subida hacia un drop: el horizonte y el halo del sol se
+//                cargan y cada beat pega más fuerte hasta el golpe.
+//   uCalm      — [0,1] un break: el color se apaga y se enfría (el mundo contiene
+//                la respiración) hasta que vuelve la música.
+//   uHue       — vueltas de color del cielo por los cambios de tonalidad: el rosa
+//                del beat y el cian de los agudos giran juntos.
 
 in vec2 vTextureCoord; // uv sobre la TEXTURA del pool (¡su 1.0 cae fuera de pantalla!)
 in vec2 vFrameCoord;   // uv [0,1] sobre el FRAME VISIBLE — usar este para
@@ -57,6 +65,9 @@ uniform float uIntensity;
 uniform float uProgress;
 uniform float uClimax;
 uniform float uFlash;
+uniform float uBuild;
+uniform float uCalm;
+uniform float uHue;
 
 // Paleta — espejo de los tokens de @theme en main.css y de PALETTE en
 // assets/pixelart.js (mantener sincronizados).
@@ -64,6 +75,13 @@ const vec3 COLOR_BG_DEEP   = vec3(0.020, 0.022, 0.048);
 const vec3 COLOR_BG_LIFTED = vec3(0.105, 0.070, 0.180);
 const vec3 COLOR_BEAT      = vec3(0.880, 0.220, 0.380);
 const vec3 COLOR_HIGH      = vec3(0.560, 0.880, 1.000);
+
+// Gira un color alrededor del eje gris (conserva su brillo). a en radianes.
+vec3 hueShift(vec3 c, float a) {
+    const vec3 k = vec3(0.57735);
+    float ca = cos(a);
+    return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca);
+}
 
 float hash21(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -111,6 +129,11 @@ void main(void) {
     float progress  = clamp(uProgress, 0.0, 1.0) * reactive;
     float climax    = uClimax * reactive;
     float flash     = uFlash * reactive;
+    // Efectos del plan (Ola 6c). En idle, 0: el menú tiene sus colores de siempre.
+    float build = uBuild * reactive;
+    float calm  = uCalm * reactive;
+    vec3 beatCol = hueShift(COLOR_BEAT, uHue * reactive * 6.2831853);
+    vec3 highCol = hueShift(COLOR_HIGH, uHue * reactive * 6.2831853);
     // El atardecer avanza despacio al principio y se acelera hacia el final.
     float dusk = progress * progress * (3.0 - 2.0 * progress);
 
@@ -122,7 +145,7 @@ void main(void) {
     vec3 lifted = mix(COLOR_BG_LIFTED, vec3(0.20, 0.06, 0.16), dusk * 0.6);
     vec3 col = mix(COLOR_BG_DEEP * (1.0 - 0.35 * dusk), lifted, toHorizon * toHorizon);
     // Tinte del clímax, más fuerte arriba y latiendo con el beat.
-    col += COLOR_BEAT * climax * (0.035 + 0.05 * pulse) * (1.0 - toHorizon);
+    col += beatCol * climax * (0.035 + 0.05 * pulse) * (1.0 - toHorizon);
 
     // ---------- Estrellas ----------
     // Grid-hash barato. Titilan con uTime; los agudos las excitan en partida.
@@ -167,16 +190,16 @@ void main(void) {
     // Rendijas: solo por debajo del centro del sol, más densas hacia abajo.
     float below = step(sunPos.y, uv.y);
     float slit = 1.0 - below * smoothstep(0.32, 0.5, abs(fract((uv.y - sunPos.y) / sunRy * 6.6) - 0.5));
-    vec3 sunCol = mix(COLOR_HIGH, COLOR_BEAT, smoothstep(sunPos.y - sunRy, sunPos.y + sunRy, uv.y));
+    vec3 sunCol = mix(highCol, beatCol, smoothstep(sunPos.y - sunRy, sunPos.y + sunRy, uv.y));
     col = mix(col, sunCol, disc * slit * 0.9);
     // Halo del sol — en partida lo hinchan los graves, la intensidad y los drops.
-    col += COLOR_BEAT * exp(-d * 9.0) * (0.10 + 0.05 * breathe + bass * 0.22 + pulse * (0.06 + 0.10 * intensity) + 0.12 * dusk + 0.25 * flash);
+    col += beatCol * exp(-d * 9.0) * (0.10 + 0.05 * breathe + bass * 0.22 + pulse * (0.06 + 0.10 * intensity) + 0.12 * dusk + 0.25 * flash);
 
     // ---------- Glow del horizonte ----------
     float hd = abs(uv.y - uHorizon);
     float horizonGlow = exp(-hd * (26.0 - 8.0 * intensity));
-    col += COLOR_BEAT * horizonGlow * (0.10 + 0.06 * breathe + bass * 0.55 + pulse * (0.15 + 0.30 * intensity) + 0.10 * dusk + 0.45 * flash);
-    col += COLOR_HIGH * exp(-hd * 60.0) * (0.06 + high * 0.35 + 0.25 * flash);
+    col += beatCol * horizonGlow * (0.10 + 0.06 * breathe + bass * 0.55 + pulse * (0.15 + 0.30 * intensity + 0.35 * build) + 0.10 * dusk + 0.45 * flash + 0.30 * build);
+    col += highCol * exp(-hd * 60.0) * (0.06 + high * 0.35 + 0.25 * flash);
 
     // ---------- Ondas senoidales tenues (idle y reactive) ----------
     float wave = sin(uv.x * 14.0 + uTime * 1.1) * 0.5 + 0.5;
@@ -203,14 +226,18 @@ void main(void) {
         float gap = step(fract(uv.x * BARS), 0.68);   // 68% barra, 32% hueco
         if (uv.y > top && h > 0.004) {
             float t = (uHorizon - uv.y) / max(h, 1e-4);   // 0 en la base, 1 en la punta
-            vec3 barCol = mix(mix(COLOR_BEAT, COLOR_HIGH, cx), COLOR_BEAT, climax * 0.5);
+            vec3 barCol = mix(mix(beatCol, highCol, cx), beatCol, climax * 0.5);
             col += barCol * gap * (1.0 - t) * (0.12 + 0.10 * intensity + bass * 0.10);
         }
     }
 
     // ---------- Flash global al beat y destello de drop ----------
-    col *= 1.0 + pulse * (0.05 + 0.10 * intensity);
-    col += COLOR_HIGH * flash * 0.10;
+    col *= 1.0 + pulse * (0.05 + 0.10 * intensity + 0.12 * build);
+    col += highCol * flash * 0.10;
+
+    // Break: el color se apaga hacia un gris frío, sin llegar a negro.
+    float luma = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(col, vec3(luma) * vec3(0.78, 0.84, 1.0), 0.6 * calm) * (1.0 - 0.22 * calm);
 
     // Vignette suave para dar foco al gameplay (capa 3 vive encima).
     float dx = uv.x - 0.5;

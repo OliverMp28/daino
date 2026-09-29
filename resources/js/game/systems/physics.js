@@ -24,6 +24,7 @@ export {
     computeGroundY,
     obstacleHitbox,
     obstacleTopY,
+    triggerZone,
 } from './geometry.js';
 export { BODY_EVENT, bodyState } from './modes/index.js';
 
@@ -51,6 +52,19 @@ export function integrateBody(body, dt, groundY) {
  */
 export function applyInput(body, input) {
     return movementMode(body.mode).input(body, input);
+}
+
+/**
+ * El cuerpo atraviesa un activador (anillo de salto, Ola 6c): lo decide y lo
+ * aplica su modo. La partida y el simulador lo llaman igual, tras integrar el paso,
+ * con el activador cuya zona (`triggerZone`) toca el hitbox.
+ *
+ * @param {object} body
+ * @param {{ trigger: string }} def  Entrada de OBSTACLE_KIND con `trigger`.
+ * @returns {string | null}  Gesto que produjo ('ring') o null si no se activó.
+ */
+export function applyTrigger(body, def) {
+    return movementMode(body.mode).trigger?.(body, def) ?? null;
 }
 
 /**

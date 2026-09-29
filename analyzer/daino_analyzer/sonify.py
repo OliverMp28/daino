@@ -8,6 +8,8 @@
 - tono largo al empezar cada sección;
 - con `--chords`, cada acorde detectado sonando debajo (fundamental grave y
   tríada suave). Si el acorde acompaña a la canción, está bien; si choca, no.
+- con `--melody` (analizador 3), un seno que sigue la melodía detectada. Si canta
+  con la voz (o en su octava), está bien; si va por su cuenta, no.
 
 Si los clics caen sobre los golpes, los tonos en los cambios de la canción y los
 acordes no desafinan, el análisis es bueno. Es la verificación que las métricas
@@ -43,7 +45,18 @@ def _chord_pad(root: int, quality: str, dur: float, sr: int, cents: float) -> np
     return out * env.astype(np.float32)
 
 
-def sonify(file: Path, out: Path, chords: bool = False) -> int:
+def _melody_line(pitch: list[float], hop: float, n: int, sr: int, cents: float) -> np.ndarray:
+    """Un seno que sigue la altura de la melodía, con fundido en cada entrada y salida."""
+    t_frame = np.arange(len(pitch)) * hop
+    times = np.arange(n) / sr
+    midi = np.interp(times, t_frame, np.asarray(pitch, dtype=np.float64))
+    voiced = np.interp(times, t_frame, (np.asarray(pitch) > 0).astype(np.float64))
+    freq = 440.0 * 2 ** ((np.where(midi > 0, midi, 60) - 69 + cents / 100.0) / 12)
+    phase = 2 * np.pi * np.cumsum(freq) / sr
+    return (0.12 * voiced * np.sin(phase)).astype(np.float32)
+
+
+def sonify(file: Path, out: Path, chords: bool = False, melody: bool = False) -> int:
     audio = decode_file(file)
     a = analysis.analyze(audio)
     schema.validate(a)
@@ -72,6 +85,10 @@ def sonify(file: Path, out: Path, chords: bool = False) -> int:
             end = ton["chords"][i + 1][0] if i + 1 < len(ton["chords"]) else a["durationSec"]
             name, quality = label.split(":")
             add(_chord_pad(NOTE_NAMES.index(name), quality, end - t0, sr, ton["tuningCents"]), t0)
+
+    if melody and "melody" in a:
+        line = _melody_line(a["melody"]["pitch"], a["melody"]["hopSec"], mix.shape[1], sr, a["tonal"]["tuningCents"])
+        mix += line[None, :]
 
     pcm = (np.clip(mix, -1, 1).T * 32767).astype("<i2")
     out.parent.mkdir(parents=True, exist_ok=True)

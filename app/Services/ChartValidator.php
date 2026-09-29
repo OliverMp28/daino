@@ -31,16 +31,18 @@ use App\Core\ValidationException;
  */
 final class ChartValidator
 {
-    /** Formato que genera el charter actual (Ola 6b). */
-    public const CHART_FORMAT_VERSION = 4;
+    /** Formato que genera el charter actual (Ola 6c). */
+    public const CHART_FORMAT_VERSION = 5;
 
     /**
      * 1 = charter de las Olas 3-4 (velocidad constante). 2 = charter musical
      * (Ola 5): cambios de velocidad, pulso, dificultad y eventos de estructura.
      * 3 = modos de movimiento (Ola 6): eventos `mode` con el modo que empieza.
      * 4 = vuelo (Ola 6b): `margin` opcional en el portal y eventos `hold` con `until`.
+     * 5 = activadores (Ola 6c): kinds como el anillo de salto. Estructuralmente es un
+     *     obstáculo más (el registro de kinds vive en el frontend); cambia la semántica.
      */
-    public const CHART_FORMAT_VERSIONS = [1, 2, 3, 4];
+    public const CHART_FORMAT_VERSIONS = [1, 2, 3, 4, 5];
 
     /** Holgura del túnel del vuelo en unidades de mundo (`flightCourse.js::FLY_MARGIN_RANGE`). */
     private const FLY_MARGIN_MIN = 12;
@@ -56,7 +58,8 @@ final class ChartValidator
      * 1 = analizador JS del navegador (bpm + onsets). 2 = analizador del servidor
      * (Ola 4): el 1 más beats, downbeats, secciones, energía y rasgos. Desde la
      * versión 2 del analizador, además (opcionales en el formato): percusividad de
-     * cada onset, energía por bandas, tonalidad por sección y el bloque `tonal`.
+     * cada onset, energía por bandas, tonalidad por sección y el bloque `tonal`; y
+     * desde la 3, el bloque `melody` (contorno melódico).
      */
     public const ANALYSIS_FORMAT_VERSIONS = [1, 2];
 
@@ -65,6 +68,11 @@ final class ChartValidator
     public const MAX_CHORDS = 40_000;
     public const MAX_MODULATIONS = 200;
     private const BAND_NAMES = ['low', 'mid', 'high'];
+    /** Contorno melódico (analizador 3): mismos límites que `analyzer/daino_analyzer/schema.py`. */
+    private const MELODY_HOP_MIN = 0.01;
+    private const MELODY_HOP_MAX = 1.0;
+    private const MELODY_MIDI_MIN = 24.0;
+    private const MELODY_MIDI_MAX = 108.0;
     private const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
     private const SECTION_ROLES = ['intro', 'verse', 'chorus', 'bridge', 'break', 'outro'];
 
@@ -527,7 +535,41 @@ final class ChartValidator
         if (array_key_exists('tonal', $a)) {
             $out['tonal'] = self::validateTonal($a['tonal'], $duration);
         }
+        if (array_key_exists('melody', $a)) {
+            $out['melody'] = self::validateMelody($a['melody'], $duration);
+        }
         return $out;
+    }
+
+    /**
+     * Contorno melódico (analizador 3): altura MIDI por fotograma, 0 sin melodía.
+     *
+     * @return array<string, mixed>
+     */
+    private static function validateMelody(mixed $m, float $duration): array
+    {
+        $f = 'analysis';
+        if (!is_array($m) || array_is_list($m)) {
+            self::fail($f, 'melody debe ser un objeto.');
+        }
+        $hop = self::number($m['hopSec'] ?? null, $f, 'melody.hopSec', self::MELODY_HOP_MIN, self::MELODY_HOP_MAX);
+        $pitch = $m['pitch'] ?? null;
+        if (!is_array($pitch) || !array_is_list($pitch) || count($pitch) > (int) ceil($duration / $hop) + 1) {
+            self::fail($f, 'melody.pitch debe tener un valor por fotograma de la canción.');
+        }
+        $clean = [];
+        foreach ($pitch as $i => $p) {
+            $v = self::number($p, $f, "melody.pitch[{$i}]", 0, self::MELODY_MIDI_MAX);
+            if ($v !== 0.0 && $v < self::MELODY_MIDI_MIN) {
+                self::fail($f, "melody.pitch[{$i}] fuera de rango.");
+            }
+            $clean[] = $v;
+        }
+        return [
+            'hopSec'      => $hop,
+            'pitch'       => $clean,
+            'voicedRatio' => self::number($m['voicedRatio'] ?? null, $f, 'melody.voicedRatio', 0, 1),
+        ];
     }
 
     /**

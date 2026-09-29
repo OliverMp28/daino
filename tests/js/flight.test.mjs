@@ -1,4 +1,4 @@
-// Vuelo (Ola 6b): mantener para subir, el túnel que dibujan las notas y su charter.
+// Vuelo (Olas 6b-6c): mantener para subir, el túnel que dibujan las notas y su charter.
 //
 // Se protege:
 //   - La física: mantener sube en línea recta a velocidad fija, soltar baja,
@@ -7,16 +7,18 @@
 //   - El recorrido: el camino de las notas, sus muros a `margin` por cada lado, la
 //     boca abierta del túnel y la colisión con la anchura del hitbox.
 //   - La jugabilidad: con las notas se supera con la tolerancia de la dificultad;
-//     sin pulsar o manteniendo de más, se choca; y sin volver al suelo entre notas
-//     el error se acumula hasta chocar (por eso existe la regla de la vuelta).
-//   - El charter: notas en la rejilla y a la medida de la música, con su vuelta al
-//     suelo, estreno en el pulso, aterrizaje antes del portal, túnel con la holgura
-//     de la dificultad, estadísticas y determinismo.
+//     sin pulsar o manteniendo de más, se choca; a ciegas, el error de notas
+//     encadenadas se acumula hasta chocar, y quien corrige mirando el túnel no (6c).
+//   - El charter: notas en la rejilla (o ligadas a ella) y a la medida de la música,
+//     encadenadas por el aire dentro de su frase y volviendo al suelo entre frases,
+//     sin quedarse pegadas al techo, con la altura de la melodía cuando la hay (6c);
+//     estreno en el pulso, aterrizaje antes del portal, túnel con la holgura de la
+//     dificultad, estadísticas y determinismo.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DINO_HITBOX_PADDING, DINO_SIZE, FLY_MODE, PHYSICS_STEP_S } from '../../resources/js/game/config.js';
+import { DINO_HITBOX_PADDING, DINO_SIZE, FLY_MODE, OBSTACLE_KIND, PHYSICS_STEP_S } from '../../resources/js/game/config.js';
 import {
     BODY_EVENT, applyInput, bodyHitbox, bodyState, ceilingYOf, enterMode, integrateBody,
 } from '../../resources/js/game/systems/physics.js';
@@ -26,6 +28,7 @@ import {
 import { simulateRun, toSimHolds, toSimModes, validateChart, validatePlayability } from '../../resources/js/game/systems/playability.js';
 import { virtualPlayerScript } from '../../resources/js/game/systems/virtualPlayer.js';
 import { createSpeedProfile, speedProfileOf } from '../../resources/js/game/systems/speedProfile.js';
+import { buildMusicModel } from '../../resources/js/game/levels/musicModel.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
 import { FLY_RULES, restEnd } from '../../resources/js/game/levels/flightCharter.js';
 import { MODE_RULES } from '../../resources/js/game/levels/modePlan.js';
@@ -190,35 +193,45 @@ test('simulador: con las notas se supera el túnel con la tolerancia; sin pulsar
     assert.equal(long.index, 0, 'el choque señala la nota (índice n + 2k)');
 });
 
-test('sin volver al suelo entre notas, el error de tiempo se acumula hasta chocar: la regla de la vuelta es necesaria', () => {
+test('notas encadenadas sin volver al suelo: a ciegas el error se acumula hasta chocar; mirando el túnel se corrige (Ola 6c)', () => {
     const tol = 0.055;
     const speed = 450;
     const margin = flightMargin(tol, speed);
-    // Notas de medio segundo con descansos de 0.25 s: el camino no llega al suelo.
-    const close = [];
-    for (let k = 0; k < 6; k++) close.push([11 + k * 0.75, 11.5 + k * 0.75]);
-    const verdict = validateChart({ world: { speedPxS: speed }, events: flightEvents(close, margin) }, { toleranceS: tol });
-    assert.equal(verdict.ok, false, 'con notas pegadas, quien juega con la tolerancia choca');
-    assert.ok(verdict.index >= 2, `choca tras la primera nota (índice ${verdict.index})`);
+    // Notas de 0.3 s cada medio segundo: el camino sube 90 y baja 60, así que va
+    // subiendo por el aire (90, 30, 120, 60… hasta 180) sin tocar el suelo ni el techo.
+    const chained = [];
+    for (let k = 0; k < 6; k++) chained.push([11 + k * 0.5, 11.3 + k * 0.5]);
+    const chart = { world: { speedPxS: speed }, events: flightEvents(chained, margin) };
 
-    // Las mismas notas con la vuelta al suelo se superan.
-    const spaced = [];
-    let t = 11;
-    for (let k = 0; k < 3; k++) {
-        spaced.push([t, t + 0.5]);
-        t = restEnd({ t, until: t + 0.5 }, tol);
-    }
-    assert.ok(validateChart({ world: { speedPxS: speed }, events: flightEvents(spaced, margin) }, { toleranceS: tol }).ok);
+    const blind = validateChart(chart, { toleranceS: tol, flightPlayer: null });
+    assert.equal(blind.ok, false, 'a ciegas, con la tolerancia, el desvío de altura se arrastra y choca');
+    assert.ok(blind.index >= 2, `choca tras la primera nota (índice ${blind.index})`);
+    assert.ok(validateChart(chart, { toleranceS: tol }).ok, 'quien corrige mirando el túnel lo supera');
+
+    // Corregir no es jugar solo: sin pulsar una nota del medio se choca igual.
+    const course = createFlightCourse(chart.events);
+    const skipped = toSimHolds(chart.events).filter((_, k) => k !== 2);
+    const r = simulateRun([], speed, { modes: toSimModes(chart.events), course, holds: skipped });
+    assert.equal(r.ok, false);
 });
 
 // --------------------------- Charter ---------------------------
 
-test('charter del vuelo: notas en la rejilla y a la medida del beat, con su vuelta al suelo, estreno en el pulso y aterrizaje antes del portal', () => {
+/** Cima de cada nota en el camino de su túnel. */
+function peaksOf(chart) {
+    const course = createFlightCourse(chart.events);
+    return course.spans.flatMap((span) => span.holds.map((h) => altAt(span.points, h.until)));
+}
+
+test('charter del vuelo: notas en la rejilla o ligadas a ella, encadenadas en su frase y al suelo entre frases, sin pegarse al techo; estreno en el pulso y aterrizaje antes del portal', () => {
     for (const bpm of [90, 120, 150]) {
         const analysis = makeSyntheticSong({ bpm, sections: CONTRAST_SONG_SECTIONS });
         const beat = 60 / bpm;
         const grid = [...analysis.beats, ...analysis.beats.map((b) => b + beat / 2)];
         const onGrid = (x) => grid.some((g) => Math.abs(g - x) < 0.002);
+        const legato = (x) => grid.some((g) => Math.abs(g - FLY_RULES.chainRestS - x) < 0.002);
+        const model = buildMusicModel(analysis);
+        const barOf = (t) => model.bars.findIndex((b) => t >= b.t0 - 1e-6 && t < b.t1 - 1e-6);
         // A 150 BPM la canción dura 2:20: en Normal solo cabe un momento, y es la antigravedad.
         for (const d of bpm === 150 ? [4, 5] : [3, 4, 5]) {
             const { chart, report } = buildChart(analysis, { seed: 5, difficulty: d });
@@ -231,24 +244,87 @@ test('charter del vuelo: notas en la rejilla y a la medida del beat, con su vuel
 
             const portal = chart.events.find((e) => e.type === 'mode' && e.mode === 'fly');
             const topSpeed = report.topSpeedPxS;
-            assert.ok(portal.margin >= flightMargin(tol, topSpeed) && portal.margin <= FLY_MARGIN_RANGE.max, `${label}: holgura ${portal.margin}`);
+            const comfort = DIFFICULTY_PROFILES[report.difficulty].fly.comfortPx;
+            assert.ok(portal.margin >= flightMargin(tol, topSpeed, comfort) && portal.margin <= FLY_MARGIN_RANGE.max, `${label}: holgura ${portal.margin}`);
 
+            const chainBars = DIFFICULTY_PROFILES[report.difficulty].fly.chainBars;
+            const bar0 = barOf(fly.at);
+            const peaks = peaksOf(chart);
+            const points = createFlightCourse(chart.events).spans[0].points;
             holds.forEach((h, i) => {
                 assert.ok(h.t >= fly.t0 && h.until <= fly.t1, `${label}: nota ${h.t} dentro del vuelo`);
-                assert.ok(onGrid(h.t) && onGrid(h.until), `${label}: nota ${h.t}→${h.until} en la rejilla`);
+                assert.ok(onGrid(h.t) && (onGrid(h.until) || legato(h.until)), `${label}: nota ${h.t}→${h.until} en la rejilla`);
                 const len = h.until - h.t;
                 assert.ok(len >= FLY_RULES.minHoldBeats * beat - 0.03 && len <= Math.min(FLY_RULES.maxHoldBeats * beat, FLY_RULES.maxHoldS) + 0.002, `${label}: nota de ${len.toFixed(3)} s`);
-                if (i > 0) assert.ok(h.t >= restEnd(holds[i - 1], tol) - 0.002, `${label}: la nota ${h.t} no deja volver al suelo`);
+                // Nunca pegada al techo más de lo permitido.
+                const reach = points.find((p) => p.t >= h.t - 1e-6 && p.alt >= MAX_ALT - 1e-6);
+                const dwell = reach === undefined || reach.t > h.until ? 0 : h.until - reach.t;
+                assert.ok(dwell <= FLY_RULES.maxCeilingS + 0.002, `${label}: nota ${h.t} pegada al techo ${dwell.toFixed(3)} s`);
+                if (i === 0) return;
+                const prev = holds[i - 1];
+                const phrase = (t) => (chainBars > 0 ? Math.floor((barOf(t) - bar0) / chainBars) : NaN);
+                const landing = chainBars === 0 || i <= MODE_RULES.introActions || phrase(prev.t) !== phrase(h.t);
+                if (landing) assert.ok(h.t >= restEnd(prev, tol, peaks[i - 1]) - 0.002, `${label}: la nota ${h.t} no deja volver al suelo`);
+                else assert.ok(h.t >= prev.until + FLY_RULES.chainRestS - 0.002, `${label}: la nota ${h.t} no deja respirar tras la anterior`);
             });
             assert.ok(holds[0].t - fly.t0 >= Math.max(FLY_MODE.entryOpenS, MODE_RULES.introBeats * beat - 0.02) - 0.002, `${label}: estreno tras asentarse`);
             assert.ok(analysis.beats.some((b) => Math.abs(b - holds[0].t) < 0.002) && analysis.beats.some((b) => Math.abs(b - holds[1].t) < 0.002), `${label}: estreno en el pulso`);
             assert.ok(holds[1].t - holds[0].t >= MODE_RULES.introGapS - 0.002, `${label}: estreno espaciado`);
-            assert.ok(restEnd(holds.at(-1), tol) + FLY_RULES.landBeforeExitS <= fly.t1 + 0.002, `${label}: aterriza antes del portal de salida`);
+            assert.ok(restEnd(holds.at(-1), tol, peaks.at(-1)) + FLY_RULES.landBeforeExitS <= fly.t1 + 0.002, `${label}: aterriza antes del portal de salida`);
+            assert.ok(validateChart(chart, { toleranceS: tol }).ok, `${label}: jugable mirando el túnel`);
 
-            assert.equal(chartStats(chart).actions, chart.events.filter((e) => e.type === 'obstacle').length + holds.length);
+            // Los aros de los anillos (Ola 6c) no son acciones: la cuenta su obstáculo.
+            const obstacles = chart.events.filter((e) => e.type === 'obstacle' && OBSTACLE_KIND[e.kind].trigger === undefined);
+            assert.equal(chartStats(chart).actions, obstacles.length + holds.length);
             assert.equal(JSON.stringify(buildChart(analysis, { seed: 5, difficulty: d }).chart), JSON.stringify(chart), `${label}: determinista`);
         }
     }
+});
+
+test('vuelo encadenado (Ola 6c): Difícil y Extremo encadenan notas por el aire; Relajado y Fácil no vuelan; Normal, en frases cortas', () => {
+    for (const bpm of [120, 150]) {
+        const analysis = makeSyntheticSong({ bpm, sections: CONTRAST_SONG_SECTIONS });
+        const chained = (d) => buildChart(analysis, { seed: 5, difficulty: d }).report.flights.reduce((n, f) => n + f.chained, 0);
+        assert.ok(chained(5) >= 1, `${bpm} BPM: Extremo encadena (${chained(5)})`);
+        assert.ok(chained(5) >= chained(4) - 1 && chained(4) >= 0, `${bpm} BPM: ${chained(4)} en Difícil, ${chained(5)} en Extremo`);
+    }
+    assert.equal(DIFFICULTY_PROFILES[1].fly.chainBars, 0);
+    assert.ok(DIFFICULTY_PROFILES[3].fly.chainBars < DIFFICULTY_PROFILES[4].fly.chainBars);
+    assert.ok(DIFFICULTY_PROFILES[4].fly.chainBars <= DIFFICULTY_PROFILES[5].fly.chainBars);
+});
+
+test('altura con la melodía (Ola 6c): si la melodía sube, las cimas suben; si baja, bajan; sin melodía, se decide por el ritmo', () => {
+    const base = makeSyntheticSong({ bpm: 120, sections: CONTRAST_SONG_SECTIONS });
+    const plain = buildChart(base, { seed: 5, difficulty: 5 });
+    const fly = plain.report.modes.find((m) => m.mode === 'fly');
+    assert.equal(plain.report.flights[0].melody, false, 'sin melodía en el análisis');
+    const hop = 0.0929;
+    const withMelody = (from, to) => ({
+        ...base,
+        melody: {
+            hopSec: hop,
+            voicedRatio: 1,
+            pitch: Array.from({ length: Math.ceil(base.durationSec / hop) }, (_, i) => {
+                const t = i * hop;
+                return t < fly.t0 || t > fly.t1 ? 60 : from + (to - from) * ((t - fly.t0) / (fly.t1 - fly.t0));
+            }),
+        },
+    });
+    const trend = (analysis) => {
+        const { chart, report } = buildChart(analysis, { seed: 5, difficulty: 5 });
+        assert.equal(report.flights[0].melody, true);
+        const peaks = peaksOf(chart);
+        const half = Math.floor(peaks.length / 2);
+        const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+        assert.ok(validateChart(chart, { toleranceS: DIFFICULTY_PROFILES[5].toleranceS }).ok);
+        return mean(peaks.slice(peaks.length - half)) - mean(peaks.slice(0, half));
+    };
+    const up = trend(withMelody(55, 75));
+    const down = trend(withMelody(75, 55));
+    assert.ok(up > 30, `con la melodía subiendo, las cimas de la segunda mitad suben ${up.toFixed(0)}`);
+    assert.ok(down < -10, `con la melodía bajando, bajan ${down.toFixed(0)}`);
+    const again = buildChart(withMelody(55, 75), { seed: 5, difficulty: 5 }).chart;
+    assert.equal(JSON.stringify(again), JSON.stringify(buildChart(withMelody(55, 75), { seed: 5, difficulty: 5 }).chart), 'determinista');
 });
 
 test('charter del vuelo: el túnel usa la velocidad más lenta del tramo (la de menos margen de error)', () => {
@@ -259,6 +335,6 @@ test('charter del vuelo: el túnel usa la velocidad más lenta del tramo (la de 
     let min = Infinity;
     for (let t = fly.t0; t <= fly.t1; t += 0.05) min = Math.min(min, speed.speedAt(t));
     const portal = chart.events.find((e) => e.type === 'mode' && e.mode === 'fly');
-    assert.equal(portal.margin, flightMargin(DIFFICULTY_PROFILES[5].toleranceS, min));
+    assert.equal(portal.margin, flightMargin(DIFFICULTY_PROFILES[5].toleranceS, min, DIFFICULTY_PROFILES[5].fly.comfortPx));
     assert.ok(validatePlayability([], speed, { toleranceS: 0.04, course: createFlightCourse(chart.events), holds: toSimHolds(chart.events), modes: toSimModes(chart.events) }).ok);
 });

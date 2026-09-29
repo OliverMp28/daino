@@ -26,7 +26,7 @@
 import { OBSTACLE_KIND } from '../config.js';
 import { createFlightCourse } from '../systems/flightCourse.js';
 import { actionLeadS } from '../systems/physics.js';
-import { simulateRun, timingMarginsS, toSimHolds, toSimModes, toSimObstacles } from '../systems/playability.js';
+import { simulateRun, timingMarginsS, toSimHolds, toSimModes, toSimObstacles, toSimTriggers } from '../systems/playability.js';
 import { speedProfileOf } from '../systems/speedProfile.js';
 
 /**
@@ -64,9 +64,98 @@ export function hazardOf(p) {
  */
 export function kindHazard(kind, t, speedAt, sigma = REFERENCE_PLAYER.sigmaS) {
     const def = OBSTACLE_KIND[kind];
-    if (def === undefined) return 0;
+    if (def === undefined || def.trigger !== undefined) return 0;
     const m = timingMarginsS(kind, speedAt(t + actionLeadS(def)));
     return hazardOf(missChance(m.early, m.late, sigma));
+}
+
+/**
+ * Vecinas más lejos que esto (entre cruces) no cambian el margen de una acción: un
+ * salto dura 0.72 s en el aire (0.86 tras un anillo) y un agachado se suelta ~0.3 s
+ * tras el cruce.
+ */
+export const CONTEXT_S = 0.95;
+
+/**
+ * Márgenes de error de una acción EN SU SITIO del chart (Ola 6c): con sus vecinas
+ * jugadas en su instante, cuánto se puede adelantar y retrasar su pulsación. Una
+ * hilera de acento seguida de un agachado a 0.4 s deja menos margen tarde que la
+ * hilera sola (el Dino aterriza más tarde); medido en Sugar Red (Difícil): el
+ * 24 % de las partidas del jugador de referencia moría en una sola de esas
+ * parejas, que el margen aislado daba por holgada.
+ *
+ * Se simula solo la ventana de ±`CONTEXT_S` con la física real (bisección de ~19 ms,
+ * por debajo de lo que distingue el jugador de referencia) y se recuerda por la forma
+ * de la ventana (kinds, distancias y velocidad), así que un riff que se repite se mide
+ * una vez. Medido en los 8 oficiales × 5 dificultades: 0.2-1.2 s por chart.
+ *
+ * @param {{ obstacles: Array<{ t: number, kind: string, def: object, cross: number }>, triggers?: Array<object>,
+ *           speed: import('../systems/speedProfile.js').SpeedProfile, modes?: Array<{ t: number, mode: string }> }} p
+ * @returns {(index: number, kind?: string) => { early: number, late: number }}
+ *          Márgenes de la acción `index` con su kind o con `kind` en su lugar.
+ */
+export function createContextMargins({ obstacles, triggers = [], speed, modes = [] }) {
+    const cache = new Map();
+    return (index, kind = obstacles[index].kind) => {
+        const base = obstacles[index];
+        const def = OBSTACLE_KIND[kind];
+        const target = { t: base.t, kind, def, cross: base.t + actionLeadS(def) };
+        const v = speed.speedAt(target.cross);
+        const isolated = timingMarginsS(kind, v);
+        let a = index;
+        while (a > 0 && target.cross - obstacles[a - 1].cross <= CONTEXT_S) a--;
+        let b = index;
+        while (b + 1 < obstacles.length && obstacles[b + 1].cross - target.cross <= CONTEXT_S) b++;
+        // En antigravedad la ventana empieza con el Dino en el suelo: un cristal del suelo.
+        while (a > 0 && obstacles[a].def.mode === 'flip' && obstacles[a].def.surface === 'ceiling') a--;
+        if (a === index && b === index) return isolated;
+
+        const local = obstacles.slice(a, b + 1).map((o, j) => (j === index - a ? target : o));
+        const at = index - a;
+        const near = triggers.filter((tr) => tr.cross >= local[0].cross - CONTEXT_S && tr.cross <= local[local.length - 1].cross + CONTEXT_S);
+        const key = local.map((o) => `${o.kind}@${Math.round((o.cross - target.cross) * 1000)}`).join('|')
+            + `#${at}#${Math.round(v / 5)}#${near.map((tr) => Math.round((tr.cross - target.cross) * 1000)).join(',')}#${modeKey(modes, local)}`;
+        const cached = cache.get(key);
+        if (cached !== undefined) return cached;
+
+        const survives = (offset) => simulateRun(local, speed, { modes, triggers: near, pressOffset: (j) => (j === at ? offset : 0) }).ok;
+        let out;
+        if (!survives(0)) {
+            out = { early: 0, late: 0 };
+        } else {
+            const side = (sign, max) => {
+                const cap = Math.min(max, CONTEXT_MAX_MARGIN_S);
+                if (survives(sign * cap)) return cap;
+                let lo = 0;
+                let hi = cap;
+                for (let k = 0; k < 4; k++) {
+                    const mid = (lo + hi) / 2;
+                    if (survives(sign * mid)) lo = mid;
+                    else hi = mid;
+                }
+                return lo;
+            };
+            out = { early: side(-1, isolated.early), late: side(1, isolated.late) };
+        }
+        cache.set(key, out);
+        return out;
+    };
+}
+
+/** Más margen que esto ya no cambia la exigencia de nadie (2σ de un jugador muy impreciso). */
+const CONTEXT_MAX_MARGIN_S = 0.3;
+
+/** Modo al empezar la ventana y portales dentro de ella: la misma forma en otro modo es otra ventana. */
+function modeKey(modes, local) {
+    const from = local[0].t - CONTEXT_S;
+    const to = local[local.length - 1].cross + CONTEXT_S;
+    let mode = 'run';
+    const inside = [];
+    for (const m of modes) {
+        if (m.t <= from) mode = m.mode;
+        else if (m.t <= to) inside.push(`${m.mode}@${Math.round((m.t - local[0].t) * 1000)}`);
+    }
+    return `${mode}${inside.join(',')}`;
 }
 
 /**
@@ -87,8 +176,11 @@ function upperTail(z) {
  * se calibran las dificultades y la regresión de los playtests; cuesta ~25 ms por
  * partida de 3 min, así que es para herramientas y tests, no para el charter.
  *
- * Sin `flight`, las notas del vuelo no cuentan: ahí quien juega corrige mirando
- * el túnel, y un error a ciegas que se acumula de nota en nota no lo representa.
+ * El vuelo cuenta (Ola 6c): sus notas se vuelan corrigiendo mirando el túnel
+ * (virtualPlayer.FLIGHT_PLAYER), con el mismo error en cada pulsación y en cada
+ * soltar. Hasta la 6b no contaba: el jugador virtual volaba a ciegas y el error
+ * que se acumulaba de nota en nota no representaba a nadie. `flight: false` lo
+ * deja fuera (para comparar con medidas anteriores).
  *
  * @param {{ events: Array<object>, world: { speedPxS: number, speedChanges?: object[] } }} chart
  * @param {{ sigmaS?: number, runs?: number, seed?: number, flight?: boolean }} [opts]
@@ -97,10 +189,11 @@ function upperTail(z) {
 export function referencePassRate(chart, opts = {}) {
     const sigma = opts.sigmaS ?? REFERENCE_PLAYER.sigmaS;
     const runs = opts.runs ?? 100;
-    const flight = opts.flight ?? false;
+    const flight = opts.flight ?? true;
     const obstacles = toSimObstacles(chart.events);
     const speed = speedProfileOf(chart);
     const modes = toSimModes(chart.events);
+    const triggers = toSimTriggers(chart.events);
     const holds = flight ? toSimHolds(chart.events) : [];
     const course = flight ? createFlightCourse(chart.events) : null;
     const presses = obstacles.length + 2 * holds.length;
@@ -116,6 +209,7 @@ export function referencePassRate(chart, opts = {}) {
             modes,
             holds,
             course: course === null || course.empty ? null : course,
+            triggers,
         });
         if (result.ok) passed++;
         else deaths.push(result.atSongTime);

@@ -237,6 +237,7 @@ class TonalSection:
     melody: bool = True
     gain: float = 1.0
     melody_grid: float = 0.5         # 0.25 = semicorcheas: notas fuera de la rejilla del charles
+    melody_base: int = 72            # octava de la melodía (MIDI de su Do): el registro de la sección
 
 
 @dataclass
@@ -248,6 +249,7 @@ class TonalTruth:
     section_bounds: np.ndarray                  # inicio de cada sección y el final
     section_keys: list[str]
     melody_onsets: np.ndarray
+    melody_notes: list[tuple[float, float, int]]    # (inicio, fin, MIDI) de cada nota de la melodía
     drum_onsets: np.ndarray
     duration: float
     bpm: float
@@ -270,6 +272,7 @@ def tonal_song(sections: list[TonalSection], bpm: float = 110.0, key: str | None
     buf = np.zeros(int(duration * SR), dtype=np.float32)
 
     beats, downbeats, chords, melody, drums, bounds = [], [], [], [], [], []
+    notes: list[tuple[float, float, int]] = []
     t = intro_silence
     for sec in sections:
         bounds.append(t)
@@ -304,9 +307,10 @@ def tonal_song(sections: list[TonalSection], bpm: float = 110.0, key: str | None
                         on_chord = rng.random() < 0.7 or pos == 0
                         pcl = int(rng.choice(chord_tones)) if on_chord else (tonic + int(rng.choice(scale))) % 12
                         at = start + pos * period
-                        _place(buf, _note(hz(72 + pcl, tuning_cents), step * period * 0.95, rolloff=0.45, decay=3.0),
+                        _place(buf, _note(hz(sec.melody_base + pcl, tuning_cents), step * period * 0.95, rolloff=0.45, decay=3.0),
                                at, 0.2 * sec.gain)
                         melody.append(at)
+                        notes.append((at, at + step * period * 0.95, sec.melody_base + pcl))
                         pos += step
             for b in range(sec.beats_per_chord):
                 bt = start + b * period
@@ -330,6 +334,6 @@ def tonal_song(sections: list[TonalSection], bpm: float = 110.0, key: str | None
     truth = TonalTruth(
         beats=np.array(beats), downbeats=np.array(downbeats), chords=chords,
         key=key or sections[0].key, section_bounds=np.array(bounds), section_keys=[s.key for s in sections],
-        melody_onsets=np.array(melody), drum_onsets=np.unique(np.round(drums, 6)), duration=duration, bpm=bpm,
+        melody_onsets=np.array(melody), melody_notes=notes, drum_onsets=np.unique(np.round(drums, 6)), duration=duration, bpm=bpm,
     )
     return buf.astype(np.float32), truth

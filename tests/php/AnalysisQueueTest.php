@@ -480,6 +480,9 @@ function analysisV2Harmony(): array
         'harmonicRhythm'  => 1.0,
         'modulations'     => [['t' => 40.0, 'key' => 'C minor', 'semitones' => 3]],
     ];
+    // Analizador 3: altura de la melodía por fotograma (0 = sin melodía).
+    $frames = (int) ceil($a['durationSec'] / 0.09288);
+    $a['melody'] = ['hopSec' => 0.09288, 'pitch' => array_map(static fn (int $i) => $i % 5 === 0 ? 0.0 : 60.0 + ($i % 12) / 2, range(0, $frames - 1)), 'voicedRatio' => 0.8];
     return $a;
 }
 
@@ -487,6 +490,7 @@ test('ChartValidator conserva la armonía, la percusividad y las bandas del anal
     $input = analysisV2Harmony();
     $decoded = json_decode(ChartValidator::validateAnalysis($input), true);
     assertSame($input['tonal'], $decoded['tonal']);
+    assertSame($input['melody'], $decoded['melody'], 'la melodía del analizador 3 llega entera');
     assertSame($input['onsetPercussive'], $decoded['onsetPercussive']);
     assertSame($input['energy']['bands'], $decoded['energy']['bands']);
     assertSame($input['energy']['bandLevelDb'], $decoded['energy']['bandLevelDb']);
@@ -495,7 +499,7 @@ test('ChartValidator conserva la armonía, la percusividad y las bandas del anal
     assertSame(3, $decoded['tonal']['modulations'][0]['semitones'], 'los semitonos siguen siendo enteros');
 
     $old = json_decode(ChartValidator::validateAnalysis(analysisV2()), true);
-    assertTrue(!isset($old['tonal']) && !isset($old['onsetPercussive']) && !isset($old['energy']['bands']),
+    assertTrue(!isset($old['tonal']) && !isset($old['onsetPercussive']) && !isset($old['energy']['bands']) && !isset($old['melody']),
         'un análisis del analizador 1 sigue valiendo, sin inventarse campos');
 });
 
@@ -519,6 +523,10 @@ test('ChartValidator rechaza armonía, percusividad o bandas incoherentes', func
         'semitonos fuera'          => static function (array $a) { $a['tonal']['modulations'][0]['semitones'] = 9; return $a; },
         'semitonos no enteros'     => static function (array $a) { $a['tonal']['modulations'][0]['semitones'] = 2.5; return $a; },
         'modulación tras el final' => static function (array $a) { $a['tonal']['modulations'][0]['t'] = 999.0; return $a; },
+        'melodía fuera de rango'   => static function (array $a) { $a['melody']['pitch'][1] = 140.0; return $a; },
+        'melodía demasiado grave'  => static function (array $a) { $a['melody']['pitch'][1] = 12.0; return $a; },
+        'melodía más larga'        => static function (array $a) { $a['melody']['pitch'] = array_fill(0, 900, 60.0); return $a; },
+        'melodía sin fotograma'    => static function (array $a) { unset($a['melody']['hopSec']); return $a; },
     ];
     foreach ($cases as $label => $mutate) {
         assertThrows(ValidationException::class, fn () => ChartValidator::validateAnalysis($mutate(analysisV2Harmony())), function ($e) use ($label): void {

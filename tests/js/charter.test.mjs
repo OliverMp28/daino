@@ -212,7 +212,7 @@ test('drops y lifts: momentos en el primer tiempo; antes del drop, el último be
     assert.equal(drops.length, 1, 'un drop: el clímax tras el puente');
     assert.equal(lifts.length, 2, 'dos lifts: la entrada de cada estribillo');
     const choruses = analysis.sections.filter((s) => s.role === 'chorus').map((s) => s.startSec);
-    for (const e of fx) {
+    for (const e of [...drops, ...lifts]) {
         assert.ok(choruses.some((c) => Math.abs(c - e.t) < 0.002), `el momento de ${e.t} cae en el primer tiempo de un estribillo`);
     }
     const period = 60 / 104;

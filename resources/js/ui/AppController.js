@@ -32,10 +32,7 @@
 
 import { readSeedFromUrl } from '../game/levels/Seed.js';
 import { createLevelLoader, LevelLoadError, LOAD_STAGE } from '../game/levels/levelLoader.js';
-import { analyzeAudio } from '../game/levels/analyze.js';
 import { createWorkerAnalyzer, spawnAnalysisWorker } from '../game/levels/analysisClient.js';
-import { buildChart } from '../game/levels/charter.js';
-import { chartStats, difficultyFromStats } from '../game/levels/chartStats.js';
 import { GameSession } from '../game/GameSession.js';
 import { getAudioEngine } from '../game/audio/sharedEngine.js';
 import { ANALYSIS_SAMPLE_RATE } from '../game/audio/AudioEngine.js';
@@ -113,7 +110,7 @@ let playRequestSeq = 0;
  */
 const localAnalyzer = createWorkerAnalyzer({
     spawn: typeof Worker === 'function' ? spawnAnalysisWorker : null,
-    analyzeInline: (audioBuffer, opts) => analyzeAudio(audioBuffer, opts),
+    analyzeInline: async (audioBuffer, opts) => (await import('../game/levels/analyze.js')).analyzeAudio(audioBuffer, opts),
 });
 
 /**
@@ -137,7 +134,9 @@ export function start(cfg) {
             ? (bytes) => new OfflineAudioContext(2, 1, ANALYSIS_SAMPLE_RATE).decodeAudioData(bytes)
             : undefined,
         analyze: (audioBuffer, opts) => localAnalyzer.analyze(audioBuffer, opts),
-        buildChart,
+        // El charter solo hace falta con una canción local (los niveles del
+        // catálogo traen su chart hecho): se carga cuando toca, no en el arranque.
+        buildChart: async (analysis, opts) => (await import('../game/levels/charter.js')).buildChart(analysis, opts),
         hash: sha256Hex,
     });
 
@@ -419,6 +418,12 @@ function startAttempt() {
  *
  * @returns {Promise<{ id: number, level: object, created: boolean } | null>}
  */
+/** Dificultad medida de un chart sin dificultad declarada (charts anteriores a la Ola 5). */
+async function measuredDifficulty(chart) {
+    const { chartStats, difficultyFromStats } = await import('../game/levels/chartStats.js');
+    return difficultyFromStats(chartStats(chart));
+}
+
 async function persistLocalLevel(loaded) {
     if (getUser() === null) return null;
     try {
@@ -428,7 +433,7 @@ async function persistLocalLevel(loaded) {
                 audio_sha256: loaded.sha256,
                 // Ola 5: la dificultad con la que el charter generó el nivel;
                 // medida del chart solo para charts sin ella (anteriores).
-                difficulty: loaded.chart.difficulty?.level ?? difficultyFromStats(chartStats(loaded.chart)),
+                difficulty: loaded.chart.difficulty?.level ?? await measuredDifficulty(loaded.chart),
                 generator_seed: String(loaded.chart.seed),
                 chart: loaded.chart,
                 analysis: loaded.analysis ?? undefined,

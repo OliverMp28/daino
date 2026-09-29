@@ -10,6 +10,9 @@ Analizador 2 (sin cambiar el formato: solo añade campos): `onsetPercussive`,
 bloque `tonal` (afinación, tonalidad, acordes, modulaciones). Todo lo que ya
 existía sale idéntico, así que ningún chart cambia al reanalizar.
 
+Analizador 3 (Ola 6c, tampoco cambia el formato): el bloque `melody`, la altura de
+la melodía por fotograma del CQT (melody.py). Lo anterior sale idéntico.
+
 Determinista: mismo audio ⇒ mismo JSON (KMeans con semilla fija, inferencia en
 CPU). Los números se redondean a la precisión que importa (1 ms en tiempos) para
 que el JSON sea estable y compacto.
@@ -24,6 +27,7 @@ import numpy as np
 from daino_analyzer import ANALYSIS_FORMAT_VERSION, ANALYZER_NAME, ANALYZER_VERSION
 from daino_analyzer import beats as beats_mod
 from daino_analyzer import energy as energy_mod
+from daino_analyzer import melody as melody_mod
 from daino_analyzer import onsets as onsets_mod
 from daino_analyzer import sections as sections_mod
 from daino_analyzer import spectral
@@ -58,7 +62,11 @@ def analyze(audio: DecodedAudio, progress: Progress | None = None) -> dict:
     secs = sections_mod.analyze(spec, beat, onset_list, en, duration)
 
     report("tonal", 0.88)
-    ton = tonal_mod.analyze(spec, beat, [(s.start, s.end) for s in secs], duration)
+    cq = tonal_mod.constant_q(spec.y)
+    ton = tonal_mod.analyze(spec, beat, [(s.start, s.end) for s in secs], duration, cq=cq)
+
+    report("melody", 0.94)
+    mel = melody_mod.analyze(cq, ton.tuning_cents, duration)
 
     report("features", 0.97)
     audible_min = max(duration * (1.0 - en.silence_ratio), 1e-6) / 60.0
@@ -99,6 +107,12 @@ def analyze(audio: DecodedAudio, progress: Progress | None = None) -> dict:
             "chordConfidence": r3(ton.chord_confidence),
             "harmonicRhythm": r3(ton.harmonic_rhythm),
             "modulations": [{"t": r3(m.t), "key": m.key.label, "semitones": m.semitones} for m in ton.modulations],
+        },
+        # Analizador 3: altura de la melodía por fotograma (MIDI con un decimal, 0 = sin melodía).
+        "melody": {
+            "hopSec": round(mel.hop_sec, 5),
+            "pitch": [round(float(p), 1) for p in mel.pitch],
+            "voicedRatio": r3(mel.voiced_ratio),
         },
         "features": {
             "tempoStability": r3(beat.tempo_stability),

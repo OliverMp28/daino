@@ -114,6 +114,28 @@ test('ChartValidator acepta el formato 4 (Ola 6b) con vuelo y notas mantenidas, 
     }
 });
 
+test('ChartValidator acepta el formato 5 (Ola 6c) con anillos de salto y efectos nuevos', function (): void {
+    $s = sha('a');
+    $raw = chartV2For($s);
+    $raw['formatVersion'] = 5;
+    $raw['events'][] = ['t' => 50.0, 'type' => 'obstacle', 'kind' => 'CACTUS_SMALL'];
+    $raw['events'][] = ['t' => 50.3, 'type' => 'obstacle', 'kind' => 'CACTUS_SMALL'];
+    $raw['events'][] = ['t' => 50.3, 'type' => 'obstacle', 'kind' => 'RING_JUMP'];
+    $raw['events'][] = ['t' => 52.0, 'type' => 'fx', 'fx' => 'build', 'until' => 54.0];
+    $raw['events'][] = ['t' => 55.0, 'type' => 'fx', 'fx' => 'key', 'semitones' => 2];
+    $decoded = json_decode(ChartValidator::validateChart($raw, $s)['json'], true);
+
+    assertSame(5, $decoded['formatVersion']);
+    $tail = array_slice($decoded['events'], -5);
+    assertSame(['t' => 50.3, 'type' => 'obstacle', 'kind' => 'RING_JUMP'], $tail[2], 'el aro llega como un obstáculo más');
+    assertSame(['t' => 52.0, 'type' => 'fx', 'fx' => 'build', 'until' => 54.0], $tail[3]);
+    assertSame(['t' => 55.0, 'type' => 'fx', 'fx' => 'key', 'semitones' => 2], $tail[4]);
+
+    $future = $raw;
+    $future['formatVersion'] = 6;
+    assertThrows(ValidationException::class, fn () => ChartValidator::validateChart($future, $s));
+});
+
 test('ChartValidator rechaza campos de formato 2 mal formados', function (): void {
     $s = sha('a');
     $mutations = [

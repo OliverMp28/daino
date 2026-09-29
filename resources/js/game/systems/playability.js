@@ -30,12 +30,14 @@
 import { OBSTACLE_KIND, PHYSICS_STEP_S } from '../config.js';
 import {
     applyInput,
+    applyTrigger,
     bodyHitbox,
     bodyState,
     enterMode,
     integrateBody,
     obstacleHitbox,
     obstacleTopY,
+    triggerZone,
     actionLeadS,
     aabbHit,
     DINO_CENTER_X,
@@ -82,17 +84,34 @@ export const READER_ADAPT_S = 0.3;
 
 /**
  * Prepara los obstáculos de un chart para simular: orden por acción y cruce
- * precalculado.
+ * precalculado. Solo los que se chocan: los activadores (anillos, Ola 6c) van
+ * aparte (`toSimTriggers`), así el índice de un obstáculo sigue siendo el de su
+ * pulsación.
  *
  * @param {Array<{ t: number, type: string, kind?: string }>} events
  * @returns {SimObstacle[]}
  */
 export function toSimObstacles(events) {
+    return simEvents(events, (def) => def.trigger === undefined);
+}
+
+/**
+ * Activadores de un chart (anillos de salto, Ola 6c), en el mismo formato que los
+ * obstáculos: no se chocan ni piden pulsación propia.
+ *
+ * @param {Array<{ t: number, type: string, kind?: string }>} events
+ * @returns {SimObstacle[]}
+ */
+export function toSimTriggers(events) {
+    return simEvents(events, (def) => def.trigger !== undefined);
+}
+
+function simEvents(events, keep) {
     const out = [];
     for (const e of events) {
         if (e.type !== 'obstacle') continue;
         const def = OBSTACLE_KIND[e.kind];
-        if (def === undefined) continue;
+        if (def === undefined || !keep(def)) continue;
         out.push({ t: e.t, kind: e.kind, def, cross: e.t + actionLeadS(def) });
     }
     out.sort((a, b) => a.t - b.t);
@@ -127,17 +146,22 @@ export function toSimModes(events) {
  * @param {number | import('./speedProfile.js').SpeedProfile} speed
  *        Velocidad constante o perfil de velocidad del nivel (Ola 5).
  * @param {{ dt?: number, pressOffset?: (index: number) => number, modes?: Array<{ t: number, mode: string }>,
- *           holds?: Array<{ t: number, until: number }>, course?: ReturnType<typeof createFlightCourse> | null }} [opts]
+ *           holds?: Array<{ t: number, until: number }>, course?: ReturnType<typeof createFlightCourse> | null,
+ *           triggers?: SimObstacle[], flightPlayer?: object | null }} [opts]
  *        `pressOffset(i)` desplaza la pulsación del obstáculo i (segundos;
  *        negativo = se adelanta). Por defecto 0: jugador perfecto.
  *        `modes`: cambios de modo del nivel en orden (toSimModes). Sin ellos, se corre.
  *        `holds` y `course` (Ola 6b): notas mantenidas del vuelo y su túnel. Un
  *        choque con el túnel se atribuye a la nota más reciente (índice `n + 2k`).
+ *        `triggers` (Ola 6c): activadores del nivel (toSimTriggers).
+ *        `flightPlayer`: cómo vuela el jugador virtual (virtualPlayer.FLIGHT_PLAYER por
+ *        defecto: corrige mirando el túnel; null: a ciegas).
  * @returns {{ ok: true } | { ok: false, index: number, t: number, atSongTime: number }}
  */
 export function simulateRun(obstacles, speed, opts = {}) {
     const holds = opts.holds ?? [];
     const course = opts.course ?? null;
+    const triggers = opts.triggers ?? [];
     // Sin nada que jugar no hay choque posible; con un túnel sí (no pulsar es chocar).
     if (obstacles.length === 0 && holds.length === 0 && (course === null || course.empty)) return { ok: true };
 
@@ -148,11 +172,16 @@ export function simulateRun(obstacles, speed, opts = {}) {
     // Distancia del mundo en el cruce de cada obstáculo: la x de cada paso es
     // DINO + (crossD − D(ahora)) − w/2, con D(ahora) calculada una vez por paso.
     const crossD = new Float64Array(obstacles.length);
+    const triggerD = new Float64Array(triggers.length);
     if (!profile.constant) {
         for (let i = 0; i < obstacles.length; i++) crossD[i] = profile.distanceAt(obstacles[i].cross);
+        for (let i = 0; i < triggers.length; i++) triggerD[i] = profile.distanceAt(triggers[i].cross);
     }
 
-    const script = virtualPlayerScript(obstacles, profile, opts.pressOffset, holds);
+    const script = virtualPlayerScript(obstacles, profile, opts.pressOffset, holds, {
+        course,
+        player: opts.flightPlayer,
+    });
     const body = bodyState(SIM_GROUND_Y);
 
     // Ventana de obstáculos que pueden tocar al Dino en este instante: los que
@@ -166,6 +195,11 @@ export function simulateRun(obstacles, speed, opts = {}) {
     // Hitboxes reutilizadas: cero asignaciones dentro del bucle.
     const dh = { x: 0, y: 0, w: 0, h: 0 };
     const oh = { x: 0, y: 0, w: 0, h: 0 };
+
+    // Activadores: cada uno se usa una vez; ventana por el mismo par de punteros.
+    const used = new Uint8Array(triggers.length);
+    let tlo = 0;
+    let thi = 0;
 
     let inputIdx = 0;
     let modeIdx = 0;
@@ -192,6 +226,22 @@ export function simulateRun(obstacles, speed, opts = {}) {
 
         integrateBody(body, dt, SIM_GROUND_Y);
         bodyHitbox(body, dh);
+
+        if (triggers.length > 0) {
+            while (thi < triggers.length && triggers[thi].cross <= tau + reachS) thi++;
+            while (tlo < thi && triggers[tlo].cross < tau - reachS) tlo++;
+            const nowD = profile.constant ? 0 : profile.distanceAt(tau);
+            for (let i = tlo; i < thi; i++) {
+                if (used[i] === 1) continue;
+                const o = triggers[i];
+                const ahead = profile.constant ? (o.cross - tau) * profile.base : triggerD[i] - nowD;
+                triggerZone(o.def, DINO_CENTER_X + ahead - o.def.w / 2, obstacleTopY(o.def, SIM_GROUND_Y), oh);
+                if (aabbHit(dh, oh) && applyTrigger(body, o.def) !== null) {
+                    used[i] = 1;
+                    bodyHitbox(body, dh);
+                }
+            }
+        }
 
         if (flying) {
             while (holdIdx + 1 < holds.length && holds[holdIdx + 1].t <= tau) holdIdx++;
@@ -283,7 +333,8 @@ const READER_SEARCH_S = 1;
  *
  * @param {SimObstacle[]} obstacles
  * @param {number | import('./speedProfile.js').SpeedProfile} speed
- * @param {{ toleranceS?: number, dt?: number, adaptS?: number, modes?: Array<{ t: number, mode: string }> }} [opts]
+ * @param {{ toleranceS?: number, dt?: number, adaptS?: number, modes?: Array<{ t: number, mode: string }>,
+ *           holds?: Array<{ t: number, until: number }>, course?: object | null, triggers?: SimObstacle[], flightPlayer?: object | null }} [opts]
  * @returns {{ ok: true } | { ok: false, index: number, t: number, pattern: string }}
  */
 export function validatePlayability(obstacles, speed, opts = {}) {
@@ -304,7 +355,9 @@ export function validatePlayability(obstacles, speed, opts = {}) {
         }
     }
     for (const [name, pressOffset] of runs) {
-        const r = simulateRun(obstacles, profile, { dt: opts.dt, pressOffset, modes: opts.modes, holds: opts.holds, course: opts.course });
+        const r = simulateRun(obstacles, profile, {
+            dt: opts.dt, pressOffset, modes: opts.modes, holds: opts.holds, course: opts.course, triggers: opts.triggers, flightPlayer: opts.flightPlayer,
+        });
         if (!r.ok) return { ok: false, index: r.index, t: r.t, pattern: name };
     }
     return { ok: true };
@@ -325,6 +378,7 @@ export function validateChart(chart, opts = {}) {
         modes: toSimModes(chart.events),
         holds: toSimHolds(chart.events),
         course: course.empty ? null : course,
+        triggers: toSimTriggers(chart.events),
     });
 }
 
@@ -332,6 +386,7 @@ export function validateChart(chart, opts = {}) {
 const WINDOW_SCAN_STEP_S = 0.005;
 const WINDOW_SCAN_MAX_S = 0.5;
 const marginCache = new Map();
+const NO_MARGIN = Object.freeze({ early: 0, late: 0 });
 
 /**
  * Anchura, en segundos, del margen de error de UNA acción aislada: el intervalo
@@ -372,6 +427,8 @@ export function timingWindowS(kind, speedPxS) {
  * @returns {{ early: number, late: number }}  0 y 0 si ni la pulsación exacta sobrevive.
  */
 export function timingMarginsS(kind, speedPxS) {
+    // Un activador no se supera ni se falla por sí solo: lo mide el obstáculo que lo acompaña.
+    if (OBSTACLE_KIND[kind]?.trigger !== undefined) return NO_MARGIN;
     const key = `${kind}@${Math.round(speedPxS)}`;
     const cached = marginCache.get(key);
     if (cached !== undefined) return cached;

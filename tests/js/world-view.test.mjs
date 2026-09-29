@@ -118,3 +118,27 @@ test('sameView: un resize que no cambia la escala ni la pantalla no toca la esce
     assert.ok(!sameView(a, computeWorldView({ width: 1920, height: 1000, dpr: 1 })));
     assert.ok(!sameView(null, a));
 });
+
+test('el Dino tras un anillo de salto (Ola 6c) cabe siempre bajo el HUD', async () => {
+    const { applyInput, applyTrigger, bodyState, integrateBody } = await import('../../resources/js/game/systems/physics.js');
+    const { OBSTACLE_KIND, PHYSICS_STEP_S } = await import('../../resources/js/game/config.js');
+    const ring = Object.values(OBSTACLE_KIND).find((d) => d.trigger === 'jump');
+    // Lo más alto posible: salto completo y anillo en el ápice.
+    let highest = 0;
+    for (const delay of [0.2, 0.3, 0.36, 0.45]) {
+        const body = bodyState(1000);
+        applyInput(body, 'jump');
+        for (let t = 0; t < delay; t += PHYSICS_STEP_S) integrateBody(body, PHYSICS_STEP_S, 1000);
+        applyInput(body, 'jump');
+        assert.equal(applyTrigger(body, ring), 'ring');
+        for (let i = 0; i < 200 && !body.grounded; i++) {
+            integrateBody(body, PHYSICS_STEP_S, 1000);
+            highest = Math.max(highest, 1000 - body.y);
+        }
+    }
+    const HUD_CSS_PX = 84;
+    for (const [name, width, height, dpr] of LANDSCAPE) {
+        const v = computeWorldView({ width, height, dpr });
+        assert.ok(v.groundY - highest > HUD_CSS_PX / v.scale, `${name}: la cabeza del Dino (${(v.groundY - highest).toFixed(0)}) queda bajo el HUD (${(HUD_CSS_PX / v.scale).toFixed(0)})`);
+    }
+});

@@ -25,6 +25,10 @@
 //                frases (un riff que vuelve es un patrón que vuelve)
 //   accents      qué golpes fuertes llevan una variante que exige precisión y
 //                cuánto, hasta la exigencia de la dificultad (challenge.js)
+//   rings        con qué obstáculo se juega cada anillo de salto, para que
+//                pulsar en el aro sea necesario (Ola 6c)
+//   fxPlan       los momentos que el runtime subraya: drops, subidas, breaks y
+//                cambios de tonalidad (Ola 6c)
 //   aquí         silencios demasiado largos, tipo de obstáculo, validación
 //                jugando y eventos para el runtime
 //
@@ -38,13 +42,16 @@
 
 import { OBSTACLE_KIND, speedFromBpm } from '../config.js';
 import { actionLeadS } from '../systems/physics.js';
-import { toSimHolds, toSimModes, toSimObstacles, validatePlayability, readerOffsetS } from '../systems/playability.js';
+import { toSimHolds, toSimModes, toSimObstacles, toSimTriggers, validatePlayability, readerOffsetS } from '../systems/playability.js';
 import { createFlightCourse, flightMargin } from '../systems/flightCourse.js';
 import { createSpeedProfile } from '../systems/speedProfile.js';
 import { SPEED_RULES, planSpeed } from './speedPlan.js';
 import { accentVariant, assignAccents } from './accents.js';
+import { referencePassRate } from './challenge.js';
 import { MODE_RULES, createModeGuide, modeEvents, planModes } from './modePlan.js';
 import { chartHolds } from './flightCharter.js';
+import { assignRingKinds } from './rings.js';
+import { planFx } from './fxPlan.js';
 import { Seeded } from './Seed.js';
 import {
     CHART_FORMAT_VERSION,
@@ -62,7 +69,7 @@ import {
     normalizeRequestedDifficulty,
     resolveDifficulty,
 } from './difficulty.js';
-import { chooseBarActions, createPhraseMemory, duckThreshold, pairGap, segmentGrooves } from './patterns.js';
+import { chooseBarActions, createPhraseMemory, dropOrphanRings, duckThreshold, pairGap, segmentGrooves } from './patterns.js';
 
 /**
  * Reglas del charter. Cambiar cualquiera altera los charts generados: sube
@@ -91,6 +98,15 @@ export const CHARTER_RULES = Object.freeze({
     restLevelFactor: 1.6,
     /** Techo de reparaciones del validador (defensa ante bucles). */
     maxRepairs: 400,
+    /**
+     * Partidas del jugador de referencia con las que se mide lo que ya exige el
+     * nivel SIN acentos (combinaciones, anillos, vuelo), para que los acentos pongan
+     * solo lo que falta hasta la exigencia de la dificultad (Ola 6c). Medido: con
+     * los acentos a su presupuesto sin descontar esto, Running With the Wolves en
+     * Normal (combinaciones rápidas a 82 BPM) quedaba en 0.31 para el jugador de
+     * referencia y What's Up Danger en 0.58. ~15 ms por partida de 3 min.
+     */
+    restRuns: 32,
 });
 
 /**
@@ -123,6 +139,10 @@ export function gameplayTempo(bpm) {
  * @property {number} topSpeedPxS     Velocidad máxima del nivel.
  * @property {Array<{ mode: string, t0: number, t1: number, score: number }>} modes  Momentos con otro modo de movimiento.
  * @property {number} holds           Notas mantenidas (vuelo).
+ * @property {Array<{ t0: number, notes: number, chained: number, melody: boolean }>} flights
+ *           Cada tramo de vuelo: sus notas, cuántas se encadenan por el aire y si
+ *           sus alturas siguieron a la melodía (antes de reparar).
+ * @property {number} rings           Anillos de salto.
  * @property {import('./accents.js').AccentSummary} accents  Saltos con acento y su exigencia (antes de reparar).
  */
 
@@ -163,10 +183,10 @@ export function buildChart(analysis, opts = {}) {
     const plan = tMax > tMin ? planModes({ arc, model, profile, tMax }) : [];
     // El túnel del vuelo tiene la holgura de la dificultad a la velocidad más lenta del tramo.
     for (const span of plan) {
-        if (span.mode === 'fly') span.margin = flightMargin(profile.toleranceS, minSpeedIn(speed, span.tIn, span.tOut));
+        if (span.mode === 'fly') span.margin = flightMargin(profile.toleranceS, minSpeedIn(speed, span.tIn, span.tOut), profile.fly?.comfortPx ?? 0);
     }
     const modes = createModeGuide(plan, model.beatPeriodS);
-    const structure = [...structureEvents(arc), ...modeEvents(plan)];
+    const structure = [...structureEvents(model, arc), ...modeEvents(plan)];
     const simModes = toSimModes(structure);
 
     const ctx = {
@@ -178,16 +198,25 @@ export function buildChart(analysis, opts = {}) {
     let holds = [];
     let fillers = 0;
     let repaired = 0;
-    let accents = { accents: 0, hazard: 0, budget: 0, scale: 0 };
+    let accents = { accents: 0, hazard: 0, budget: 0, scale: 0, share: 0, rest: 0 };
+    const flights = [];
     if (tMax > tMin && model.bars.length > 0) {
         actions = chartActions(ctx);
         const before = actions.length;
         actions = fillLongRests(actions, ctx);
         fillers = actions.length - before;
-        accents = assignKinds(actions, ctx);
+        assignKinds(actions, ctx);
+        assignRingKinds(actions, ctx);
         for (const span of plan) {
-            if (span.mode === 'fly') holds.push(...chartHolds({ span, model, arc, profile, unlocked }));
+            if (span.mode !== 'fly') continue;
+            const flight = chartHolds({ span, model, arc, profile, unlocked });
+            holds.push(...flight.holds);
+            flights.push({ t0: span.tIn, notes: flight.holds.length, chained: flight.chained, melody: flight.melody });
         }
+        // Lo que el nivel ya exige sin acentos; los acentos ponen lo que falta.
+        const rest = restHazard(actions, holds, ctx, baseSpeed, speedChanges);
+        accents = assignAccents(actions, { ...ctx, restHazard: rest });
+        accents.rest = Math.round(rest * 1000) / 1000;
         repaired = repairUnplayable(actions, holds, ctx);
     }
 
@@ -195,6 +224,8 @@ export function buildChart(analysis, opts = {}) {
         ...structure,
         ...holds.map((h) => ({ t: h.t, type: 'hold', until: h.until })),
         ...actions.map((a) => ({ t: round3(a.t), type: 'obstacle', kind: a.kind })),
+        // El aro de cada anillo, en el mismo instante que su obstáculo (Ola 6c).
+        ...actions.filter((a) => a.type === 'ring').map((a) => ({ t: round3(a.t), type: 'obstacle', kind: a.ring })),
     ].sort((a, b) => (a.t - b.t) || (EVENT_ORDER[a.type] - EVENT_ORDER[b.type]));
 
     const climax = arc.climax >= 0 ? arc.segments[arc.climax] : null;
@@ -232,6 +263,8 @@ export function buildChart(analysis, opts = {}) {
             topSpeedPxS: speed.maxSpeed,
             modes: plan.map((s) => ({ mode: s.mode, t0: s.tIn, t1: s.tOut, at: s.at, score: s.score })),
             holds: holds.length,
+            flights,
+            rings: actions.filter((a) => a.type === 'ring').length,
             accents,
         },
     };
@@ -257,7 +290,7 @@ function minSpeedIn(speed, t0, t1) {
  * kind futuro con adelanto propio queda cubierto sin tocar nada.
  *
  * @param {import('../systems/speedProfile.js').SpeedProfile} speed
- * @returns {(t: number, type: 'jump'|'duck'|'flip') => boolean}
+ * @returns {(t: number, type: 'jump'|'duck'|'flip'|'ring') => boolean}
  */
 function readerCheck(speed) {
     if (speed.constant) return () => true;
@@ -267,7 +300,8 @@ function readerCheck(speed) {
         const lead = actionLeadS(def);
         if (!list.includes(lead)) list.push(lead);
     }
-    return (t, type) => (leads[type] ?? []).every((lead) => Math.abs(readerOffsetS(speed, t, lead)) <= SPEED_RULES.readerBudgetS);
+    // Un anillo se pulsa como el salto de su obstáculo.
+    return (t, type) => (leads[type === 'ring' ? 'jump' : type] ?? []).every((lead) => Math.abs(readerOffsetS(speed, t, lead)) <= SPEED_RULES.readerBudgetS);
 }
 
 // --------------------------- Desbloqueo de mecánicas ---------------------------
@@ -305,6 +339,7 @@ export function unlockSchedule(arc, profile) {
         offbeat: at(profile.unlock.offbeat),
         sixteenth: at(profile.unlock.sixteenth ?? STAGE.NEVER),
         combo: at(profile.unlock.combo),
+        ring: at(profile.unlock.ring ?? STAGE.NEVER),
     };
 }
 
@@ -321,7 +356,9 @@ function chartActions(ctx) {
 
     let segment = -1;
     let previousPositions = null;
-    let segmentCounts = { airDucks: 0, airTotal: 0 };
+    let segmentCounts = { airDucks: 0, airTotal: 0, rings: 0 };
+    /** Anillos de toda la canción: el primero se estrena (patterns.js, RING_RULES). */
+    const ringLog = { count: 0, lastT: -Infinity };
 
     for (const bar of model.bars) {
         const arcBar = arc.bars[bar.index];
@@ -329,7 +366,7 @@ function chartActions(ctx) {
         if (arcBar.segment !== segment) {
             segment = arcBar.segment;
             previousPositions = null;
-            segmentCounts = { airDucks: 0, airTotal: 0 };
+            segmentCounts = { airDucks: 0, airTotal: 0, rings: 0 };
         }
         if (bar.t1 <= tMin || bar.t0 > tMax) continue;
 
@@ -393,6 +430,7 @@ function chartActions(ctx) {
             memory,
             previousPositions,
             segmentCounts,
+            ringLog,
             introActions: Math.max(0, CHARTER_RULES.introActions - placed.length),
             modes,
             modeIntroLeft: span?.first ? Math.max(0, MODE_RULES.introActions - spanCount) : 0,
@@ -407,6 +445,7 @@ function chartActions(ctx) {
             }
             segmentCounts.airTotal++;
             if (a.type === 'duck') segmentCounts.airDucks++;
+            if (a.type === 'ring') segmentCounts.rings++;
         }
         previousPositions = new Set(chosen.map((a) => a.slot.pos));
     }
@@ -523,11 +562,9 @@ function longestRest(from, to, freeSpans) {
 // --------------------------- Tipo de obstáculo ---------------------------
 
 /**
- * Qué obstáculo lleva cada acción: el de su papel (saltar, agacharse, invertir),
- * y los saltos sobre los golpes fuertes, el de acento que les toca (accents.js).
- * Sin azar: el golpe manda.
- *
- * @returns {import('./accents.js').AccentSummary}
+ * Qué obstáculo normal lleva cada acción: el de su papel (saltar, agacharse,
+ * invertir). Un anillo empieza con el de saltar; su obstáculo de verdad lo pone
+ * rings.js, y los acentos (accents.js) llegan después. Sin azar: el golpe manda.
  */
 function assignKinds(actions, ctx) {
     const { prng } = ctx;
@@ -537,7 +574,25 @@ function assignKinds(actions, ctx) {
         a.kind = pickKindForRole(a.type === 'duck' ? 'duck' : 'jump', prng);
     }
     assignFlipKinds(actions, ctx);
-    return assignAccents(actions, ctx);
+}
+
+/**
+ * Exigencia del nivel tal como está, sin acentos, para el jugador de referencia:
+ * −ln de la fracción de partidas que supera (challenge.referencePassRate, con
+ * `restRuns` partidas y semilla fija: determinista).
+ */
+function restHazard(actions, holds, ctx, baseSpeed, speedChanges) {
+    if (actions.length === 0 && holds.length === 0) return 0;
+    const events = [
+        ...ctx.structure,
+        ...holds.map((h) => ({ t: h.t, type: 'hold', until: h.until })),
+        ...actions.map((a) => ({ t: a.t, type: 'obstacle', kind: a.kind })),
+        ...actions.filter((a) => a.type === 'ring').map((a) => ({ t: a.t, type: 'obstacle', kind: a.ring })),
+    ].sort((a, b) => a.t - b.t);
+    const runs = CHARTER_RULES.restRuns;
+    const { passRate } = referencePassRate({ events, world: { speedPxS: baseSpeed, speedChanges } }, { runs, seed: 1 });
+    // Sin ninguna superada, lo que se sabe es que exige más que −ln(1/(2·runs)).
+    return -Math.log(Math.max(passRate, 1 / (2 * runs)));
 }
 
 /**
@@ -597,6 +652,7 @@ function repairUnplayable(actions, holds, ctx) {
     let repaired = 0;
     while (repaired < CHARTER_RULES.maxRepairs && (actions.length > 0 || holds.length > 0)) {
         const sim = toSimObstacles(actions.map((a) => ({ t: a.t, type: 'obstacle', kind: a.kind })));
+        const triggers = toSimTriggers(actions.filter((a) => a.type === 'ring').map((a) => ({ t: a.t, type: 'obstacle', kind: a.ring })));
         const holdEvents = holds.map((h) => ({ t: h.t, type: 'hold', until: h.until }));
         const course = holds.length > 0 ? createFlightCourse([...structure, ...holdEvents]) : null;
         const verdict = validatePlayability(sim, speed, {
@@ -604,6 +660,7 @@ function repairUnplayable(actions, holds, ctx) {
             modes: simModes,
             holds: toSimHolds(holdEvents),
             course: course === null || course.empty ? null : course,
+            triggers,
         });
         if (verdict.ok) break;
         repaired++;
@@ -616,7 +673,8 @@ function repairUnplayable(actions, holds, ctx) {
         }
         const hit = actions[i];
         const accentOf = OBSTACLE_KIND[hit.kind]?.accentOf;
-        if (accentOf !== undefined) {
+        // (El obstáculo de un anillo no es un acento: lo eligió rings.js para que el aro haga falta.)
+        if (accentOf !== undefined && hit.type !== 'ring') {
             // Un acento que no se deja jugar vuelve a ser la acción normal.
             hit.kind = accentOf;
             hit.accentTarget = null;
@@ -626,6 +684,8 @@ function repairUnplayable(actions, holds, ctx) {
         const victim = i > 0 && weight(actions[i - 1]) < weight(hit) ? i - 1 : i;
         const removed = actions.splice(victim, 1)[0];
         if (removed.type === 'flip') assignFlipKinds(actions, ctx);
+        // Un anillo que se queda sin su salto se va con él.
+        if (removed.type === 'jump') repaired += dropOrphanRings(actions, null, speed.speedAt);
     }
     return repaired;
 }
@@ -634,19 +694,17 @@ function repairUnplayable(actions, holds, ctx) {
 
 /**
  * `section` al empezar cada tramo (nivel e intensidad para el runtime: fondo,
- * partículas, HUD), `fx: 'drop'` donde la intensidad salta y `fx: 'lift'` donde
- * sube un nivel hacia el empuje. Los clientes que no los conocen los ignoran
+ * partículas, HUD) y los efectos del plan (fxPlan.js: drops, lifts, subidas,
+ * breaks, cambios de tonalidad). Los clientes que no los conocen los ignoran
  * (chartFormat.js, tolerancia hacia delante).
  */
-function structureEvents(arc) {
+function structureEvents(model, arc) {
     const out = [];
     for (const seg of arc.segments) {
         const t = seg.index === 0 ? 0 : round3(seg.t0);
         out.push({ t, type: 'section', level: seg.level, intensity: round2(seg.intensity), role: seg.role, climax: seg.climax });
-        if (seg.drop) out.push({ t, type: 'fx', fx: 'drop', level: seg.level });
-        else if (seg.lift) out.push({ t, type: 'fx', fx: 'lift', level: seg.level });
     }
-    return out;
+    return [...out, ...planFx({ model, arc })];
 }
 
 // --------------------------- Utilidades ---------------------------

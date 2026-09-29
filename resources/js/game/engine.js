@@ -465,9 +465,10 @@ export function setBeatPulse(v) {
 /**
  * Estado de la estructura de la canción (Ola 5). GameSession lo empuja cada
  * frame desde su director: intensidad del tramo, progreso (el sol se pone con
- * él), si es el clímax y el destello de un drop.
+ * él), si es el clímax y el destello de un drop; y (Ola 6c) la subida hacia un
+ * drop, la calma de un break y el giro de color de los cambios de tonalidad.
  *
- * @param {{ intensity?: number, progress?: number, climax?: number, flash?: number }} s
+ * @param {{ intensity?: number, progress?: number, climax?: number, flash?: number, build?: number, calm?: number, hue?: number }} s
  */
 export function setMusicState(s) {
     if (s.intensity !== undefined) musicIntensity = s.intensity;

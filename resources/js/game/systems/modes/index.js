@@ -32,6 +32,11 @@
 //           Opcional: márgenes de error de un kind aislado sin simular (el de
 //           correr los calcula para los saltos). null o ausente: se simulan
 //           (playability.timingMarginsS).
+// @property {(body: object, def: object) => string | null} [trigger]
+//           Opcional (Ola 6c): el cuerpo atraviesa un activador del registro (un kind
+//           con `trigger`, como el anillo de salto). Decide si se activa y aplica su
+//           efecto; devuelve el gesto ('ring') o null. Un modo sin este gancho
+//           ignora los activadores.
 
 import { RUN_MODE } from './run.js';
 import { FLIP_MODE_DEF } from './flip.js';

@@ -220,3 +220,25 @@ test('la caché desaloja lo menos usado al pasar del presupuesto', async () => {
     assert.equal(await bySize.getAudio('x'), null);
     assert.notEqual(await bySize.getAudio('z'), null);
 });
+
+test('formato 5 (Ola 6c): un anillo se conserva con su obstáculo; fuera de correr se descarta; los efectos nuevos pasan', () => {
+    const raw = {
+        ...validChart(),
+        formatVersion: 5,
+        events: [
+            { t: 5, type: 'obstacle', kind: 'CACTUS_SMALL' },
+            { t: 5.3, type: 'obstacle', kind: 'CACTUS_SMALL' },
+            { t: 5.3, type: 'obstacle', kind: 'RING_JUMP' },
+            { t: 8, type: 'fx', fx: 'build', until: 10 },
+            { t: 12, type: 'fx', fx: 'key', semitones: 2 },
+            { t: 20, type: 'mode', mode: 'flip' },
+            { t: 22, type: 'obstacle', kind: 'RING_JUMP' },
+            { t: 30, type: 'mode', mode: 'run' },
+        ],
+    };
+    const { chart, warnings } = normalizeChart(raw);
+    assert.equal(chart.formatVersion, 5);
+    assert.deepEqual(chart.events.filter((e) => e.kind === 'RING_JUMP').map((e) => e.t), [5.3], 'el aro de la antigravedad no se juega');
+    assert.equal(warnings.length, 1, JSON.stringify(warnings));
+    assert.deepEqual(chart.events.filter((e) => e.type === 'fx').map((e) => [e.fx, e.until ?? e.semitones]), [['build', 10], ['key', 2]]);
+});

@@ -100,6 +100,7 @@ export function buildMusicModel(analysis) {
     const bands = readBands(analysis);
     const tonal = readTonal(analysis, durationSec);
     markChordChanges(bars, tonal);
+    const melody = readMelody(analysis);
 
     return {
         formatVersion: analysis.formatVersion,
@@ -133,6 +134,13 @@ export function buildMusicModel(analysis) {
         tonal,
         /** Cambios de acorde por segundo en [t0, t1) (null sin acordes). */
         chordChangeRate: (t0, t1) => chordChangeRate(tonal, t0, t1),
+        // Melodía (analizador 3, Ola 6c): la altura que canta la canción. null sin dato.
+        /** Contorno melódico: `{ hopSec, pitch }` (MIDI por fotograma, 0 sin melodía), o null. */
+        melody,
+        /** Mediana de la altura de la melodía en [t0, t1) (MIDI), o null si ahí no suena. */
+        melodyAt: (t0, t1) => melodyMedian(melody, t0, t1),
+        /** Registro de la melodía en [t0, t1): percentiles 10 y 90 y fracción de fotogramas con melodía. */
+        melodyRange: (t0, t1) => melodyRange(melody, t0, t1),
     };
 }
 
@@ -627,6 +635,42 @@ function readTonal(analysis, durationSec) {
         chordConfidence: Number.isFinite(t.chordConfidence) ? t.chordConfidence : 0,
         chords,
         modulations,
+    };
+}
+
+/** Contorno melódico del análisis, o null si no lo trae (analizadores 1-2, navegador). */
+function readMelody(analysis) {
+    const m = analysis.melody;
+    if (m === null || typeof m !== 'object' || !(m.hopSec > 0) || !Array.isArray(m.pitch) || m.pitch.length === 0) return null;
+    const pitch = Float32Array.from(m.pitch, (v) => (Number.isFinite(v) && v > 0 ? v : 0));
+    return { hopSec: m.hopSec, pitch };
+}
+
+function melodyFrames(melody, t0, t1) {
+    const i0 = Math.max(0, Math.floor(t0 / melody.hopSec));
+    const i1 = Math.min(melody.pitch.length, Math.max(i0 + 1, Math.ceil(t1 / melody.hopSec)));
+    const voiced = [];
+    for (let i = i0; i < i1; i++) if (melody.pitch[i] > 0) voiced.push(melody.pitch[i]);
+    return { voiced, total: Math.max(1, i1 - i0) };
+}
+
+function melodyMedian(melody, t0, t1) {
+    if (melody === null || !(t1 > t0)) return null;
+    const { voiced } = melodyFrames(melody, t0, t1);
+    if (voiced.length === 0) return null;
+    voiced.sort((a, b) => a - b);
+    return voiced[voiced.length >> 1];
+}
+
+function melodyRange(melody, t0, t1) {
+    if (melody === null || !(t1 > t0)) return null;
+    const { voiced, total } = melodyFrames(melody, t0, t1);
+    if (voiced.length === 0) return { low: null, high: null, voiced: 0 };
+    voiced.sort((a, b) => a - b);
+    return {
+        low: voiced[Math.floor(voiced.length * 0.1)],
+        high: voiced[Math.min(voiced.length - 1, Math.floor(voiced.length * 0.9))],
+        voiced: voiced.length / total,
     };
 }
 

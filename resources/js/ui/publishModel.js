@@ -40,6 +40,8 @@ export const STAGE_LABELS = Object.freeze({
     onsets: 'Detectando cada golpe',
     energy: 'Midiendo la intensidad',
     sections: 'Reconociendo estrofas y estribillos',
+    tonal: 'Escuchando los acordes',
+    melody: 'Siguiendo la melodía',
     features: 'Calculando la dificultad',
     done: 'Análisis terminado',
     charting: 'Colocando los obstáculos',

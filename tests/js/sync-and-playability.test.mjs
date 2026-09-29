@@ -25,7 +25,8 @@ import { createBeatClock } from '../../resources/js/game/systems/beatClock.js';
 // Los kinds de correr; los de otros modos se juegan dentro de su modo (modes.test.mjs).
 // Sin las variantes de precisión (hileras largas): solo son justas a partir de la
 // velocidad en que el charter las usa (challenge.test.mjs).
-const KINDS = Object.keys(OBSTACLE_KIND).filter((k) => OBSTACLE_KIND[k].mode === 'run' && !OBSTACLE_KIND[k].precision);
+// Obstáculos de correr que valen a cualquier velocidad (sin las hileras de precisión ni los activadores, que no se chocan).
+const KINDS = Object.keys(OBSTACLE_KIND).filter((k) => OBSTACLE_KIND[k].mode === 'run' && !OBSTACLE_KIND[k].precision && OBSTACLE_KIND[k].trigger === undefined);
 const SPEEDS = [250, 350, 450, 600];
 
 test('el centro del obstáculo cruza al Dino exactamente actionLead después de su evento', () => {

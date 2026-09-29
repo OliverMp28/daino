@@ -71,6 +71,10 @@ export function createAudioFilter() {
                 uProgress:   { value: 0.0, type: 'f32' },
                 uClimax:     { value: 0.0, type: 'f32' },
                 uFlash:      { value: 0.0, type: 'f32' },
+                // Efectos del plan del charter (Ola 6c): ver background.frag.
+                uBuild:      { value: 0.0, type: 'f32' },
+                uCalm:       { value: 0.0, type: 'f32' },
+                uHue:        { value: 0.0, type: 'f32' },
             },
             // CRÍTICO: pasar el TextureSource (BufferImageSource extiende de él),
             // no una Texture wrapper. Si pones `Texture` aquí, Pixi v8 deja el
@@ -85,7 +89,7 @@ export function createAudioFilter() {
     // datos y el sample devuelve memoria sin inicializar.
     fftSource.update();
 
-    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, frame, cell, intensity, progress, climax, flash }) {
+    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, frame, cell, intensity, progress, climax, flash, build, calm, hue }) {
         const u = filter.resources.audioUniforms.uniforms;
         if (frame     !== undefined) {
             u.uFrame[0] = frame[0];
@@ -104,6 +108,9 @@ export function createAudioFilter() {
         if (progress  !== undefined) u.uProgress  = progress;
         if (climax    !== undefined) u.uClimax    = climax;
         if (flash     !== undefined) u.uFlash     = flash;
+        if (build     !== undefined) u.uBuild     = build;
+        if (calm      !== undefined) u.uCalm      = calm;
+        if (hue       !== undefined) u.uHue       = hue;
     }
 
     /**
@@ -131,6 +138,9 @@ export function createAudioFilter() {
             u.uProgress = 0;
             u.uClimax = 0;
             u.uFlash = 0;
+            u.uBuild = 0;
+            u.uCalm = 0;
+            u.uHue = 0;
             fftBuffer.fill(0);
             fftSource.update();
         }

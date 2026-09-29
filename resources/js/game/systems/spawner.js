@@ -22,8 +22,8 @@
 //     entra cuesta O(1) amortizado por frame.
 //   - `getActive()` devuelve siempre el mismo array, sin copias.
 
-import { DINO_CENTER_X, aabbHit, obstacleHitbox, obstacleTopY } from './physics.js';
-import { toSimObstacles } from './playability.js';
+import { DINO_CENTER_X, aabbHit, obstacleHitbox, obstacleTopY, triggerZone } from './physics.js';
+import { toSimObstacles, toSimTriggers } from './playability.js';
 import { asSpeedProfile } from './speedProfile.js';
 
 /** Un obstáculo entra en cola cuando su borde izquierdo está a este margen del borde derecho. */
@@ -67,10 +67,11 @@ export function createSpawner(cfg) {
     // D(cruce) − w/2 − (ancho − DINO). El término del viewport es común a
     // todos, así que el orden de la cola no cambia al redimensionar ni con la
     // velocidad (D es creciente).
-    const queue = toSimObstacles(events)
+    // Los activadores (anillos, Ola 6c) se ven y se colocan igual; no se chocan.
+    const queue = [...toSimObstacles(events), ...toSimTriggers(events)]
         .map((o) => {
             const crossD = profile.distanceAt(o.cross);
-            return { ...o, crossD, appearKey: crossD - o.def.w / 2 };
+            return { ...o, crossD, appearKey: crossD - o.def.w / 2, trigger: o.def.trigger !== undefined, used: false };
         })
         .sort((a, b) => a.appearKey - b.appearKey);
 
@@ -175,11 +176,40 @@ export function createSpawner(cfg) {
                 const data = activeData[i];
                 const x = leftX(data, songTime, nowD);
                 // Descarte horizontal barato antes de construir el hitbox.
-                if (x > box.x + box.w || x + data.def.w < box.x) continue;
+                if (data.trigger || x > box.x + box.w || x + data.def.w < box.x) continue;
                 obstacleHitbox(data.def, x, obstacleTopY(data.def, groundY), scratchBox);
                 if (aabbHit(box, scratchBox)) return data.kind;
             }
             return null;
+        },
+
+        /**
+         * Activador (anillo) sin usar cuya zona toca el hitbox en `songTime`, o null.
+         * Quien llama aplica su efecto (physics.applyTrigger) y, si se activó, lo
+         * marca con `markTriggerUsed`: cada anillo vale una vez, como en el simulador.
+         *
+         * @param {{ x: number, y: number, w: number, h: number }} box
+         * @param {number} songTime
+         * @param {number} groundY
+         * @returns {{ kind: string, def: object } | null}
+         */
+        triggerAt(box, songTime, groundY) {
+            const nowD = profile.constant ? 0 : profile.distanceAt(songTime);
+            for (let i = 0; i < activeData.length; i++) {
+                const data = activeData[i];
+                if (!data.trigger || data.used) continue;
+                const x = leftX(data, songTime, nowD);
+                triggerZone(data.def, x, obstacleTopY(data.def, groundY), scratchBox);
+                if (aabbHit(box, scratchBox)) return data;
+            }
+            return null;
+        },
+
+        /** Marca un activador como usado (su visual lo refleja: `Obstacle.onTriggered`). */
+        markTriggerUsed(data) {
+            data.used = true;
+            const i = activeData.indexOf(data);
+            if (i >= 0) active[i].onTriggered?.();
         },
 
         /**

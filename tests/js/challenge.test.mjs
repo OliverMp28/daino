@@ -159,3 +159,42 @@ test('regresión del segundo playtest: cada dificultad exige más y Extremo es d
     const dawnPass = referencePassRate(hard, { runs: 60, seed: 3 }).passRate;
     assert.ok(dawnPass <= 0.6, `Dawn of Faith en Difícil (65 BPM, saltos a un beat): ${dawnPass}`);
 });
+
+test('lo que promete cada dificultad: bandas medidas con el jugador de referencia en canciones de verdad', async () => {
+    // Lo que se pidió: 3★ se pasa al segundo o tercer intento; 4★ cuesta cinco o
+    // más y no todo el mundo llega; 5★ lo supera casi nadie. Con el jugador de
+    // referencia (±45 ms), "pasarlo al intento N" es superar ~1/N partidas.
+    //
+    // Medido con 200 partidas sobre los 8 oficiales (charter 12): Relajado
+    // 0.99-1.00 · Fácil 0.81-0.99 · Normal 0.41-0.71 · Difícil 0.15-0.41 ·
+    // Extremo 0.01-0.22 (los extremos altos de Normal-Extremo son los dos clips
+    // de 40 s; ver la limitación de las canciones cortas en el doc 10).
+    const BANDS = [
+        { level: 1, min: 0.9, max: 1 },
+        { level: 3, min: 0.28, max: 0.7 },
+        { level: 4, min: 0.08, max: 0.42 },
+        { level: 5, min: 0, max: 0.12 },
+    ];
+    // Canciones enteras (≥ 75 s): en un clip de 40 s no hay golpes fuertes
+    // suficientes para gastar el presupuesto de exigencia.
+    for (const slug of ['whats-up-danger', 'mi-fiesta', 'dawn-of-faith']) {
+        const { analysis, audio } = await baked(slug);
+        for (const band of BANDS) {
+            const { chart, report } = buildChart(analysis, { sha256: audio.sha256, difficulty: band.level });
+            if (report.difficulty !== band.level) continue; // la canción no admite esa dificultad
+            const { passRate } = referencePassRate(chart, { runs: 80, seed: 11 });
+            assert.ok(passRate >= band.min - 0.08 && passRate <= band.max + 0.08,
+                `${slug} en ${band.level}★: supera ${passRate} y su banda es ${band.min}-${band.max}`);
+        }
+    }
+});
+
+test('un nivel de 5★ es durísimo, no imposible: quien juega muy preciso lo supera', async () => {
+    const { analysis, audio } = await baked('whats-up-danger');
+    const { chart } = buildChart(analysis, { sha256: audio.sha256, difficulty: 5 });
+    // El validador ya garantiza que es jugable con la tolerancia de la dificultad;
+    // esto mide que además hay un camino humano: cuanto más preciso, más se supera.
+    const rates = [0.02, 0.03, 0.045].map((sigmaS) => referencePassRate(chart, { runs: 60, seed: 5, sigmaS }).passRate);
+    assert.ok(rates[0] >= 0.8, `con ±20 ms debería superarse casi siempre: ${rates[0]}`);
+    assert.ok(rates[0] > rates[1] && rates[1] > rates[2], `más preciso, más se supera: ${rates}`);
+});

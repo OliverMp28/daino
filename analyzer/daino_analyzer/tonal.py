@@ -114,13 +114,20 @@ class TonalResult:
 
 # --------------------------- Espectro armónico y afinación ---------------------------
 
-def _harmonic_cqt(y: np.ndarray) -> np.ndarray:
+@dataclass(frozen=True)
+class ConstantQ:
+    """El CQT de la canción, calculado una vez: lo usan la armonía y la melodía."""
+    magnitude: np.ndarray       # (N_BINS, fotogramas), float32
+    harmonic: np.ndarray        # parte armónica (HPSS con HPSS_KERNEL): lo que dura en el tiempo
+
+
+def constant_q(y: np.ndarray) -> ConstantQ:
     import librosa
 
     C = np.abs(librosa.cqt(y, sr=SR, hop_length=HOP, fmin=librosa.midi_to_hz(FMIN_MIDI), n_bins=N_BINS,
                            bins_per_octave=BINS_PER_OCTAVE)).astype(np.float32)
     H, _ = librosa.decompose.hpss(C, kernel_size=HPSS_KERNEL)
-    return H
+    return ConstantQ(magnitude=C, harmonic=H)
 
 
 def _fold() -> tuple[np.ndarray, np.ndarray]:
@@ -133,7 +140,7 @@ def _fold() -> tuple[np.ndarray, np.ndarray]:
     return fold, (midi < BASS_SPLIT_MIDI)
 
 
-def _shift(H: np.ndarray, cents: float) -> np.ndarray:
+def shift_cents(H: np.ndarray, cents: float) -> np.ndarray:
     """Desplaza el eje de frecuencia `cents` hacia abajo (compensa una grabación `cents` alta)."""
     bins = cents * BINS_PER_OCTAVE / 1200.0
     if abs(bins) < 1e-6:
@@ -170,7 +177,7 @@ def _estimate_tuning(H: np.ndarray, fold: np.ndarray, treble_mask: np.ndarray, t
     frames = max(1, int(round(TUNING_BLOCK_S * SR / HOP)))
 
     def fit(cents: float) -> float:
-        chroma = fold @ (_log(_shift(H, cents)) * treble_mask[:, None])
+        chroma = fold @ (_log(shift_cents(H, cents)) * treble_mask[:, None])
         return _chord_fit(_blocks(chroma, frames), templates)
 
     # Sin dar la vuelta en ±50: −52 cents y +48 son la misma afinación pero
@@ -423,15 +430,16 @@ def _harmonic_rhythm(chords: list[tuple[float, str]], duration: float, bar_s: fl
 
 # --------------------------- Punto de entrada ---------------------------
 
-def analyze(spec: Spectral, beats: BeatResult, section_bounds: list[tuple[float, float]], duration: float) -> TonalResult:
+def analyze(spec: Spectral, beats: BeatResult, section_bounds: list[tuple[float, float]], duration: float,
+            cq: ConstantQ | None = None) -> TonalResult:
     templates, roots = _templates()
     profiles = _profiles()
     fold, bass_mask = _fold()
     treble_mask = ~bass_mask
 
-    H = _harmonic_cqt(spec.y)
+    H = (cq or constant_q(spec.y)).harmonic
     tuning = _estimate_tuning(H, fold, treble_mask.astype(np.float32), templates)
-    Hs = _shift(H, tuning)
+    Hs = shift_cents(H, tuning)
     L = _log(Hs)
 
     bounds = _segments(beats.beats, duration)

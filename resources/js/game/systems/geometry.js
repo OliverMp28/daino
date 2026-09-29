@@ -83,6 +83,25 @@ export function obstacleHitbox(def, x, y, out = { x: 0, y: 0, w: 0, h: 0 }) {
 }
 
 /**
+ * Zona de un activador (anillo de salto, Ola 6c) cuya esquina superior izquierda
+ * está en (x, y): su dibujo con la holgura `zone` de su kind por cada lado.
+ *
+ * @param {{ w: number, h: number, zone?: { padX: number, padY: number } }} def
+ * @param {number} x
+ * @param {number} y
+ * @param {{ x: number, y: number, w: number, h: number }} [out]
+ */
+export function triggerZone(def, x, y, out = { x: 0, y: 0, w: 0, h: 0 }) {
+    const padX = def.zone?.padX ?? 0;
+    const padY = def.zone?.padY ?? 0;
+    out.x = x - padX;
+    out.y = y - padY;
+    out.w = def.w + 2 * padX;
+    out.h = def.h + 2 * padY;
+    return out;
+}
+
+/**
  * AABB entre dos hitboxes { x, y, w, h }.
  * @returns {boolean}
  */

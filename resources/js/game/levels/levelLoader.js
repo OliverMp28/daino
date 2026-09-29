@@ -74,7 +74,8 @@ export class LevelLoadError extends Error {
  * @param {(path: string) => Promise<{ ok: boolean, status: number, data: any }>} deps.getJson  GET JSON de la API.
  * @param {(bytes: ArrayBuffer) => Promise<AudioBuffer>} deps.decode
  * @param {(audioBuffer: AudioBuffer, opts: { onProgress?: (r: number) => void }) => Promise<object>} deps.analyze
- * @param {(analysis: object, opts: { seed?: number, sha256?: string }) => { chart: object }} deps.buildChart
+ * @param {(analysis: object, opts: { seed?: number, sha256?: string }) => Promise<{ chart: object }> | { chart: object }} deps.buildChart
+ *        Puede ser asíncrono: el charter se carga aparte del arranque (Ola 6c).
  * @param {(bytes: ArrayBuffer) => Promise<string>} deps.hash
  * @param {((bytes: ArrayBuffer) => Promise<AudioBuffer>) | undefined} [deps.decodeDetached]
  *        Decodificador que no toca el AudioContext del juego (p. ej. un
@@ -171,7 +172,8 @@ export function createLevelLoader(deps) {
         const analysis = await analysisFor(sha256, audioBuffer, onStage, fromCache);
         onStage(LOAD_STAGE.CHARTING);
         const seed = parseSeed(level.generator_seed) ?? seedFromSha256(sha256);
-        return { chart: normalizeChart(buildChart(analysis, { seed, sha256 }).chart).chart, analysis };
+        const built = await buildChart(analysis, { seed, sha256 });
+        return { chart: normalizeChart(built.chart).chart, analysis };
     }
 
     /**
@@ -223,7 +225,7 @@ export function createLevelLoader(deps) {
             } else {
                 analysis = await analysisFor(sha256, audioBuffer, onStage, fromCache);
                 onStage(LOAD_STAGE.CHARTING);
-                chart = normalizeChart(buildChart(analysis, { seed: opts.seed, sha256 }).chart).chart;
+                chart = normalizeChart((await buildChart(analysis, { seed: opts.seed, sha256 })).chart).chart;
             }
 
             return {

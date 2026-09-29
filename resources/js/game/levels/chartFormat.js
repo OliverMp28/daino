@@ -64,6 +64,16 @@
 //     sigue tras el portal de salida se descarta con aviso.
 // Un modo desconocido ya NO se descarta: el tramo se jugaría con otras reglas y
 // sería otro nivel (o uno imposible). Un chart así lanza ChartError.
+//
+// Formato 5 (Ola 6c)
+// ------------------
+// Activadores: obstáculos de un kind con `trigger` (el anillo de salto, RING_JUMP)
+// que no se chocan y cambian lo que hace una pulsación mientras el Dino los
+// atraviesa. Cambia la semántica: un cliente de formato 4 descartaría el aro por
+// kind desconocido y el obstáculo que lo acompaña sería imposible de salvar, así
+// que sube la versión mayor y ese cliente se niega a cargarlo. Los efectos nuevos
+// (`fx`: build, break, key) no cambian la semántica: un cliente que no los conoce
+// los ignora.
 
 import { OBSTACLE_KIND } from '../config.js';
 import { isMovementMode } from '../systems/modes/index.js';
@@ -71,7 +81,7 @@ import { createModeTimeline } from '../systems/modeTimeline.js';
 import { FLY_MARGIN_RANGE } from '../systems/flightCourse.js';
 
 /** Versión mayor del formato que este cliente sabe interpretar (y la que genera). */
-export const CHART_FORMAT_VERSION = 4;
+export const CHART_FORMAT_VERSION = 5;
 
 /**
  * Versión del algoritmo de charting de este cliente. Súbela cuando cambie
@@ -96,9 +106,16 @@ export const CHART_FORMAT_VERSION = 4;
  * cada dificultad más altos); medido: no reduce por sí sola lo que supera el
  * jugador de referencia (el margen de un acento se recalcula contra la velocidad
  * de cada instante), así que sube el ritmo y baja el tiempo de lectura sin ser,
- * todavía, el ajuste de exigencia que pidió el segundo playtest.
+ * todavía, el ajuste de exigencia que pidió el segundo playtest. 11: anillos de
+ * salto (un segundo salto en el aire sobre el golpe que sigue a un salto), vuelo
+ * en frases encadenadas por el aire con la altura de la melodía (validado con un
+ * jugador que corrige mirando el túnel) y efectos del plan (subida a un drop,
+ * break, cambio de tonalidad) (Ola 6c). 12: la exigencia llega también a las
+ * canciones cortas — hileras de cactus hasta 408 px (a 1000 px/s la de 328
+ * perdonaba ±82 ms) y último escalón que cierra las aperturas del acento hasta
+ * el margen mínimo de la dificultad, nunca por debajo (Ola 6c, calibración).
  */
-export const CHARTER_VERSION = 10;
+export const CHARTER_VERSION = 12;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */

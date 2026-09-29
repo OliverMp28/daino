@@ -67,8 +67,8 @@ docker compose exec -T php composer analysis:enqueue -- --charter-below=4  # com
 Tras subir `CHARTER_VERSION` (cualquier cambio en el charter), `--charter-below=<nueva>`
 re-chartea los niveles de la comunidad con su análisis guardado y la dificultad que
 su autor tuviera pedida; los oficiales se re-hornean (ver abajo). La versión actual
-es la 9 (música primero y acentos que exigen precisión: doc 10, "La dificultad
-que se juega"). Un nivel analizado con un analizador anterior se vuelve a
+es la 12 (Ola 6c: anillos de salto, vuelo en frases con la altura de la melodía,
+efectos nuevos y la misma exigencia por dificultad en cualquier canción; doc 10). Un nivel analizado con un analizador anterior se vuelve a
 analizar en ese re-chart (medido: 37-49 s por canción de 3-4 min; con el
 análisis en caché, ~2 s).
 
@@ -113,17 +113,20 @@ MSYS_NO_PATHCONV=1 docker compose run --rm --no-deps --entrypoint python analyze
 
 ```bash
 docker compose run --rm -v ./storage/analysis-debug:/out analyzer \
-  sonify "/srv/daino/storage/official/HOPE.mp3" --out /out/hope.wav --chords
+  sonify "/srv/daino/storage/official/HOPE.mp3" --out /out/hope.wav --chords --melody
 ```
 
 La canción con clics: agudo en cada beat, grave en cada downbeat y uno más grave
 en cada cambio de sección. Con `--chords`, además, cada acorde detectado suena
 debajo (fundamental grave y tríada suave, con la afinación detectada): si acompaña
-a la canción está bien, si choca no. `storage/analysis-debug/` está gitignored.
+a la canción está bien, si choca no. Con `--melody` (analizador 3), un seno sigue
+la melodía detectada: si canta con la voz (o el instrumento que lleva la melodía)
+está bien; un salto de octava suelto es un error conocido y el charter solo usa
+alturas relativas. `storage/analysis-debug/` está gitignored.
 
 Otros comandos: `python -m daino_analyzer analyze <mp3>` (JSON del análisis),
 `report <mp3>...` (resumen por canción: tempo, secciones, tonalidad, acordes más
-largos, modulaciones, nivel por bandas y memoria pico del proceso), `health`.
+largos, modulaciones, nivel por bandas, melodía y memoria pico del proceso), `health`.
 
 ## Versión del analizador
 
@@ -139,6 +142,11 @@ pasa nada porque el charter todavía no lee la armonía. Cuando la lea: re-horne
 los oficiales (arriba) y `composer analysis:enqueue -- --level=…` para la
 comunidad. `seed:official` guarda un análisis nuevo aunque el chart no cambie,
 sin tocar chart ni marcas.
+
+La 3 (Ola 6c) añade el **contorno melódico** (`melody.py`: bloque
+`melody { hopSec, pitch, voicedRatio }`, sobre el mismo CQT que la armonía, sin
+dependencias nuevas ni modelos; < 0.5 s por canción). Todo lo de la versión 2 sale
+idéntico. El charter la usa para la altura de las notas del vuelo (charter 11+).
 
 ## Operación
 

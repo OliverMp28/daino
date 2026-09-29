@@ -212,3 +212,27 @@ test('acordes: se marcan los pulsos donde cambia la armonía', () => {
     // Sin análisis tonal, nada marcado.
     assert.ok(buildMusicModel(straightSong(100)).bars.every((bar) => bar.slots.every((s) => s.chord === false)));
 });
+
+test('melodía (analizador 3): altura mediana y registro de lo que canta, sin contar los fotogramas sin melodía; null sin dato', () => {
+    const hop = 0.1;
+    // 10 s: de 0 a 4 s sube de 60 a 70, de 4 a 6 s calla (0), de 6 a 10 s se queda en 55.
+    const pitch = Array.from({ length: 100 }, (_, i) => {
+        const t = i * hop;
+        if (t < 4) return 60 + 10 * (t / 4);
+        if (t < 6) return 0;
+        return 55;
+    });
+    const analysis = { ...makeSyntheticSong({ bpm: 120 }), melody: { hopSec: hop, pitch, voicedRatio: 0.8 } };
+    const model = buildMusicModel(analysis);
+    assert.ok(Math.abs(model.melodyAt(0, 4) - 65) < 0.3, `mediana ${model.melodyAt(0, 4)}`);
+    assert.equal(model.melodyAt(4.05, 5.95), null, 'donde calla no hay altura');
+    assert.equal(model.melodyAt(7, 9), 55);
+    const range = model.melodyRange(0, 10);
+    assert.ok(range.low <= 56 && range.high >= 68, JSON.stringify(range));
+    assert.ok(Math.abs(range.voiced - 0.8) < 0.02, 'fracción con melodía');
+
+    const without = buildMusicModel(makeSyntheticSong({ bpm: 120 }));
+    assert.equal(without.melody, null);
+    assert.equal(without.melodyAt(0, 4), null);
+    assert.equal(without.melodyRange(0, 4), null);
+});

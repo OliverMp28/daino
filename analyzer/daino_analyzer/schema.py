@@ -20,6 +20,8 @@ ROLES = {"intro", "verse", "chorus", "bridge", "break", "outro"}
 MAX_CHORDS = 40_000
 MAX_MODULATIONS = 200
 BAND_NAMES = ("low", "mid", "high")
+MELODY_HOP_RANGE = (0.01, 1.0)
+MELODY_MIDI_RANGE = (24.0, 108.0)
 KEYS = set(KEY_LABELS)
 CHORDS = set(CHORD_LABELS)
 
@@ -101,6 +103,9 @@ def validate(a: dict) -> None:
              and max(levels) >= -5.0, "energy.bandLevelDb: 3 niveles en dB respecto a la mezcla")
 
     _validate_tonal(a.get("tonal"), duration)
+    # Analizador 3: opcional (los análisis de las versiones 1 y 2 no lo tienen).
+    if "melody" in a:
+        _validate_melody(a["melody"], duration)
 
     f = a.get("features")
     _require(isinstance(f, dict), "features")
@@ -140,6 +145,17 @@ def _validate_tonal(ton, duration: float) -> None:
         s = m.get("semitones")
         _require(isinstance(s, int) and not isinstance(s, bool) and -5 <= s <= 6, "semitones entero en [-5, 6]")
         prev_t = m["t"]
+
+
+def _validate_melody(mel, duration: float) -> None:
+    _require(isinstance(mel, dict), "melody")
+    hop = mel.get("hopSec")
+    _require(_finite(hop) and MELODY_HOP_RANGE[0] <= hop <= MELODY_HOP_RANGE[1], "melody.hopSec en rango")
+    pitch = mel.get("pitch")
+    _require(isinstance(pitch, list) and len(pitch) <= math.ceil(duration / hop) + 1, "melody.pitch: un valor por fotograma de la canción")
+    _require(all(_finite(p) and (p == 0 or MELODY_MIDI_RANGE[0] <= p <= MELODY_MIDI_RANGE[1]) for p in pitch),
+             f"melody.pitch: 0 o una altura MIDI en {MELODY_MIDI_RANGE}")
+    _require(_finite(mel.get("voicedRatio")) and 0 <= mel["voicedRatio"] <= 1, "melody.voicedRatio en [0,1]")
 
 
 def _num(a: dict, key: str, lo: float, hi: float) -> float:

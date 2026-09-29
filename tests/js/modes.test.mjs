@@ -233,7 +233,7 @@ test('jugador virtual: salta y se agacha como siempre, e invierte ante cada cris
     assert.deepEqual(script.filter((s) => s.input === 'jump').map((s) => s.at), [3, 6, 6.5]);
 });
 
-test('formato 4: portales y notas se conservan; cristal fuera de su modo, nota fuera del vuelo o solapada se descartan con aviso; un modo desconocido no se juega', () => {
+test('formato 4 y siguientes: portales y notas se conservan; cristal fuera de su modo, nota fuera del vuelo o solapada se descartan con aviso; un modo desconocido no se juega', () => {
     const base = {
         formatVersion: CHART_FORMAT_VERSION, charter: { name: 'x', version: 6 }, seed: 1,
         audio: { durationSec: 60, sampleRate: 44100 }, music: { bpm: 120 }, world: { speedPxS: 450 },
@@ -255,7 +255,7 @@ test('formato 4: portales y notas se conservan; cristal fuera de su modo, nota f
             { t: 40, type: 'mode', mode: 'run' },
         ],
     });
-    assert.equal(CHART_FORMAT_VERSION, 4);
+    assert.ok(CHART_FORMAT_VERSION >= 4);
     assert.deepEqual(chart.events.map((e) => e.kind ?? e.mode ?? `hold→${e.until}`),
         ['flip', 'CRYSTAL_FLOOR', 'run', 'CACTUS_SMALL', 'fly', 'hold→31.6', 'run']);
     assert.equal(chart.events[4].margin, FLY_MARGIN_RANGE.max, 'la holgura se ajusta a su rango');
@@ -263,7 +263,7 @@ test('formato 4: portales y notas se conservan; cristal fuera de su modo, nota f
 
     // Un modo desconocido cambiaría las reglas de un tramo entero: no se juega otro nivel.
     assert.throws(() => normalizeChart({ ...base, events: [{ t: 10, type: 'mode', mode: 'nave' }] }), (e) => e instanceof ChartError && /nave/.test(e.message));
-    assert.throws(() => normalizeChart({ ...base, formatVersion: 5, events: [] }), /formato 5/);
+    assert.throws(() => normalizeChart({ ...base, formatVersion: CHART_FORMAT_VERSION + 1, events: [] }), new RegExp('formato ' + (CHART_FORMAT_VERSION + 1)));
 });
 
 test('estadísticas: los cristales y las notas del vuelo cuentan como acciones con su margen, no como voladores', () => {

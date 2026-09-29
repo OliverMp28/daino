@@ -40,6 +40,10 @@
 // Dino en su paso de física (antigravedad, vuelo). El vuelo trae su túnel
 // (systems/flightCourse.js): la misma geometría se dibuja (FlightTunnel), se
 // choca aquí y la valida el charter.
+//
+// Ola 6c — activadores (anillos de salto): se colocan con los obstáculos y, en el
+// paso de física, el que toca el hitbox se aplica con las reglas del modo
+// (physics.applyTrigger), igual que en el simulador del charter.
 
 import { Dino } from './entities/Dino.js';
 import { Obstacle } from './entities/Obstacle.js';
@@ -55,16 +59,17 @@ import { createFlightTunnel } from './entities/FlightTunnel.js';
 import { createFlightCourse } from './systems/flightCourse.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
-import { BODY_EVENT, bodyHitbox, ceilingYOf, computeGroundY, enterMode, integrateBody } from './systems/physics.js';
+import { BODY_EVENT, applyTrigger, bodyHitbox, ceilingYOf, computeGroundY, enterMode, integrateBody } from './systems/physics.js';
+import { toSimTriggers } from './systems/playability.js';
 import { createModeTimeline } from './systems/modeTimeline.js';
 import { MOVEMENT_MODES } from './systems/modes/index.js';
 import { createFixedStepper } from './systems/fixedStep.js';
 import { createInputTimeline, songTimeOfEvent } from './systems/inputTimeline.js';
-import { countModeSeen } from '../ui/settings.js';
+import { countMechanicSeen, countModeSeen } from '../ui/settings.js';
 import {
     DT_CAP_S, DINO_SIZE, MODE_COLORS, OBSTACLE_KIND,
     SHAKE, HITSTOP_S, DEATH_FLASH, SCENERY, RUN_DUST,
-    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX, FLY_JET,
+    PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX, FLY_JET, JUMP_RING_FX,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
 import { Graphics } from 'pixi.js';
@@ -149,6 +154,12 @@ export class GameSession {
         /** Cómo se juega cada modo, solo para los que alguien aún está aprendiendo. */
         this._modeHints = {};
         this._modeCue = '';
+        /**
+         * Activadores que alguien aún está aprendiendo (Ola 6c): el primero de cada
+         * kind, con su texto. Se anuncian como el portal de un modo.
+         * @type {Array<{ t: number, label: string, hint: string, color: number }>}
+         */
+        this._mechanicCues = [];
         // Vuelo (Ola 6b): el túnel que dibujan las notas mantenidas.
         this._course = createFlightCourse(this.chart.events);
         this._tunnel = null;
@@ -161,7 +172,9 @@ export class GameSession {
         this._cleared = false;        // ya no quedan obstáculos por cruzar
         /** Obstáculos y notas del vuelo por instante de acción, para reconocer pulsaciones en el golpe. */
         this._onBeatTargets = [
-            ...obstacleEvents(this.chart).map((e) => ({ t: e.t, action: OBSTACLE_KIND[e.kind].action, claimed: false })),
+            ...obstacleEvents(this.chart)
+                .filter((e) => OBSTACLE_KIND[e.kind].trigger === undefined)
+                .map((e) => ({ t: e.t, action: OBSTACLE_KIND[e.kind].action, claimed: false })),
             ...this._course.spans.flatMap((s) => s.holds.map((h) => ({ t: h.t, action: 'hold', claimed: false }))),
         ].sort((a, b) => a.t - b.t);
         this._onBeatCursor = 0;
@@ -230,6 +243,13 @@ export class GameSession {
             if (m === 'run' || countModeSeen(m) > MODE_FX.hintRuns) continue;
             const hint = MOVEMENT_MODES[m].hint;
             this._modeHints[m] = touch ? hint.touch : hint.keys;
+        }
+        const firstTrigger = new Map();
+        for (const tr of toSimTriggers(this.chart.events)) if (!firstTrigger.has(tr.kind)) firstTrigger.set(tr.kind, tr);
+        for (const [kind, tr] of firstTrigger) {
+            const hint = tr.def.hint;
+            if (hint === undefined || countMechanicSeen(kind) > MODE_FX.hintRuns) continue;
+            this._mechanicCues.push({ t: tr.t, label: hint.label, hint: touch ? hint.touch : hint.keys, color: hint.color });
         }
         this.hud.setRoadmap?.({
             durationSec: this._durationSec,
@@ -458,10 +478,12 @@ export class GameSession {
         // laten también a contratiempo, cada vez más. Los obstáculos no: su
         // rebote sigue marcando solo el pulso, que es donde se juega.
         const { ahead, next } = this._speedCues.aheadAt(shownTime);
+        // Lo mismo en la subida hacia un drop (Ola 6c, efecto `build` del charter).
+        const rise = Math.max(ahead, this._director.build);
         let worldPulse = pulse;
-        if (ahead > 0 && songTime >= 0) {
+        if (rise > 0 && songTime >= 0) {
             const offbeat = Math.exp(-((phase * 2) % 1) * 4.5) * GEAR_FX.riserPulse;
-            worldPulse = Math.max(pulse, offbeat * ahead);
+            worldPulse = Math.max(pulse, offbeat * rise);
         }
         this.engine.setBeatPulse(worldPulse);
         const active = this.spawner.getActive();
@@ -492,8 +514,9 @@ export class GameSession {
         // Con el pasillo de un modo en pantalla, las líneas de velocidad se
         // quedan por encima de él: una raya a la altura del techo se leería
         // como un obstáculo.
+        // En un break (Ola 6c) el mundo contiene la respiración: sin líneas de velocidad.
         this.engine.setSpeedFx?.({
-            level: this._speedCues.linesAt(shownTime),
+            level: this._speedCues.linesAt(shownTime) * (1 - this._director.calm),
             clearAbove: this._corridorNear(shownTime) ? MODE_FX.linesClearPx : 0,
         });
         this.hud.setGear?.(this._speedCues.gearAt(shownTime), { next: next?.gear ?? null, blink: ahead > 0 && phase < 0.5 });
@@ -527,6 +550,9 @@ export class GameSession {
             progress: this._director.progress(shownTime),
             climax: this._climaxGlow,
             flash,
+            build: this._director.build,
+            calm: this._director.calm,
+            hue: this._director.hue,
         });
         this.hud.setPhase?.(this._cleared ? 'cleared' : (this._director.climax ? 'climax' : ''));
 
@@ -543,7 +569,7 @@ export class GameSession {
      * que alguien juega un modo, dice cómo se juega.
      */
     _tickModeCue(shownTime) {
-        if (this._modes.constant) return;
+        if (this._modes.constant && this._mechanicCues.length === 0) return;
         const mode = this._modes.modeAt(shownTime);
         const next = this._modes.nextChange(shownTime);
         const beat = this.chart.music.beatPeriodS || 0.5;
@@ -556,9 +582,20 @@ export class GameSession {
             state = 'warn';
             shown = next.mode;
         }
-        const cue = `${state}:${shown}`;
+        // Sin cambio de reglas a la vista, el primer anillo de alguien que aún no
+        // lo conoce se anuncia igual, un par de compases antes.
+        let mechanic = null;
+        if (state === '') {
+            const ahead = Math.max(MODE_FX.warnMinS, MODE_FX.warnBeats * beat);
+            mechanic = this._mechanicCues.find((c) => shownTime >= c.t - ahead && shownTime <= c.t + 0.3) ?? null;
+        }
+        const cue = mechanic !== null ? `mechanic:${mechanic.label}` : `${state}:${shown}`;
         if (cue === this._modeCue) return;
         this._modeCue = cue;
+        if (mechanic !== null) {
+            this.hud.setMode?.({ state: 'warn', label: mechanic.label, color: mechanic.color, hint: mechanic.hint });
+            return;
+        }
         this.hud.setMode?.({
             state,
             label: state === '' ? '' : MOVEMENT_MODES[shown].label,
@@ -766,7 +803,18 @@ export class GameSession {
             if (events & BODY_EVENT.BUFFERED) dino.onGesture(dino.mode === 'flip' ? 'flip' : 'jump');
         }
 
-        const box = bodyHitbox(dino, this._hitbox);
+        let box = bodyHitbox(dino, this._hitbox);
+        // Activador atravesado (anillo): la física decide si hay pulsación que aplicar.
+        const trigger = this.spawner.triggerAt(box, t, groundY);
+        if (trigger !== null) {
+            const gesture = applyTrigger(dino, trigger.def);
+            if (gesture !== null) {
+                this.spawner.markTriggerUsed(trigger);
+                dino.onGesture(gesture);
+                this._onTriggerFired();
+                box = bodyHitbox(dino, this._hitbox);
+            }
+        }
         const hit = this.spawner.collisionAt(box, t, groundY) !== null
             // Muros del túnel del vuelo, con la anchura del hitbox (flightCourse.js).
             || (!this._course.empty && this._course.collisionAt(box, t, groundY, this._speed.speedAt(t)));
@@ -778,6 +826,22 @@ export class GameSession {
         // desactivarlo a mitad de partida sin tocar GameSession.
         if (hit && window.__daino?.godMode === true) return false;
         return hit;
+    }
+
+    /** Un anillo vuelve a impulsar al Dino: chispas en su color alrededor del cuerpo. */
+    _onTriggerFired() {
+        if (this.engine.reducedMotion || this.dino === null) return;
+        this._bursts.burst({
+            x: this.dino.x + DINO_SIZE.w * 0.5,
+            y: this.dino.y + DINO_SIZE.h * 0.5,
+            count: JUMP_RING_FX.sparks,
+            color: JUMP_RING_FX.color,
+            speedMin: 120,
+            speedMax: 300,
+            gravity: 0,
+            lifeS: 0.32,
+            upBias: 0,
+        });
     }
 
     /** Impacto: congela el mundo, corta el audio en seco y arma el juice. */

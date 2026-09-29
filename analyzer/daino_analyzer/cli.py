@@ -6,6 +6,7 @@
     python -m daino_analyzer bake-official [--from DIR]  hornea los niveles oficiales
     python -m daino_analyzer sonify <mp3> --out f.wav    la canción con clics en beats y downbeats
                                        [--chords]        …y los acordes detectados sonando debajo
+                                       [--melody]        …y la melodía detectada (un seno que la sigue)
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("file")
     p.add_argument("--out", required=True)
     p.add_argument("--chords", action="store_true", help="añade los acordes detectados")
+    p.add_argument("--melody", action="store_true", help="añade la melodía detectada")
 
     args = parser.parse_args(argv)
 
@@ -63,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sonify":
         from daino_analyzer.sonify import sonify
 
-        return sonify(Path(args.file), Path(args.out), chords=args.chords)
+        return sonify(Path(args.file), Path(args.out), chords=args.chords, melody=args.melody)
     return 2
 
 
@@ -110,6 +112,11 @@ def _report(files: list[str]) -> int:
         print("   acordes más largos: " + ", ".join(f"{label} {secs:.0f}s" for label, secs in held.most_common(6)))
         if ton["modulations"]:
             print("   modulaciones: " + ", ".join(f"{m['t']:.0f}s → {m['key']} ({m['semitones']:+d})" for m in ton["modulations"]))
+        voiced = [p for p in a["melody"]["pitch"] if p > 0]
+        if voiced:
+            voiced.sort()
+            print(f"   melodía en el {a['melody']['voicedRatio']:.0%} de lo que suena · altura mediana {voiced[len(voiced) // 2]:.0f} "
+                  f"(p10-p90 {voiced[len(voiced) // 10]:.0f}-{voiced[len(voiced) * 9 // 10]:.0f} MIDI)")
         lv = a["energy"]["bandLevelDb"]
         print(f"   percusividad mediana {perc[len(perc) // 2] if perc else 0:.2f} · nivel graves/medios/agudos "
               f"{lv[0]:.0f}/{lv[1]:.0f}/{lv[2]:.0f} dB · memoria pico {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f} MB")

@@ -15,6 +15,8 @@ const KEY_AUTO_RETRY = 'daino:auto_retry';
 const KEY_RUNS_STARTED = 'daino:runs_started';
 /** Prefijo por modo de movimiento: `daino:mode_seen:flip` (Ola 6a). */
 const KEY_MODE_SEEN = 'daino:mode_seen:';
+/** Prefijo por mecánica que no es un modo: `daino:mechanic_seen:RING_JUMP` (Ola 6c). */
+const KEY_MECHANIC_SEEN = 'daino:mechanic_seen:';
 const PREFIX = 'daino:';
 
 /** Partidas en las que se enseñan los controles al empezar. */
@@ -143,6 +145,22 @@ export function countRunAndShouldHint() {
  */
 export function countModeSeen(modeId) {
     const key = `${KEY_MODE_SEEN}${modeId}`;
+    const n = Number.parseInt(safeGet(key) ?? '0', 10);
+    const seen = (Number.isFinite(n) && n >= 0 ? n : 0) + 1;
+    safeSet(key, String(seen));
+    return seen;
+}
+
+/**
+ * Cuenta una partida en la que aparece una mecánica que no es un modo (el anillo
+ * de salto, Ola 6c) y devuelve cuántas van, incluida esta. Mismo uso que
+ * `countModeSeen`: explicarla las primeras veces.
+ *
+ * @param {string} mechanicId  Kind del registro (p. ej. 'RING_JUMP').
+ * @returns {number}
+ */
+export function countMechanicSeen(mechanicId) {
+    const key = `${KEY_MECHANIC_SEEN}${mechanicId}`;
     const n = Number.parseInt(safeGet(key) ?? '0', 10);
     const seen = (Number.isFinite(n) && n >= 0 ? n : 0) + 1;
     safeSet(key, String(seen));

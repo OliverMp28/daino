@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import json
 
 import mir_eval
@@ -100,11 +101,13 @@ def test_output_is_valid_format_2_and_compatible_with_format_1(analyses):
         schema.validate(a)
         assert a["formatVersion"] == ANALYSIS_FORMAT_VERSION == 2
         assert a["analyzer"]["name"] == ANALYZER_NAME
-        assert a["analyzer"]["version"] == ANALYZER_VERSION == 2
+        assert a["analyzer"]["version"] == ANALYZER_VERSION == 3
         assert len(a["onsetPercussive"]) == len(a["onsets"])
         assert set(a["tonal"]) == {"tuningCents", "key", "keyConfidence", "chords", "chordConfidence",
                                    "harmonicRhythm", "modulations"}
         assert all("key" in s and "keyConfidence" in s for s in a["sections"])
+        assert set(a["melody"]) == {"hopSec", "pitch", "voicedRatio"}
+        assert abs(len(a["melody"]["pitch"]) - math.ceil(a["durationSec"] / a["melody"]["hopSec"])) <= 1
         assert a["analyzer"]["models"]["beats"].startswith("beat_this:")
         # Núcleo del formato 1 intacto: el charter JS actual lo lee sin cambios.
         assert all(isinstance(o, list) and len(o) == 2 for o in a["onsets"])
@@ -132,13 +135,16 @@ def test_schema_rejects_broken_analyses(analyses):
         lambda a: a["tonal"]["chords"][0].__setitem__(1, "C:dim"),
         lambda a: a["tonal"]["modulations"].append({"t": 1.0, "key": "C major", "semitones": 9}),
         lambda a: a["tonal"].update(tuningCents=80.0),
+        lambda a: a["melody"]["pitch"].append(140.0),
+        lambda a: a["melody"]["pitch"].extend([0.0] * 400),
+        lambda a: a["melody"].update(voicedRatio=1.5),
     ):
         a = copy.deepcopy(base)
         mutate(a)
         with pytest.raises(schema.SchemaError):
             schema.validate(a)
         broken.append(True)
-    assert len(broken) == 16
+    assert len(broken) == 19
 
 
 def test_analysis_is_deterministic(songs, analyses):

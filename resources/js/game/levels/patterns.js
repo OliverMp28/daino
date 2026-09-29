@@ -33,6 +33,12 @@
 // instante (levels/modePlan.js). En antigravedad la única acción es invertir la
 // gravedad; los portales dejan sin acciones los instantes a su alrededor, y las
 // frases solo se repiten dentro del mismo modo.
+//
+// Anillos de salto (Ola 6c): dos saltos desde el suelo necesitan ≥ 0.68 s, así que
+// un golpe fuerte a un contratiempo de un salto se perdía. Si la dificultad los
+// tiene, ese golpe es un ANILLO: el Dino, aún en el aire, pulsa dentro del aro y
+// vuelve a saltar. Suena como un salto (grave, no brillante), sigue a un salto a
+// 0.15-0.66 s y el Dino tarda en aterrizar lo de un salto (PAIR_GAP.ringJump).
 
 import { MODE_RULES } from './modePlan.js';
 
@@ -50,6 +56,11 @@ const MODE_INTRO_GAP_S = MODE_RULES.introGapS;
  *   agachado → salto     0.60-0.64 a 300 px/s · 0.50-0.54 a 600 · 0.46-0.50 a 1100
  *   agachado → agachado  0.06-0.17 s (se sigue agachado)
  *   inversión → inversión (suelo, techo, suelo…) 0.27-0.30 a 300 px/s · 0.22-0.26 a 450 · 0.21-0.26 a 600-1100
+ *   salto → anillo (Ola 6c)  jugable de 0.15 a 0.72 s a 350-1100 px/s con ±40-55 ms (con un cactus
+ *                        que sin el anillo no se salva: suelto desde ~0.24 s, hilera de 88-288 antes);
+ *                        la ventana del charter se queda en 0.66 (a 0.72 el Dino roza el aro al aterrizar)
+ *   anillo → salto       0.74 (±40) · 0.75 (±47) · 0.77 (±55) s, sin depender de la velocidad
+ *   anillo → agachado    0.51 a 350 px/s · 0.41 a 500 · 0.36 a 650 · 0.30-0.32 a 800-1100
  *
  * Las fórmulas quedan por ENCIMA de lo medido en todo el rango (margen de
  * 0-80 ms): el validador final comprueba cada chart de verdad, así que aquí
@@ -61,6 +72,20 @@ export const PAIR_GAP = Object.freeze({
     duckJump: (speed, tol) => 0.40 + 55 / speed + 0.9 * tol,
     duckDuck: (_speed, tol) => 0.20 + tol,
     flipFlip: (speed, tol) => 0.16 + 1.2 * tol + 36 / speed,
+    /** Ventana entre un salto y su anillo (el anillo no cabe sin el Dino en el aire). */
+    jumpRing: Object.freeze({ min: (_speed, _tol) => 0.15, max: (_speed, _tol) => 0.66 }),
+    ringJump: (_speed, tol) => 0.67 + 2 * tol,
+    ringDuck: (speed, tol) => 0.2 + 110 / speed + tol,
+});
+
+/**
+ * Anillos (Ola 6c) más allá de lo que mide la física: el primero de la canción se
+ * estrena cómodo (ni pegado al salto ni a punto de aterrizar) y deja sitio antes
+ * del siguiente.
+ */
+export const RING_RULES = Object.freeze({
+    debutGap: Object.freeze({ min: 0.24, max: 0.5 }),
+    debutQuietS: 4,
 });
 
 /**
@@ -72,8 +97,8 @@ export const PAIR_GAP = Object.freeze({
 const FLIP_CALM_GAP_S = 0.48;
 
 /**
- * @param {'jump'|'duck'|'flip'} a  Acción anterior.
- * @param {'jump'|'duck'|'flip'} b  Acción siguiente.
+ * @param {'jump'|'duck'|'flip'|'ring'} a  Acción anterior.
+ * @param {'jump'|'duck'|'flip'|'ring'} b  Acción siguiente.
  * @param {number} speed     Velocidad del mundo cuando llega la siguiente.
  * @param {{ toleranceS: number, minGapS: number }} profile
  * @param {boolean} combos   ¿Se permiten combinaciones rápidas (salto↔agachado, inversiones seguidas)?
@@ -86,6 +111,13 @@ export function pairGap(a, b, speed, profile, combos) {
         if (a !== b) return profile.minGapS;
         const flips = PAIR_GAP.flipFlip(speed, tol);
         return Math.max(combos ? flips : Math.max(flips, FLIP_CALM_GAP_S), profile.minGapS);
+    }
+    // Un anillo solo sigue a un salto (y nunca a otro anillo); tras él, el Dino
+    // aterriza desde más alto. El máximo de la ventana lo comprueba `fits`.
+    if (b === 'ring') return a === 'jump' ? Math.max(PAIR_GAP.jumpRing.min(speed, tol), profile.minGapS) : Infinity;
+    if (a === 'ring') {
+        const after = b === 'duck' && combos ? PAIR_GAP.ringDuck(speed, tol) : PAIR_GAP.ringJump(speed, tol);
+        return Math.max(after, profile.minGapS);
     }
     const jj = PAIR_GAP.jumpJump(speed, tol);
     let gap;
@@ -181,7 +213,7 @@ export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}
 /**
  * @typedef {Object} ChartAction
  * @property {number} t
- * @property {'jump'|'duck'|'flip'} type
+ * @property {'jump'|'duck'|'flip'|'ring'} type
  * @property {import('./musicModel.js').GridSlot} slot
  * @property {number} score        Importancia musical (decide qué se sacrifica al reparar).
  * @property {boolean} forced      Drop o primeras acciones: se conservan antes que nada.
@@ -214,7 +246,8 @@ export function createPhraseMemory({ minSimilarity = 0.8, maxAgeBars = 48 } = {}
  * @param {(t0: number, t1: number) => number} ctx.energyMean
  * @param {ReturnType<typeof createPhraseMemory>} ctx.memory
  * @param {Set<number> | null} ctx.previousPositions  Posiciones elegidas en el compás anterior del mismo tramo.
- * @param {{ airDucks: number, airTotal: number }} ctx.segmentCounts
+ * @param {{ airDucks: number, airTotal: number, rings: number }} ctx.segmentCounts
+ * @param {{ count: number, lastT: number }} [ctx.ringLog]   Anillos ya colocados en la canción (estreno).
  * @param {number} ctx.introActions            Acciones de "tutorial" que quedan (solo saltos en el pulso, espaciados).
  * @param {ReturnType<import('./modePlan.js').createModeGuide>} [ctx.modes]  Modo de cada instante y portales.
  * @param {number} [ctx.modeIntroLeft]         Acciones de estreno que quedan en el tramo de modo de este compás.
@@ -269,11 +302,16 @@ export function chooseBarActions(ctx) {
         if (tryAdd(cand, preferred, null)) continue;
         // En antigravedad solo hay una acción.
         if (preferred === 'flip') continue;
-        // No cabe como lo pide el sonido: probar la otra acción si está permitida
-        // (un agachado encaja a menos distancia de un salto que otro salto).
-        const alt = preferred === 'jump' ? 'duck' : 'jump';
-        if (alt === 'duck' && !canDuck(cand, ctx, chosen)) continue;
-        if (alt === 'jump' || cand.slot.metric < 1) tryAdd({ ...cand, score: cand.score * 0.9 }, alt, null);
+        // No cabe como lo pide el sonido: probar las otras acciones permitidas (un
+        // agachado encaja a menos distancia de un salto que otro salto; un anillo,
+        // a un contratiempo de él).
+        const weaker = { ...cand, score: cand.score * 0.9 };
+        for (const alt of ['jump', 'duck', 'ring']) {
+            if (alt === preferred) continue;
+            if (alt === 'duck' && (!canDuck(cand, ctx, chosen) || cand.slot.metric >= 1)) continue;
+            if (alt === 'ring' && !canRing(cand, ctx, chosen)) continue;
+            if (tryAdd(weaker, alt, null)) break;
+        }
     }
 
     // Sobran (la memoria trajo más de los que pide este compás): fuera los menos importantes.
@@ -293,6 +331,15 @@ export function chooseBarActions(ctx) {
         const localBeat = bar.beats > 0 ? (bar.t1 - bar.t0) / bar.beats : 0.5;
         for (let i = chosen.length - 1; i >= 0; i--) {
             if (chosen[i].t > bar.t1 - localBeat - 0.02 && chosen[i].slot.strength < 0.75 && !chosen[i].forced) chosen.splice(i, 1);
+        }
+    }
+    // Un anillo cuyo salto se ha quitado ya no tiene de dónde saltar.
+    dropOrphanRings(chosen, ctx.placed.length > 0 ? ctx.placed[ctx.placed.length - 1] : null, ctx.speedAt);
+    for (const a of chosen) {
+        if (a.type !== 'ring') continue;
+        if (ctx.ringLog !== undefined) {
+            ctx.ringLog.count++;
+            ctx.ringLog.lastT = a.t;
         }
     }
 
@@ -456,10 +503,67 @@ function reservedDownbeat(ctx) {
 function preferredType(cand, ctx, chosen) {
     const { slot } = cand;
     if (ctx.modes.modeAt(slot.t) === 'flip') return 'flip';
-    if (cand.forced || slot.metric >= 1) return 'jump';
-    if (!canDuck(cand, ctx, chosen)) return 'jump';
+    // Un golpe que sonaría a salto pegado a otro salto: anillo, si la dificultad los tiene.
+    const jump = canRing(cand, ctx, chosen) ? 'ring' : 'jump';
+    if (cand.forced || slot.metric >= 1) return jump;
+    if (!canDuck(cand, ctx, chosen)) return jump;
     const duck = slot.onBeat ? isBright(slot, ctx) : !(ctx.hasColor && slot.low > 0.5);
-    return duck ? 'duck' : 'jump';
+    return duck ? 'duck' : jump;
+}
+
+/**
+ * ¿Puede este golpe ser un anillo? Si la dificultad los tiene y ya se desbloquearon,
+ * corriendo, fuera del estreno, con golpe, justo tras un salto (en la ventana de
+ * PAIR_GAP.jumpRing) y dentro de la cuota del tramo. El primero de la canción, en la
+ * parte cómoda de la ventana.
+ */
+function canRing(cand, ctx, chosen) {
+    const rule = ctx.profile.ring ?? null;
+    const t = cand.slot.t;
+    if (rule === null || !ctx.unlocked('ring', t) || ctx.introActions > 0 || ctx.modeIntroLeft > 0) return false;
+    if (ctx.modes.modeAt(t) !== 'run' || cand.slot.strength < rule.strength) return false;
+    const prev = neighborBefore(t, ctx.placed, chosen);
+    if (prev === null || prev.type !== 'jump') return false;
+    const gap = t - prev.t;
+    const speed = ctx.speedAt(t);
+    const tol = ctx.profile.toleranceS;
+    // Anillos ya colocados en la canción, contando los de este compás.
+    const log = ctx.ringLog ?? { count: 0, lastT: -Infinity };
+    const here = chosen.filter((a) => a.type === 'ring');
+    const count = log.count + here.length;
+    const debut = count === 0;
+    const min = debut ? RING_RULES.debutGap.min : PAIR_GAP.jumpRing.min(speed, tol);
+    const max = debut ? RING_RULES.debutGap.max : PAIR_GAP.jumpRing.max(speed, tol);
+    if (gap < min - 1e-9 || gap > max + 1e-9) return false;
+    if (count === 1) {
+        const first = here.length > 0 ? here[0].t : log.lastT;
+        if (Math.abs(t - first) < RING_RULES.debutQuietS) return false;
+    }
+    const rings = ctx.segmentCounts.rings + chosen.filter((a) => a.type === 'ring').length;
+    const total = ctx.segmentCounts.airTotal + chosen.length;
+    return rings + 1 <= Math.max(1, Math.floor(rule.share * (total + 1) + 1e-9));
+}
+
+/**
+ * Quita de `actions` (ordenadas) los anillos que ya no siguen a un salto dentro de
+ * su ventana. `before`: la acción anterior a la primera de la lista, si la hay.
+ *
+ * @returns {number} anillos quitados.
+ */
+export function dropOrphanRings(actions, before, speedAt) {
+    let removed = 0;
+    for (let i = 0; i < actions.length; i++) {
+        const a = actions[i];
+        if (a.type !== 'ring') continue;
+        const prev = i > 0 ? actions[i - 1] : before;
+        const gap = prev === null ? Infinity : a.t - prev.t;
+        const speed = speedAt(a.t);
+        if (prev !== null && prev.type === 'jump' && gap <= PAIR_GAP.jumpRing.max(speed, 0) + 1e-9) continue;
+        actions.splice(i, 1);
+        i--;
+        removed++;
+    }
+    return removed;
 }
 
 /**
@@ -510,10 +614,12 @@ function fits(action, chosen, ctx) {
     if (prev !== null) {
         const need = Math.max(introGap, pairGap(prev.type, action.type, speedAt(action.t), profile, combos));
         if (action.t - prev.t < need - 1e-9) return false;
+        if (action.type === 'ring' && action.t - prev.t > PAIR_GAP.jumpRing.max(speedAt(action.t), profile.toleranceS) + 1e-9) return false;
     }
     if (next !== null) {
         const need = Math.max(introGap, pairGap(action.type, next.type, speedAt(next.t), profile, ctx.unlocked('combo', next.t)));
         if (next.t - action.t < need - 1e-9) return false;
+        if (next.type === 'ring' && next.t - action.t > PAIR_GAP.jumpRing.max(speedAt(next.t), profile.toleranceS) + 1e-9) return false;
     }
     return true;
 }

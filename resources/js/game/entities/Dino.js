@@ -85,6 +85,11 @@ export class Dino extends Container {
                 this._squashX = 0.86;
                 this._squashY = 1.18;
                 break;
+            case 'ring':
+                // Segundo impulso en el aire (anillo, Ola 6c): más marcado que un salto.
+                this._squashX = 0.76;
+                this._squashY = 1.3;
+                break;
             case 'climb':
                 // Impulso al empezar a subir; la inclinación la lleva `_tilt`.
                 this._squashX = 0.9;
