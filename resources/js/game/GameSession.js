@@ -392,6 +392,10 @@ export class GameSession {
         this.spawner.tick(songTime, dt, { width: view.width, groundY });
         this._gates.tick(songTime, dt, { width: view.width, groundY });
         this._tunnel.tick(songTime, { width: view.width, groundY });
+        // El orbe al alcance del Dino en el aire se ilumina: "pulsa ahora".
+        this.spawner.armTrigger(this.dino.grounded
+            ? null
+            : this.spawner.triggerAt(bodyHitbox(this.dino, this._hitbox), songTime, groundY));
 
         if (collided) {
             this._startDeath();

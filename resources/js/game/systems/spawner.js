@@ -88,6 +88,8 @@ export function createSpawner(cfg) {
 
     let cursor = 0;
     let lastSongTime = -Infinity;
+    /** Activador iluminado ahora mismo (armTrigger). */
+    let armedData = null;
     const scratchBox = { x: 0, y: 0, w: 0, h: 0 };
 
     function acquire(kind) {
@@ -142,6 +144,7 @@ export function createSpawner(cfg) {
                 const data = activeData[i];
                 const x = leftX(data, songTime, nowD);
                 if (x + data.def.w < -CULL_MARGIN_PX) {
+                    if (data === armedData) armedData = null;
                     release(active[i], data.kind);
                     active.splice(i, 1);
                     activeData.splice(i, 1);
@@ -203,6 +206,21 @@ export function createSpawner(cfg) {
                 if (aabbHit(box, scratchBox)) return data;
             }
             return null;
+        },
+
+        /**
+         * El activador al alcance del Dino (o null): su visual se ilumina
+         * (`Obstacle.setArmed`) y el anterior se apaga. Solo visual: activarlo lo
+         * decide la física con `triggerAt`.
+         * @param {object | null} data  Lo que devolvió `triggerAt`.
+         */
+        armTrigger(data) {
+            if (data === armedData) return;
+            const prev = armedData === null ? -1 : activeData.indexOf(armedData);
+            if (prev >= 0) active[prev].setArmed?.(false);
+            armedData = data;
+            const i = data === null ? -1 : activeData.indexOf(data);
+            if (i >= 0) active[i].setArmed?.(true);
         },
 
         /** Marca un activador como usado (su visual lo refleja: `Obstacle.onTriggered`). */

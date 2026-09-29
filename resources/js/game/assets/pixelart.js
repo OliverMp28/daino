@@ -54,10 +54,11 @@ const PALETTE = {
     U: '#b58cff', // línea del techo
     // Vuelo (Ola 6b): techo en el oro del modo (MODE_COLORS.fly)
     F: '#ffd166', // línea del techo
-    // Anillo de salto (Ola 6c): cian del "en el golpe" (ON_BEAT), con destellos
-    R: '#8fe0ff', // aro
-    r: '#3f8fc4', // cara interior del aro
-    Q: '#ffffff', // destello
+    // Orbe de doble salto (Ola 6c): naranja, un color que no usa ningún portal
+    // ni obstáculo (los portales son cian, violeta y oro; el peligro, rosa).
+    R: '#ffb057', // borde del orbe y chevrón encendido
+    r: '#ff6f2c', // cuerpo del orbe y chevrón apagado
+    Q: '#ffffff', // brillo
     // Portal: en grises para teñirlo con el color de cada modo (Sprite.tint)
     O: '#ffffff', // aro
     o: '#a6a6a6', // aro interior
@@ -378,36 +379,49 @@ const portalA = portalRows(14, 82, 0);
 const portalB = portalRows(14, 82, 1);
 
 /**
- * Anillo de salto (Ola 6c, config.js `RING_JUMP`): un aro alto y estrecho de doble
- * línea, con dos destellos que giran por el borde entre frames. Generado como el
- * portal, más pequeño y sin teñir. Grid 12×26 → 48×104 de mundo.
+ * Orbe de doble salto (Ola 6c, config.js `RING_JUMP`). La primera versión era un
+ * aro alto y hueco: la misma forma que un portal de modo, y en el playtest se leyó
+ * como uno ("no lo entendí hasta leer que era para saltar doble"). Ahora es un
+ * orbe MACIZO (los portales son huecos) con un doble chevrón encima que sube entre
+ * frames: "otro salto hacia arriba". `lit`: el Dino está a su alcance en el aire y
+ * pulsar lo activaría (se pinta en claro, ver Obstacle.setArmed).
+ * Grid 12×26 → 48×104 de mundo (la caja del kind): chevrones arriba, orbe de 12
+ * celdas centrado en la caja, aire debajo.
+ *
+ * @param {0 | 1} frame  Qué chevrón va encendido (0 el de abajo, 1 el de arriba).
+ * @param {boolean} [lit]
  */
-function ringRows(w, h, phase) {
-    const rows = [];
-    const cx = w / 2;
-    const cy = h / 2;
-    for (let y = 0; y < h; y++) {
-        let row = '';
-        for (let x = 0; x < w; x++) {
-            const dx = (x + 0.5 - cx) / (w / 2);
-            const dy = (y + 0.5 - cy) / (h / 2);
-            const d = Math.sqrt(dx * dx + dy * dy);
-            if (d > 1 || d < 0.62) {
-                row += '.';
-                continue;
-            }
-            // Destellos: dos puntos opuestos del borde que avanzan un cuarto de vuelta por frame.
-            const angle = Math.atan2(dy, dx) / (2 * Math.PI) + 0.5;
-            const glint = Math.abs(((angle * 4 + phase) % 2) - 0.25) < 0.12 && d > 0.8;
-            row += glint ? 'Q' : d > 0.8 ? 'R' : 'r';
+function orbRows(frame, lit = false) {
+    const W = 12;
+    const H = 26;
+    const rows = Array.from({ length: H }, () => Array(W).fill('.'));
+    // Doble chevrón: trazo doble de 3 filas, uno en las filas 0-2 y otro en las 3-5.
+    const chevron = (top, on) => {
+        const c = lit ? 'Q' : on ? 'R' : 'r';
+        for (const [dy, xs] of [[0, [5, 6]], [1, [3, 4, 7, 8]], [2, [1, 2, 9, 10]]]) {
+            for (const x of xs) rows[top + dy][x] = c;
         }
-        rows.push(row);
+    };
+    chevron(0, frame === 1);
+    chevron(3, frame === 0);
+    // Orbe de 12 celdas en las filas 7-18: borde claro, cuerpo, brillo arriba a la izquierda.
+    const top = 7;
+    for (let y = 0; y < 12; y++) {
+        for (let x = 0; x < W; x++) {
+            const dx = (x + 0.5 - 6) / 6;
+            const dy = (y + 0.5 - 6) / 6;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d > 1) continue;
+            const shine = Math.hypot(dx + 0.35, dy + 0.35) < 0.26;
+            rows[top + y][x] = shine || (lit && d < 0.55) ? 'Q' : d > 0.74 || lit ? 'R' : 'r';
+        }
     }
-    return rows;
+    return rows.map((r) => r.join(''));
 }
 
-const ringA = ringRows(12, 26, 0);
-const ringB = ringRows(12, 26, 1);
+const orbA = orbRows(0);
+const orbB = orbRows(1);
+const orbLit = orbRows(0, true);
 
 // Flechas del portal (se tiñen): hacia arriba y hacia abajo. Grid 9×5 → 36×20 px.
 const chevronUp = [
@@ -425,7 +439,7 @@ const DEFS = {
     pteroA, pteroB,
     ground, cloud, dot,
     crystal, crystalSharp, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
-    ringA, ringB,
+    orbA, orbB, orbLit,
 };
 
 // --------------------------- Skins (palette-swap) ---------------------------

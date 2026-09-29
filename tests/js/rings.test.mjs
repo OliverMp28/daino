@@ -155,6 +155,32 @@ test('spawner: el aro se ve pero no se choca, y se entrega una sola vez', () => 
     assert.equal(spawner.triggerAt(box, at, GROUND), null, 'ya usado');
 });
 
+test('spawner: el orbe al alcance se ilumina y se apaga al salir, uno solo cada vez', () => {
+    // Tras el playtest de la 6c ("parece un portal"): el orbe enseña cuándo pulsar.
+    const f = figure(0.3);
+    const spawner = createSpawner({
+        events: f.events,
+        speedPxS: 650,
+        layer: { addChild() {}, removeChild() {} },
+        createObstacle: (kind) => ({
+            kind, x: 0, armed: false,
+            activate() { this.armed = false; }, deactivate() {}, placeAt(x) { this.x = x; }, animate() {}, onTriggered() {},
+            setArmed(on) { this.armed = on; },
+        }),
+    });
+    const at = 5.3 + JUMP_RING.leadS;
+    spawner.tick(at, 1 / 60, { width: 1600, groundY: GROUND });
+    const orb = spawner.getActive().find((o) => o.kind === RING_KIND);
+    const inside = spawner.triggerAt({ x: 140, y: GROUND - 200, w: 34, h: 59 }, at, GROUND);
+    spawner.armTrigger(inside);
+    assert.equal(orb.armed, true, 'al alcance: iluminado');
+    spawner.armTrigger(inside);
+    assert.equal(orb.armed, true, 'repetir no cambia nada');
+    spawner.armTrigger(null);
+    assert.equal(orb.armed, false, 'fuera de alcance: apagado');
+    assert.ok(spawner.getActive().filter((o) => o.armed).length === 0);
+});
+
 // --------------------------- Huecos ---------------------------
 
 test('PAIR_GAP del anillo: la ventana tras un salto es jugable y necesaria, y el aterrizaje cabe con la fórmula', () => {

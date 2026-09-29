@@ -161,16 +161,16 @@ export const FLY_MODE = Object.freeze({
 });
 
 /**
- * Anillo de salto (Ola 6c): un aro en el aire que, si se pulsa saltar mientras el
- * Dino lo atraviesa, lo vuelve a impulsar hacia arriba. Rompe el techo de densidad
+ * Orbe de doble salto (Ola 6c; en el código, "anillo"): un orbe en el aire que, si
+ * se pulsa saltar mientras el Dino lo toca, lo vuelve a impulsar hacia arriba. Rompe el techo de densidad
  * del salto: dos saltos seguidos necesitan ≥ 0.68 s (hay que aterrizar), pero un
  * salto y su anillo caben a un contratiempo, que es donde la música los pide.
  *
  *   impulsePxS  Velocidad hacia arriba al activarse. Menos que un salto desde el
  *               suelo (900): el Dino ya va alto y un segundo salto completo lo
  *               sacaría de las pantallas más bajas (medido: ≤ 280 de altura).
- *   zonePadX/Y  El aro se activa con esta holgura alrededor de su dibujo, como
- *               los orbes de Geometry Dash: se ve un aro y se perdona el borde.
+ *   zonePadX/Y  El orbe se activa con esta holgura alrededor de su caja, como
+ *               los orbes de Geometry Dash: se perdona el borde.
  *   leadS       El centro del aro cruza al Dino esto DESPUÉS del golpe. Pulsar
  *               pronto se guarda (jump buffer) y dispara al entrar; pulsar tarde
  *               solo vale mientras se atraviesa: así el margen queda centrado en
@@ -183,8 +183,8 @@ export const JUMP_RING = Object.freeze({
     leadS: 0.06,
 });
 
-/** Lo que se ve al activar un anillo (solo visual). */
-export const JUMP_RING_FX = Object.freeze({ color: 0x8fe0ff, sparks: 14 });
+/** Lo que se ve al activar un orbe (solo visual): chispas en su naranja. */
+export const JUMP_RING_FX = Object.freeze({ color: 0xffa04d, sparks: 14 });
 
 /** Color de cada modo: su portal, su franja en el mapa de la canción y su aviso. */
 export const MODE_COLORS = Object.freeze({ run: 0x7fe6ff, flip: 0xc08bff, fly: 0xffd166 });
@@ -298,16 +298,18 @@ export const SHARP_CRYSTAL_MARGINS_MS = Object.freeze([190, 160, 130, 110]);
  *                  vigente aplica su efecto (`MovementMode.trigger`: 'jump' vuelve a
  *                  saltar en el aire). No tiene `action` propia: la pulsación la
  *                  pide el obstáculo que lo acompaña en el mismo instante.
- *   zone           Holgura del activador alrededor de su dibujo ({ padX, padY }).
+ *   zone           Holgura del activador alrededor de su caja ({ padX, padY }).
+ *   armedSprite    Dibujo del activador cuando el Dino está a su alcance y
+ *                  pulsar lo activaría: enseña "ahora" (Obstacle.setArmed).
  *   hint           Cómo se explica las primeras partidas en que aparece
  *                  ({ label, keys, touch, color }).
  */
 export const OBSTACLE_KIND = Object.freeze({
     CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], mode: 'run', surface: 'floor', action: 'jump', role: 'jump', weight: 1 },
     RING_JUMP: {
-        w: 48, h: 104, altitude: 120, sprites: ['ringA', 'ringB'], animPeriodS: 0.14, mode: 'run', surface: 'floor',
+        w: 48, h: 104, altitude: 120, sprites: ['orbA', 'orbB'], armedSprite: 'orbLit', animPeriodS: 0.14, mode: 'run', surface: 'floor',
         trigger: 'jump', role: 'ring', actionLeadS: JUMP_RING.leadS, zone: { padX: JUMP_RING.zonePadX, padY: JUMP_RING.zonePadY }, weight: 1,
-        hint: { label: 'Anillo', keys: 'Pulsa Espacio dentro del aro: vuelves a saltar', touch: 'Toca dentro del aro: vuelves a saltar', color: 0x8fe0ff },
+        hint: { label: 'Doble salto', keys: 'Salta y pulsa Espacio otra vez al tocar el orbe', touch: 'Salta y toca otra vez al llegar al orbe', color: 0xffa04d },
     },
     CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', accentOf: 'CACTUS_SMALL', weight: 1 },
     ...cactusRows(),

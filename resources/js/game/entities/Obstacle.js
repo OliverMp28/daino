@@ -18,8 +18,9 @@
 //   PTERO        — pterodáctilo volador (altitude > 0): se pasa agachándose.
 //   CRYSTAL_*    — cristales de la antigravedad (Ola 6a), en el suelo o
 //                  colgando del techo (el mismo sprite reflejado).
-//   RING_JUMP    — anillo de salto (Ola 6c): un activador, no se choca. Al
-//                  activarse se hincha y se apaga (onTriggered).
+//   RING_JUMP    — orbe de doble salto (Ola 6c): un activador, no se choca. Se
+//                  ilumina mientras está al alcance del Dino en el aire
+//                  (setArmed) y al activarse se hincha y se apaga (onTriggered).
 
 import { Container, Sprite } from 'pixi.js';
 import { OBSTACLE_KIND, OBSTACLE_ANIM_PERIOD_S } from '../config.js';
@@ -29,8 +30,11 @@ import { obstacleHitbox, obstacleTopY } from '../systems/physics.js';
 /** Duración del fundido de entrada cuando un obstáculo aparece ya dentro de pantalla. */
 const FADE_IN_S = 0.18;
 
-/** Activador usado (anillo): cuánto dura el golpe de escala y a qué opacidad se queda. */
+/** Activador usado (orbe): cuánto dura el golpe de escala y a qué opacidad se queda. */
 const TRIGGER_POP = Object.freeze({ durationS: 0.22, scale: 0.45, restAlpha: 0.28 });
+
+/** Activador al alcance del Dino: cuánto crece. */
+const ARMED_SCALE = 1.18;
 
 export class Obstacle extends Container {
     /**
@@ -60,14 +64,22 @@ export class Obstacle extends Container {
         // sprite reflejado, con la base arriba. La caja lógica (x, y, w, h) no
         // cambia: el hitbox lo calcula physics.js con `def`, no con el sprite.
         this._ySign = def.surface === 'ceiling' ? -1 : 1;
+        // Los activadores no se apoyan en nada: crecen desde su centro.
         this._sprite = new Sprite(getTexture(this._frames[0]));
-        this._sprite.anchor.set(0.5, 1);
-        this._sprite.position.set(def.w / 2, this._ySign > 0 ? def.h : 0);
+        if (def.trigger !== undefined) {
+            this._sprite.anchor.set(0.5, 0.5);
+            this._sprite.position.set(def.w / 2, def.h / 2);
+        } else {
+            this._sprite.anchor.set(0.5, 1);
+            this._sprite.position.set(def.w / 2, this._ySign > 0 ? def.h : 0);
+        }
         this._sprite.scale.set(PIXEL_SCALE, PIXEL_SCALE * this._ySign);
         this.addChild(this._sprite);
         this._beat = 0;
         /** Segundos desde que se activó (∞ = sin activar). Solo los activadores. */
         this._popT = Infinity;
+        /** Al alcance del Dino (solo los activadores con `armedSprite`). */
+        this._armed = false;
 
         this.visible = false;
     }
@@ -78,14 +90,29 @@ export class Obstacle extends Container {
      * @param {number} pulse  [0,1], 1 justo en el golpe.
      */
     setBeat(pulse) {
-        if (Math.abs(pulse - this._beat) < 0.01 || this._popT < Infinity) return;
+        if (Math.abs(pulse - this._beat) < 0.01 || this._popT < Infinity || this._armed) return;
         this._beat = pulse;
         this._sprite.scale.set(PIXEL_SCALE * (1 - 0.04 * pulse), PIXEL_SCALE * (1 + 0.09 * pulse) * this._ySign);
     }
 
-    /** El Dino activó este anillo: se hincha y se apaga, y ya no vale (spawner.markTriggerUsed). */
+    /** El Dino activó este orbe: se hincha y se apaga, y ya no vale (spawner.markTriggerUsed). */
     onTriggered() {
+        this.setArmed(false);
         this._popT = 0;
+    }
+
+    /**
+     * El Dino está a su alcance en el aire: pulsar ahora lo activaría. Se pinta
+     * en claro y crece, para que "cuándo pulsar" se vea y no haya que adivinarlo.
+     * @param {boolean} on
+     */
+    setArmed(on) {
+        const sprite = this.def.armedSprite;
+        if (sprite === undefined || on === this._armed || this._popT < Infinity) return;
+        this._armed = on;
+        this._sprite.texture = getTexture(on ? sprite : this._frames[this._frameIdx]);
+        const k = on ? ARMED_SCALE : 1;
+        this._sprite.scale.set(PIXEL_SCALE * k, PIXEL_SCALE * k * this._ySign);
     }
 
     /**
@@ -99,6 +126,7 @@ export class Obstacle extends Container {
         this._fadeT = fadeIn ? 0 : FADE_IN_S;
         this.alpha = fadeIn ? 0 : 1;
         this._popT = Infinity;
+        this._armed = false;
         this._sprite.scale.set(PIXEL_SCALE, PIXEL_SCALE * this._ySign);
         this.visible = true;
     }
@@ -136,7 +164,7 @@ export class Obstacle extends Container {
             this._fadeT = Math.min(FADE_IN_S, this._fadeT + dt);
             this.alpha = this._fadeT / FADE_IN_S;
         }
-        if (this._frames.length > 1) {
+        if (this._frames.length > 1 && !this._armed) {
             this._flapT += dt;
             if (this._flapT >= this._animPeriod) {
                 this._flapT -= this._animPeriod;
