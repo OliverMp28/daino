@@ -9,7 +9,6 @@
 //              partículas y el suelo.
 //   level      nivel del tramo actual (0 reposo … 4 clímax).
 //   climax     si el tramo actual es el clímax.
-//   progress   fracción de canción: el sol se pone con ella.
 //   fired      efectos de momento que tocan en este frame (drops y lifts).
 //   build      [0,1] (Ola 6c) cuánto va de la subida hacia el próximo drop.
 //   calm       [0,1] (Ola 6c) cuánto contiene el mundo la respiración en un break.
@@ -51,9 +50,8 @@ export const FX_KINDS = Object.freeze({
 
 /**
  * @param {{ events: Array<{ t: number, type: string, level?: number, climax?: boolean, fx?: string, until?: number, semitones?: number }> }} chart
- * @param {number} durationSec
  */
-export function createSongDirector(chart, durationSec) {
+export function createSongDirector(chart) {
     const sections = chart.events.filter((e) => e.type === 'section' && Number.isInteger(e.level) && e.level >= 0 && e.level <= 4);
     const known = chart.events.filter((e) => e.type === 'fx' && typeof e.fx === 'string' && FX_KINDS[e.fx] !== undefined);
     const moments = known.filter((e) => FX_KINDS[e.fx].kind === 'moment');
@@ -141,10 +139,6 @@ export function createSongDirector(chart, durationSec) {
         /** Giro del color del cielo en vueltas (suavizado). */
         get hue() {
             return hue;
-        },
-        /** @param {number} songTime */
-        progress(songTime) {
-            return durationSec > 0 ? Math.min(1, Math.max(0, songTime / durationSec)) : 0;
         },
     };
 }

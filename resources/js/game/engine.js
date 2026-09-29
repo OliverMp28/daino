@@ -24,6 +24,12 @@
 // todo lo de dentro trabaja en unidades de mundo, y cualquier pantalla apaisada
 // enseña casi el mismo mundo. El fondo (shader) y el hudLayer (destellos a
 // pantalla completa) siguen en píxeles de pantalla.
+//
+// Escenario (fase E1, doc 11): el engine es dueño de la ESCENA (scenes/registry.js)
+// y de la HORA del cielo. La partida empuja la hora de su plan (setSkyHour) y el
+// menú usa la de la escena; cada frame en que cambia, scenes/skyModel.js la
+// convierte en el cielo del shader y el color de las capas del escenario.
+// `setAudioFxEnabled(false)` (panel dev) deja ver el escenario sin los efectos.
 
 import {
     Application,
@@ -40,6 +46,9 @@ import { createSpeedLines } from './entities/SpeedLines.js';
 import { SCENERY, DT_CAP_S, WORLD_VIEW, WORLD_VIEW_PORTRAIT_MENU } from './config.js';
 import { resolveBudget, MAX_FILTER_DPR, TIER_ORDER } from './RenderProfile.js';
 import { computeWorldView, sameView } from './systems/worldView.js';
+import { DEFAULT_SCENE, SKY_ELEMENTS, resolveScene, sceneElements } from './scenes/registry.js';
+import { createSkyState, skyColorAt, skyStateAt } from './scenes/skyModel.js';
+import { rgbToHex } from './scenes/color.js';
 
 /** Evento con la vista nueva cuando cambia (resize, rotación, zoom). */
 export const VIEW_CHANGE_EVENT = 'daino:viewchange';
@@ -63,6 +72,15 @@ let isPaused = false;
 let timeAccum = 0;         // segundos desde init — siempre avanza salvo pausa
 let worldSpeed = SCENERY.menuSpeed;  // px/s del scroll del scenery
 let musicIntensity = 0;    // intensidad del tramo de la canción (Ola 5), 0 en el menú
+
+// --- Escenario (fase E1) ---
+let scene = resolveScene(DEFAULT_SCENE);
+let skyHour = null;              // hora que empuja la partida; null = la del menú
+const skyState = createSkyState();
+let appliedHour = NaN;           // última hora convertida en cielo
+let skyDirty = true;             // escena o vista nuevas: recalcular aunque la hora no cambie
+let cssSkyAt = -Infinity;        // último volcado del cielo a las variables CSS
+let fxEnabled = true;            // efectos de la música (panel dev: "Efectos del audio")
 
 // --- Perfiles de render (Ola 1) ---
 let profileName = 'MENU';        // estado actual de la app
@@ -120,7 +138,7 @@ export async function startEngine(mountTarget = document.body) {
     bgLayer = new Container({ label: 'bg' });
     worldRoot = new Container({ label: 'world' });
     worldRoot.scale.set(view.scale);
-    scenery = createScenery({ width: view.width, height: view.height });
+    scenery = createScenery({ width: view.width, height: view.height }, scene);
     sceneryLayer = scenery.container;
     gameLayer = new Container({ label: 'game' });
     particleLayer = createParticleLayer(
@@ -170,6 +188,7 @@ export async function startEngine(mountTarget = document.body) {
         }
         worldRoot.scale.set(next.scale);
         scenery.resize(next.width, next.height);
+        skyDirty = true;
         particleLayer.resize(next.width, next.height);
         speedLines?.resize(next.width, next.height, next.groundY);
         // La vista también la usa el CSS: el HUD y los paneles pueden alinearse
@@ -371,6 +390,7 @@ function tick(ticker) {
         scenery.tick(dt, worldSpeed);
         speedLines?.tick(dt, worldSpeed);
     }
+    updateSky();
 
     if (audioFilter) {
         // uTime y uDebugMode se actualizan SIEMPRE — alimentan la escena idle
@@ -379,7 +399,7 @@ function tick(ticker) {
 
         // FFT/bands solo cuando hay audio atachado. En idle el shader fuerza
         // a 0 los reactivos vía uShaderMode (branch GLSL).
-        if (audio !== null) {
+        if (audio !== null && fxEnabled) {
             const fftSlice = audio.getFrequencyData(FFT_BINS);
             audioFilter.fftBuffer.set(fftSlice);
             audioFilter.uploadFft();
@@ -400,6 +420,87 @@ function tick(ticker) {
     if (particleLayer.tick) particleLayer.tick(dt, rms * (0.6 + 0.9 * musicIntensity));
 }
 
+// --------------------------- Escenario (fase E1) ---------------------------
+
+/** Hora del cielo: la del panel dev si está fijada, la de la partida o la del menú. */
+function currentSkyHour() {
+    if (import.meta.env.DEV) {
+        const dev = window.__daino?.sky?.hour;
+        if (Number.isFinite(dev)) return dev;
+    }
+    return skyHour ?? scene.menuHour;
+}
+
+let cssSkyPending = false;
+const cssTmp = [0, 0, 0];
+
+/**
+ * Convierte la hora en cielo cuando cambia: uniforms del shader, color de las
+ * capas del escenario y, sin shader (prefers-reduced-motion), el degradado CSS.
+ * En el menú la hora no se mueve y esto no hace nada.
+ */
+function updateSky() {
+    const hour = currentSkyHour();
+    if (hour !== appliedHour || skyDirty) {
+        appliedHour = hour;
+        skyDirty = false;
+        skyStateAt(hour, scene, skyState);
+        if (audioFilter) audioFilter.setSky(skyState);
+        scenery.light(skyState);
+        cssSkyPending = audioFilter === null;
+    }
+    // Sin shader, el cielo es el degradado CSS del body: como mucho 2 veces por
+    // segundo (un cambio de variables CSS repinta la página entera).
+    if (cssSkyPending && performance.now() - cssSkyAt >= 500) {
+        cssSkyAt = performance.now();
+        cssSkyPending = false;
+        const root = document.documentElement.style;
+        root.setProperty('--daino-sky-top', rgbToHex(skyState.sky.top));
+        root.setProperty('--daino-sky-mid', rgbToHex(skyColorAt(skyState, 0.55, cssTmp)));
+        root.setProperty('--daino-sky-horizon', rgbToHex(skyColorAt(skyState, 0.97, cssTmp)));
+    }
+}
+
+/**
+ * Hora del cielo que empuja la partida (horas continuas: las 5:00 del día
+ * siguiente son 29). `null` vuelve a la hora del menú de la escena.
+ * @param {number | null} hour
+ */
+export function setSkyHour(hour) {
+    skyHour = Number.isFinite(hour) ? hour : null;
+}
+
+/** Cambia de escena (panel dev; en la fase E2, la del nivel). */
+export function setScene(id) {
+    scene = resolveScene(id);
+    scenery?.setScene(scene);
+    skyDirty = true;
+}
+
+/** Enciende o apaga un elemento del escenario por su id (panel dev). */
+export function setSkyElementVisible(id, visible) {
+    const el = SKY_ELEMENTS.find((e) => e.id === id);
+    if (el) audioFilter?.setSkyElement(el.slot, visible);
+    else scenery?.setElementVisible(id, visible);
+}
+
+/**
+ * Efectos de la música sí/no (panel dev): sin ellos se ve el escenario solo, con
+ * su hora. Apaga lo que late en el shader, la línea del suelo, las líneas de
+ * velocidad y la energía de las motas.
+ */
+export function setAudioFxEnabled(enabled) {
+    fxEnabled = enabled;
+    if (!enabled) {
+        audioFilter?.setMode('idle');
+        scenery?.setPulse(0, 0);
+        speedLines?.setLevel(0);
+        musicIntensity = 0;
+    } else if (audio !== null) {
+        audioFilter?.setMode('reactive');
+    }
+}
+
 /**
  * Conecta un AudioEngine al ticker. Llamar tras el primer drop de MP3.
  * Idempotente — reemplaza el audio anterior si lo había. Pone el shader en
@@ -407,7 +508,7 @@ function tick(ticker) {
  */
 export function attachAudio(audioEngine) {
     audio = audioEngine;
-    if (audioFilter) audioFilter.setMode('reactive');
+    if (audioFilter) audioFilter.setMode(fxEnabled ? 'reactive' : 'idle');
 }
 
 /**
@@ -458,19 +559,22 @@ export function setAmbientDinoSkin(skinId) {
  * cada frame como exp-decay de la fase del beat (BPM detectado + audioTime).
  */
 export function setBeatPulse(v) {
+    if (!fxEnabled) return;
     if (audioFilter) audioFilter.setUniforms({ bpmPulse: v });
     if (scenery) scenery.setPulse(v, musicIntensity);
 }
 
 /**
  * Estado de la estructura de la canción (Ola 5). GameSession lo empuja cada
- * frame desde su director: intensidad del tramo, progreso (el sol se pone con
- * él), si es el clímax y el destello de un drop; y (Ola 6c) la subida hacia un
- * drop, la calma de un break y el giro de color de los cambios de tonalidad.
+ * frame desde su director: intensidad del tramo, si es el clímax y el destello
+ * de un drop; y (Ola 6c) la subida hacia un drop, la calma de un break y el
+ * giro de color de los cambios de tonalidad. (El sol ya no se pone con el
+ * progreso: lo lleva la hora del cielo, setSkyHour.)
  *
- * @param {{ intensity?: number, progress?: number, climax?: number, flash?: number, build?: number, calm?: number, hue?: number }} s
+ * @param {{ intensity?: number, climax?: number, flash?: number, build?: number, calm?: number, hue?: number }} s
  */
 export function setMusicState(s) {
+    if (!fxEnabled) return;
     if (s.intensity !== undefined) musicIntensity = s.intensity;
     if (audioFilter) audioFilter.setUniforms(s);
 }
@@ -488,6 +592,10 @@ export function setMusicState(s) {
  */
 export function setSpeedFx(s) {
     if (!speedLines) return;
+    if (!fxEnabled) {
+        if (s.clearAbove !== undefined) speedLines.setClearance(s.clearAbove);
+        return;
+    }
     if (s.level !== undefined) speedLines.setLevel(s.level);
     if (s.clearAbove !== undefined) speedLines.setClearance(s.clearAbove);
     if (s.burst) speedLines.burst();
@@ -508,6 +616,15 @@ function getApi() {
         getQualityTier,
         setAmbientDinoVisible,
         setAmbientDinoSkin,
+        setSkyHour,
+        setScene,
+        setSkyElementVisible,
+        setAudioFxEnabled,
+        // Escenario vigente y su hora (lo lee la GameSession para su plan y el
+        // panel dev para enseñarlo).
+        getScene: () => scene,
+        getSceneElements: () => sceneElements(scene),
+        getSky: () => ({ hour: appliedHour, phase: skyState.phase, elev: skyState.elev, sceneId: scene.id, fx: fxEnabled }),
         getCanvas: () => app?.canvas ?? null,
         // Vista del mundo vigente (se sustituye, no se muta, al cambiar):
         // tamaño visible y suelo en unidades de mundo, escala y suelo en px.

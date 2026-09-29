@@ -1233,11 +1233,14 @@ body:not([data-app-state="MENU"]) #auth-anchor {
  * ------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
+    /* Sin shader, el cielo es este degradado: el engine vuelca en --daino-sky-*
+       los colores de la hora del cielo (fase E1, doc 11), a 2 Hz como mucho. El
+       día, el ocaso y la noche siguen llegando, sin movimiento. */
     body {
-        background:
-            radial-gradient(ellipse at 50% 30%,
-                var(--color-daino-bg-lifted) 0%,
-                var(--color-daino-bg-deep) 70%);
+        background: linear-gradient(to bottom,
+            var(--daino-sky-top, var(--color-daino-bg-deep)) 0%,
+            var(--daino-sky-mid, var(--color-daino-bg-deep)) 55%,
+            var(--daino-sky-horizon, var(--color-daino-bg-lifted)) calc(100% - var(--daino-ground-offset, 22px)));
     }
 
     body[data-drag="active"]::after {
@@ -2864,6 +2867,63 @@ dialog.daino-rotate p { margin: 0 0 1.2rem; line-height: 1.45; color: color-mix(
 }
 
 .daino-devtools__row input { accent-color: var(--color-daino-beat); cursor: pointer; }
+
+/* Sección "Cielo" (fase E1, doc 11). El panel crece: se desplaza si no cabe. */
+.daino-devtools__panel {
+    max-height: calc(100dvh - 4.5rem);
+    overflow-y: auto;
+    width: 15.5rem;
+}
+
+.daino-devtools__heading:not(:first-child) { margin-top: 0.45rem; }
+
+.daino-devtools__readout {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-daino-fg);
+}
+
+.daino-devtools__plan {
+    margin: 0;
+    font-size: 0.72rem;
+    color: color-mix(in oklch, var(--color-daino-fg) 65%, transparent);
+}
+
+.daino-devtools__row--slider { cursor: default; gap: 0.35rem; }
+.daino-devtools__row--slider label { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; white-space: nowrap; }
+.daino-devtools__row--slider input[type="range"] { flex: 1; min-width: 0; }
+
+.daino-devtools__value {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in oklch, var(--color-daino-fg) 75%, transparent);
+}
+
+.daino-devtools__button,
+.daino-devtools__row select {
+    font: inherit;
+    font-size: 0.78rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.4rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 22%, transparent);
+    background: color-mix(in oklch, var(--color-daino-bg-lifted) 70%, transparent);
+    color: var(--color-daino-fg);
+    cursor: pointer;
+}
+
+.daino-devtools__button:hover { border-color: color-mix(in oklch, var(--color-daino-fg) 45%, transparent); }
+
+.daino-devtools__elements {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+    padding-top: 0.2rem;
+    border-top: 1px solid color-mix(in oklch, var(--color-daino-fg) 10%, transparent);
+}
+
+.daino-devtools__elements .daino-devtools__row { font-size: 0.76rem; }
 
 @media (prefers-reduced-motion: reduce) {
     .daino-devtools__handle { transition: none; }

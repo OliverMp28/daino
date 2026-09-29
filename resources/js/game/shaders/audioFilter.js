@@ -1,9 +1,12 @@
-// Fábrica del Filter audio-reactivo que vive en la Capa 1 del engine.
+// Fábrica del Filter del fondo: el cielo del escenario (fase E1, doc 11) con los
+// efectos de la música encima. Vive en la Capa 1 del engine.
 //
 // PixiJS v8 strict:
 //   - GLSL ES 3.0 (in/out, texture(), out vec4 finalColor) — doc 09 §2.4.
-//   - Uniforms scalar agrupados en `resources.audioUniforms`. Pixi compila el
-//     grupo a un UBO; se accede vía filter.resources.audioUniforms.uniforms.X.
+//   - Dos grupos de uniforms que no se mezclan (doc 11 §2.4):
+//       audioUniforms — los efectos: lo que reacciona a la música.
+//       skyUniforms   — el escenario: el cielo de la hora (scenes/skyModel.js).
+//     Se accede vía filter.resources.<grupo>.uniforms.X.
 //   - Texturas como propiedad directa de `resources` (NO dentro de un grupo).
 //     uFFT es un sampler2D 256x1 con formato r8unorm — un byte por bin.
 //
@@ -68,13 +71,40 @@ export function createAudioFilter() {
                 uCell:       { value: 4.0, type: 'f32' },
                 // Estructura de la canción (Ola 5): ver background.frag.
                 uIntensity:  { value: 0.0, type: 'f32' },
-                uProgress:   { value: 0.0, type: 'f32' },
                 uClimax:     { value: 0.0, type: 'f32' },
                 uFlash:      { value: 0.0, type: 'f32' },
                 // Efectos del plan del charter (Ola 6c): ver background.frag.
                 uBuild:      { value: 0.0, type: 'f32' },
                 uCalm:       { value: 0.0, type: 'f32' },
                 uHue:        { value: 0.0, type: 'f32' },
+            },
+            // Cielo del escenario (fase E1): lo rellena `setSky` con el estado de
+            // scenes/skyModel.js. Posiciones en fracción del cielo (0 arriba, 1
+            // horizonte). Ver background.frag.
+            skyUniforms: {
+                uSkyTop:     { value: new Float32Array([0.02, 0.02, 0.05]), type: 'vec3<f32>' },
+                uSkyMid:     { value: new Float32Array([0.04, 0.04, 0.12]), type: 'vec3<f32>' },
+                uSkyHorizon: { value: new Float32Array([0.11, 0.07, 0.18]), type: 'vec3<f32>' },
+                uHaze:       { value: new Float32Array(4), type: 'vec4<f32>' },
+                uSunPos:     { value: new Float32Array([0.8, 1.2]), type: 'vec2<f32>' },
+                uSunRadius:  { value: 0.1, type: 'f32' },
+                uSunCore:    { value: new Float32Array(3), type: 'vec3<f32>' },
+                uSunEdge:    { value: new Float32Array(3), type: 'vec3<f32>' },
+                uSunSlits:   { value: 0.0, type: 'f32' },
+                uSunGlow:    { value: new Float32Array(4), type: 'vec4<f32>' },
+                uSunHalo:    { value: 0.0, type: 'f32' },
+                uMoonPos:    { value: new Float32Array([0.5, 1.2]), type: 'vec2<f32>' },
+                uMoonRadius: { value: 0.04, type: 'f32' },
+                uMoonColor:  { value: new Float32Array(4), type: 'vec4<f32>' },
+                uStarVis:    { value: 0.0, type: 'f32' },
+                uStarRot:    { value: 0.0, type: 'f32' },
+                uLucero:     { value: new Float32Array(4), type: 'vec4<f32>' },
+                uNight:      { value: 0.0, type: 'f32' },
+                uVignette:   { value: 0.2, type: 'f32' },
+                // Interruptores del panel dev (1 = se ve), por hueco de
+                // SKY_ELEMENTS (scenes/registry.js).
+                uShow0:      { value: new Float32Array([1, 1, 1, 1]), type: 'vec4<f32>' },
+                uShow1:      { value: new Float32Array([1, 1, 1, 1]), type: 'vec4<f32>' },
             },
             // CRÍTICO: pasar el TextureSource (BufferImageSource extiende de él),
             // no una Texture wrapper. Si pones `Texture` aquí, Pixi v8 deja el
@@ -89,7 +119,7 @@ export function createAudioFilter() {
     // datos y el sample devuelve memoria sin inicializar.
     fftSource.update();
 
-    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, frame, cell, intensity, progress, climax, flash, build, calm, hue }) {
+    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, frame, cell, intensity, climax, flash, build, calm, hue }) {
         const u = filter.resources.audioUniforms.uniforms;
         if (frame     !== undefined) {
             u.uFrame[0] = frame[0];
@@ -105,7 +135,6 @@ export function createAudioFilter() {
         if (debugMode !== undefined) u.uDebugMode = debugMode;
         if (horizon   !== undefined) u.uHorizon   = horizon;
         if (intensity !== undefined) u.uIntensity = intensity;
-        if (progress  !== undefined) u.uProgress  = progress;
         if (climax    !== undefined) u.uClimax    = climax;
         if (flash     !== undefined) u.uFlash     = flash;
         if (build     !== undefined) u.uBuild     = build;
@@ -135,7 +164,6 @@ export function createAudioFilter() {
             u.uHigh = 0;
             u.uBpmPulse = 0;
             u.uIntensity = 0;
-            u.uProgress = 0;
             u.uClimax = 0;
             u.uFlash = 0;
             u.uBuild = 0;
@@ -144,6 +172,45 @@ export function createAudioFilter() {
             fftBuffer.fill(0);
             fftSource.update();
         }
+    }
+
+    /**
+     * Sube el cielo de una hora (scenes/skyModel.js). Copia en los arrays del
+     * grupo: sin asignaciones por frame.
+     *
+     * @param {ReturnType<import('../scenes/skyModel.js').createSkyState>} s
+     */
+    function setSky(s) {
+        const u = filter.resources.skyUniforms.uniforms;
+        u.uSkyTop.set(s.sky.top);
+        u.uSkyMid.set(s.sky.mid);
+        u.uSkyHorizon.set(s.sky.horizon);
+        u.uHaze.set(s.sky.haze);
+        u.uSunPos.set(s.sun.pos);
+        u.uSunRadius = s.sun.radius;
+        u.uSunCore.set(s.sun.core);
+        u.uSunEdge.set(s.sun.edge);
+        u.uSunSlits = s.sun.slits;
+        u.uSunGlow.set(s.sun.glow);
+        u.uSunHalo = s.sun.halo;
+        u.uMoonPos.set(s.moon.pos);
+        u.uMoonRadius = s.moon.radius;
+        u.uMoonColor.set(s.moon.color);
+        u.uStarVis = s.stars.vis;
+        u.uStarRot = s.stars.rot;
+        u.uLucero.set(s.lucero);
+        u.uNight = s.night;
+        u.uVignette = s.vignette;
+    }
+
+    /**
+     * Enciende o apaga un elemento del cielo por su hueco (SKY_ELEMENTS).
+     * @param {number} slot  0-7
+     * @param {boolean} visible
+     */
+    function setSkyElement(slot, visible) {
+        const u = filter.resources.skyUniforms.uniforms;
+        (slot < 4 ? u.uShow0 : u.uShow1)[slot % 4] = visible ? 1 : 0;
     }
 
     function uploadFft() {
@@ -177,5 +244,5 @@ export function createAudioFilter() {
         });
     }
 
-    return { filter, fftBuffer, fftSource, setUniforms, setMode, uploadFft };
+    return { filter, fftBuffer, fftSource, setUniforms, setMode, setSky, setSkyElement, uploadFft };
 }

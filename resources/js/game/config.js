@@ -459,19 +459,13 @@ export const PHYSICS_STEP_S = 1 / 120;
  */
 export const MAX_PHYSICS_CATCHUP_S = 5;
 
-// --------------------------- Scenery (parallax) ---------------------------
+// --------------------------- Scenery ---------------------------
+// Las capas del escenario (cordilleras, nubes, suelo) y sus números viven en la
+// escena que las declara (scenes/registry.js, fase E1).
 
 export const SCENERY = Object.freeze({
     /** Velocidad de scroll ambiente en px/s cuando NO hay partida (menú). */
     menuSpeed: 60,
-    /** Factor de parallax de las nubes respecto a la velocidad del mundo. */
-    cloudParallax: 0.25,
-    /** Deriva propia de las nubes en px/s (se mueven aunque el mundo pare). */
-    cloudDriftPxS: 8,
-    /** Factor de parallax de las montañas lejanas. */
-    mountainParallax: 0.12,
-    /** Número de nubes en pantalla. */
-    cloudCount: 4,
 });
 
 // --------------------------- Juice ---------------------------

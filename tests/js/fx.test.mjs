@@ -101,7 +101,7 @@ test('director: la subida crece hasta el drop, el break entra y sale con fundido
             { t: 28, type: 'fx', fx: 'fuegos', strength: 9 },
         ],
     };
-    const d = createSongDirector(chart, 40);
+    const d = createSongDirector(chart);
     const fired = [];
     const at = {};
     for (let t = 0; t <= 40; t += 1 / 60) {

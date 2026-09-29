@@ -29,8 +29,8 @@ function run(director, from, to) {
     return fired;
 }
 
-test('sigue los tramos: nivel, clímax y progreso en cada instante', () => {
-    const d = createSongDirector(chart, 50);
+test('sigue los tramos: nivel y clímax en cada instante', () => {
+    const d = createSongDirector(chart);
     run(d, 0, 5);
     assert.equal(d.level, 1);
     assert.equal(d.climax, false);
@@ -39,26 +39,23 @@ test('sigue los tramos: nivel, clímax y progreso en cada instante', () => {
     run(d, 12, 35);
     assert.equal(d.level, 4);
     assert.equal(d.climax, true);
-    assert.equal(d.progress(25), 0.5);
-    assert.equal(d.progress(-1), 0);
-    assert.equal(d.progress(99), 1);
 });
 
 test('efectos: cada uno se dispara una sola vez, en su frame', () => {
-    const d = createSongDirector(chart, 50);
+    const d = createSongDirector(chart);
     const fired = run(d, 0, 50);
     assert.deepEqual(fired.map((f) => f.fx), ['lift', 'drop']);
     assert.ok(Math.abs(fired[0].t - 10) <= 1 / 60 + 1e-9);
     assert.ok(Math.abs(fired[1].t - 30) <= 1 / 60 + 1e-9);
     // Un salto largo de reloj (pestaña en segundo plano) dispara lo pendiente de golpe, sin repetir.
-    const jump = createSongDirector(chart, 50);
+    const jump = createSongDirector(chart);
     jump.update(0, 1 / 60);
     assert.deepEqual(jump.update(45, 1 / 60).map((e) => e.fx), ['lift', 'drop']);
     assert.deepEqual(jump.update(46, 1 / 60), []);
 });
 
 test('intensidad: sube rápido (un drop se nota ya) y baja despacio (sin apagón)', () => {
-    const d = createSongDirector(chart, 50);
+    const d = createSongDirector(chart);
     run(d, 0, 9.9);
     assert.ok(Math.abs(d.intensity - LEVEL_INTENSITY[1]) < 0.01, 'asentada en la calma');
     run(d, 10, 10.5);
@@ -71,12 +68,12 @@ test('intensidad: sube rápido (un drop se nota ya) y baja despacio (sin apagón
 });
 
 test('el reloj no retrocede y un chart sin estructura queda en intensidad media', () => {
-    const d = createSongDirector(chart, 50);
+    const d = createSongDirector(chart);
     run(d, 0, 12);
     assert.deepEqual(d.update(5, 1 / 60), [], 'un instante anterior no dispara ni cambia nada');
     assert.equal(d.level, 3);
 
-    const flat = createSongDirector({ events: [{ t: 4, type: 'obstacle', kind: 'PTERO' }] }, 30);
+    const flat = createSongDirector({ events: [{ t: 4, type: 'obstacle', kind: 'PTERO' }] });
     run(flat, 0, 20);
     assert.equal(flat.intensity, 0.5);
     assert.equal(flat.climax, false);

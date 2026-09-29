@@ -26,7 +26,8 @@
 //     clímax se enciende también en el HUD.
 //   - En un drop: destello, golpe de cámara y ola de partículas justo en el
 //     primer tiempo, que es donde el charter pone la acción.
-//   - El sol se pone con la canción: el final se ve llegar.
+//   - El cielo cuenta la canción (fase E1, doc 11): de la tarde al atardecer, la
+//     noche con el clímax y el amanecer con el final (scenes/skyClock.js).
 //   - Pulsar exactamente en el golpe suelta un destello a los pies del Dino.
 //   - Pasado el último obstáculo, "¡Superado!" mientras la canción termina.
 //
@@ -51,6 +52,8 @@ import { createSpawner } from './systems/spawner.js';
 import { createBeatClock } from './systems/beatClock.js';
 import { createSongDirector } from './systems/songDirector.js';
 import { createSpeedCues } from './systems/speedCues.js';
+import { planSky } from './scenes/skyClock.js';
+import { resolveScene, sceneCycle } from './scenes/registry.js';
 import { speedProfileOf } from './systems/speedProfile.js';
 import { obstacleEvents } from './levels/chartFormat.js';
 import { createBurstEmitter } from './entities/ParticleLayer.js';
@@ -140,7 +143,17 @@ export class GameSession {
         this._beatClock = beats.length >= 8
             ? createBeatClock(beats, this.chart.music.beatPeriodS, this.chart.music.downbeats ?? [])
             : createBeatClock(obstacleEvents(this.chart).map((e) => e.t), this.chart.music.beatPeriodS);
-        this._director = createSongDirector(this.chart, this._durationSec);
+        this._director = createSongDirector(this.chart);
+        // Hora del cielo de cada instante (fase E1): el plan se ancla a la
+        // estructura del chart, con el ciclo de la escena vigente.
+        this._sky = planSky(
+            { sections: this.chart.events.filter((e) => e.type === 'section'), durationSec: this._durationSec },
+            sceneCycle(this.engine.getScene?.() ?? resolveScene()),
+        );
+        /** Epílogo del cielo tras superar el nivel (se pone el sol o sale). */
+        this._skyEpilogue = null;
+        /** Hora del cielo que se está viendo (de ella arranca el epílogo). */
+        this._skyHourNow = this._sky.hourAt(0);
         // Marchas y acelerones (afinado de velocidad).
         this._speedCues = createSpeedCues(this.chart, this._speed);
         this._gearMomentAt = Infinity;
@@ -266,9 +279,10 @@ export class GameSession {
         this.hud.setGear?.(0);
 
         // El mundo scrollea a la velocidad de la canción; el fondo arranca con
-        // la intensidad del primer tramo y el sol en lo alto.
+        // la intensidad del primer tramo y el cielo a la hora del principio.
         this.engine.setWorldSpeed(this._speedPxS);
-        this.engine.setMusicState?.({ intensity: this._director.intensity, progress: 0, climax: 0, flash: 0 });
+        this.engine.setMusicState?.({ intensity: this._director.intensity, climax: 0, flash: 0 });
+        this.engine.setSkyHour?.(this._sky.hourAt(0));
         this.engine.setSpeedFx?.({ level: 0 });
 
         // Input. Las pulsaciones NO se aplican al leerse: se fechan en tiempo de
@@ -322,6 +336,7 @@ export class GameSession {
         if (this._ended) {
             this._bursts?.tick(dt);
             this.dino?.tickVisual(dt, SCENERY.menuSpeed * 2);
+            this._tickSkyEpilogue(dt);
             return;
         }
         if (!this._isRunning || this._isPaused) return;
@@ -535,9 +550,10 @@ export class GameSession {
             }
         }
 
+        this._skyHourNow = this._sky.hourAt(shownTime);
+        this.engine.setSkyHour?.(this._skyHourNow);
         this.engine.setMusicState?.({
             intensity: this._director.intensity,
-            progress: this._director.progress(shownTime),
             climax: this._climaxGlow,
             flash,
             build: this._director.build,
@@ -964,6 +980,11 @@ export class GameSession {
         // solo para lo visual (ver `_tick`) hasta `stop()`.
         this._ended = reason !== 'stopped';
         this.engine.setWorldSpeed(reason === 'collision' ? 0 : SCENERY.menuSpeed);
+        // Tras superar el nivel, el cielo sigue unos segundos bajo el panel hasta
+        // el siguiente hito; tras chocar, se queda donde caíste.
+        // Arranca de la hora que se está viendo: al salir ganando desde la pausa
+        // (finishCleared) la canción aún no ha terminado.
+        if (reason === 'win') this._skyEpilogue = { ...this._sky.epilogue(this._skyHourNow), t: 0 };
         this.engine.setBeatPulse(0);
         this.engine.setSpeedFx?.({ level: 0, clearAbove: 0 });
         this.hud.setControls?.(false);
@@ -1018,9 +1039,19 @@ export class GameSession {
         this.onGameOver({ reason, score: this._score });
     }
 
+    /** Epílogo del cielo bajo el panel de resultados, con arranque y llegada suaves. */
+    _tickSkyEpilogue(dt) {
+        const ep = this._skyEpilogue;
+        if (ep === null || ep.durationS <= 0 || ep.t >= ep.durationS) return;
+        ep.t = Math.min(ep.durationS, ep.t + dt);
+        const k = ep.t / ep.durationS;
+        this.engine.setSkyHour?.(ep.from + (ep.to - ep.from) * k * k * (3 - 2 * k));
+    }
+
     stop() {
         if (this._isRunning) this._end('stopped');
         this._ended = false;
+        this._skyEpilogue = null;
         if (this._ticker && this._tickFn) {
             this._ticker.remove(this._tickFn);
             this._tickFn = null;
