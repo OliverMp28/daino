@@ -1235,12 +1235,14 @@ body:not([data-app-state="MENU"]) #auth-anchor {
 @media (prefers-reduced-motion: reduce) {
     /* Sin shader, el cielo es este degradado: el engine vuelca en --daino-sky-*
        los colores de la hora del cielo (T01), a 2 Hz como mucho. El
-       día, el ocaso y la noche siguen llegando, sin movimiento. */
+       día, el ocaso y la noche siguen llegando, sin movimiento. Termina en el
+       horizonte de la escena (T02.2: en la Costa, la línea del mar; el mar es
+       una capa del canvas y se pinta encima). */
     body {
         background: linear-gradient(to bottom,
             var(--daino-sky-top, var(--color-daino-bg-deep)) 0%,
             var(--daino-sky-mid, var(--color-daino-bg-deep)) 55%,
-            var(--daino-sky-horizon, var(--color-daino-bg-lifted)) calc(100% - var(--daino-ground-offset, 22px)));
+            var(--daino-sky-horizon, var(--color-daino-bg-lifted)) calc(100% - var(--daino-sky-horizon-offset, var(--daino-ground-offset, 22px))));
     }
 
     body[data-drag="active"]::after {
@@ -1954,6 +1956,111 @@ dialog.daino-catalog::backdrop {
     to   { box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-daino-high) 35%, transparent); }
 }
 
+/* ----- Escenario elegido por el autor (T02.1) ----- */
+
+.daino-scene {
+    margin: 0.6rem 0 0;
+    padding: 0.8rem 1rem 0.7rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 14%, transparent);
+    border-radius: 0.75rem;
+    min-width: 0;
+}
+
+.daino-scene__legend {
+    padding: 0 0.35rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: color-mix(in oklch, var(--color-daino-fg) 70%, transparent);
+}
+
+.daino-scene__options {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+    gap: 0.4rem;
+}
+
+.daino-scene__option {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
+    border-radius: 0.6rem;
+    background: color-mix(in oklch, var(--color-daino-bg-lifted) 60%, transparent);
+    color: var(--color-daino-fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 150ms ease-out, background-color 150ms ease-out;
+}
+
+.daino-scene__option:hover:not(:disabled) {
+    border-color: color-mix(in oklch, var(--color-daino-high) 60%, transparent);
+}
+
+.daino-scene__option:focus-visible {
+    outline: 2px solid var(--color-daino-high);
+    outline-offset: 2px;
+}
+
+.daino-scene__option[aria-checked="true"] {
+    border-color: var(--color-daino-high);
+    background: color-mix(in oklch, var(--color-daino-high) 16%, transparent);
+}
+
+.daino-scene__option:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.daino-scene__option[aria-checked="true"]:disabled {
+    opacity: 0.9;
+}
+
+/* Muestra del ambiente: su cielo al atardecer sobre el mar o las montañas (los
+   colores salen del modelo del cielo, catalogModel.sceneSwatch). */
+.daino-scene__swatch {
+    flex: none;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 0.35rem;
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-daino-fg) 20%, transparent);
+}
+
+.daino-scene__text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+}
+
+.daino-scene__label {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.daino-scene__hint {
+    font-size: 0.72rem;
+    line-height: 1.3;
+    color: color-mix(in oklch, var(--color-daino-fg) 62%, transparent);
+}
+
+.daino-scene__note {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    color: color-mix(in oklch, var(--color-daino-fg) 65%, transparent);
+}
+
+.daino-scene[data-busy="true"] .daino-scene__option:disabled {
+    opacity: 1;
+    cursor: progress;
+}
+
+.daino-scene[data-busy="true"] .daino-scene__option[aria-checked="true"] {
+    animation: daino-choice-pulse 700ms ease-in-out infinite alternate;
+}
+
 .daino-card__badge[data-state="ready"] {
     color: oklch(0.86 0.16 85);
 }
@@ -2241,6 +2348,8 @@ body[data-drag="active"] .daino-upload__drop {
     .daino-card:not(.daino-card--skeleton):hover,
     .daino-card:focus-within { transform: none; }
     .daino-difficulty[data-busy="true"] .daino-difficulty__option[aria-checked="true"] { animation: none; }
+    .daino-scene[data-busy="true"] .daino-scene__option[aria-checked="true"] { animation: none; }
+    .daino-scene__option { transition: none; }
     .daino-card--skeleton .daino-card__cover,
     .daino-card--skeleton .daino-card__body { animation: none; }
     dialog.daino-catalog::backdrop { animation: none; }

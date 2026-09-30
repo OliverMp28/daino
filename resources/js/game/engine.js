@@ -30,6 +30,12 @@
 // menú usa la de la escena; cada frame en que cambia, scenes/skyModel.js la
 // convierte en el cielo del shader y el color de las capas del escenario.
 // `setAudioFxEnabled(false)` (panel dev) deja ver el escenario sin los efectos.
+//
+// Escena por nivel (T02): AppController carga la escena del nivel
+// (`loadScene`, que descarga sus capas si no van en el bundle) y la pone al
+// empezar la partida (`setScene`); el menú vuelve a la de siempre. Cada escena
+// dice dónde está su horizonte (`horizonRise`): el shader pinta el cielo hasta
+// él (uHorizon) y los efectos siguen anclados al suelo (uGround).
 
 import {
     Application,
@@ -42,6 +48,7 @@ import { createAudioFilter, FFT_BINS } from './shaders/audioFilter.js';
 import { computeBands } from './audio/features.js';
 import { createParticleLayer } from './entities/ParticleLayer.js';
 import { createScenery } from './entities/Scenery.js';
+import { layerTypesReady, loadLayerTypes } from './entities/scenery/index.js';
 import { createSpeedLines } from './entities/SpeedLines.js';
 import { SCENERY, DT_CAP_S, WORLD_VIEW, WORLD_VIEW_PORTRAIT_MENU } from './config.js';
 import { resolveBudget, MAX_FILTER_DPR, TIER_ORDER } from './RenderProfile.js';
@@ -138,7 +145,7 @@ export async function startEngine(mountTarget = document.body) {
     bgLayer = new Container({ label: 'bg' });
     worldRoot = new Container({ label: 'world' });
     worldRoot.scale.set(view.scale);
-    scenery = createScenery({ width: view.width, height: view.height }, scene);
+    scenery = createScenery({ width: view.width, height: view.height }, scene, { still: REDUCED_MOTION });
     sceneryLayer = scenery.container;
     gameLayer = new Container({ label: 'game' });
     particleLayer = createParticleLayer(
@@ -181,11 +188,11 @@ export async function startEngine(mountTarget = document.body) {
             bgSprite.height = h;
         }
         if (audioFilter) {
-            // uHorizon en uv [0,1] (v=0 arriba): la línea del suelo del mundo.
             // uFrame y uCell: el sol es un círculo y las estrellas son celdas del
             // arte en cualquier formato (antes se estiraban con la pantalla).
-            audioFilter.setUniforms({ horizon: next.screenGroundY / h, frame: [w, h], cell: next.cellPx });
+            audioFilter.setUniforms({ frame: [w, h], cell: next.cellPx });
         }
+        applyHorizon();
         worldRoot.scale.set(next.scale);
         scenery.resize(next.width, next.height);
         skyDirty = true;
@@ -470,10 +477,65 @@ export function setSkyHour(hour) {
     skyHour = Number.isFinite(hour) ? hour : null;
 }
 
-/** Cambia de escena (panel dev; en el T02, la del nivel). */
+/**
+ * Horizonte del cielo de la escena en pantalla (T02.2): uv del shader (uHorizon)
+ * y variable CSS del degradado de reduced motion. La línea del suelo (uGround)
+ * es la de los efectos, que no cambian con la escena. En la Cordillera coinciden.
+ */
+function applyHorizon() {
+    if (!view) return;
+    const h = view.screenHeight;
+    const skyY = view.screenGroundY - (scene.horizonRise ?? 0) * view.scale;
+    audioFilter?.setUniforms({ horizon: skyY / h, ground: view.screenGroundY / h });
+    document.documentElement.style.setProperty('--daino-sky-horizon-offset', `${(h - skyY).toFixed(1)}px`);
+}
+
+/**
+ * Deja lista una escena: descarga las capas que no van en el bundle. Devuelve el
+ * id de la escena que se podrá poner (la de siempre si la pedida no llega: sin
+ * red, por ejemplo; una partida no se queda sin empezar por su escenario).
+ *
+ * @param {string} id
+ * @returns {Promise<string>}
+ */
+export async function loadScene(id) {
+    const target = resolveScene(id);
+    try {
+        await loadLayerTypes(target);
+        return target.id;
+    } catch (err) {
+        console.warn(`[engine] no se pudo cargar la escena "${target.id}"; se usa la de siempre:`, err);
+        return DEFAULT_SCENE;
+    }
+}
+
+/** Número de la última escena pedida: una carga lenta no pisa a una petición posterior. */
+let sceneRequest = 0;
+
+/**
+ * Pone una escena. Síncrona si ya está cargada (AppController la carga antes con
+ * `loadScene`); si no (el panel dev), la carga y la pone al llegar, salvo que
+ * entretanto se haya pedido otra.
+ *
+ * @param {string} id
+ */
 export function setScene(id) {
-    scene = resolveScene(id);
+    const next = resolveScene(id);
+    const req = ++sceneRequest;
+    if (!layerTypesReady(next)) {
+        void loadScene(next.id).then((readyId) => {
+            if (req === sceneRequest) applyScene(resolveScene(readyId));
+        });
+        return;
+    }
+    applyScene(next);
+}
+
+function applyScene(next) {
+    if (next === scene) return;
+    scene = next;
     scenery?.setScene(scene);
+    applyHorizon();
     skyDirty = true;
 }
 
@@ -617,6 +679,7 @@ function getApi() {
         setAmbientDinoVisible,
         setAmbientDinoSkin,
         setSkyHour,
+        loadScene,
         setScene,
         setSkyElementVisible,
         setAudioFxEnabled,

@@ -6,6 +6,8 @@
 // Desde el T01 es un COMPOSITOR: las capas (cordilleras, nubes,
 // suelo…) las declara la escena (scenes/registry.js) y cada `type` tiene su
 // implementación (entities/scenery/). La hora del cielo las tiñe (`light`).
+// Desde el T02 cada nivel trae su escena: las capas que no van en el bundle se
+// cargan antes de montarla (engine.loadScene).
 //
 // Sin física, sin audio, sin timeline: recibe (dt, worldSpeed) del tick del
 // engine y el estado del cielo cuando cambia. Además monta el dino ambiente del
@@ -14,7 +16,7 @@
 import { Container, Sprite } from 'pixi.js';
 import { GROUND_OFFSET_PX, DINO_X, DINO_SIZE } from '../config.js';
 import { getTexture, normalizeSkinId, PIXEL_SCALE } from '../assets/pixelart.js';
-import { LAYER_TYPES } from './scenery/index.js';
+import { layerFactory } from './scenery/index.js';
 
 /** Periodo fijo del trote del dino ambiente del menú (no depende del BPM). */
 const AMBIENT_RUN_PERIOD_S = 0.3;
@@ -22,19 +24,24 @@ const AMBIENT_RUN_PERIOD_S = 0.3;
 /**
  * @param {{ width: number, height: number }} viewport  Vista en unidades de mundo.
  * @param {import('../scenes/registry.js').SceneDef} scene
+ * @param {{ still?: boolean }} [opts]  `still`: prefers-reduced-motion. Sin shader
+ *   no hay sol, luna ni estrellas, y las capas tampoco pintan su reflejo.
  */
-export function createScenery(viewport, scene) {
+export function createScenery(viewport, scene, opts = {}) {
+    const still = opts.still === true;
     const container = new Container({ label: 'scenery' });
 
     let W = viewport.width;
     let H = viewport.height;
     let groundY = H - GROUND_OFFSET_PX;
 
-    /** @type {Array<ReturnType<typeof LAYER_TYPES[keyof typeof LAYER_TYPES]>>} */
+    /** Capas montadas (la forma de cada una: entities/scenery/index.js). */
     let layers = [];
     /** Elementos apagados desde el panel dev: sobreviven a un cambio de escena. */
     const hidden = new Set();
     let lastState = null;
+    /** Horizonte del cielo de la escena sobre el suelo (T02.2): lo usan el mar, las islas y el faro. */
+    let horizonRise = 0;
 
     // ---------- Dino ambiente (solo menú) ----------
     // Corre en el MISMO sitio donde la GameSession montará el Dino real: la
@@ -52,13 +59,17 @@ export function createScenery(viewport, scene) {
         ambientDino.position.set(DINO_X + DINO_SIZE.w / 2, groundY);
     }
 
-    /** Monta las capas de una escena (de atrás adelante, bajo el dino ambiente). */
+    /**
+     * Monta las capas de una escena (de atrás adelante, bajo el dino ambiente).
+     * Sus tipos de capa tienen que estar cargados (engine.loadScene).
+     */
     function build(sceneDef) {
         for (const l of layers) l.dispose();
+        horizonRise = sceneDef.horizonRise ?? 0;
         layers = sceneDef.layers.map((def) => {
-            const create = LAYER_TYPES[def.type];
-            if (!create) throw new Error(`Scenery: tipo de capa desconocido "${def.type}" en la escena "${sceneDef.id}"`);
-            return create(def, { width: W, height: H, groundY });
+            const create = layerFactory(def.type);
+            if (!create) throw new Error(`Scenery: la capa "${def.type}" de la escena "${sceneDef.id}" no está cargada`);
+            return create(def, { width: W, height: H, groundY, horizonRise, still });
         });
         layers.forEach((l, i) => container.addChildAt(l.container, i));
         for (const id of hidden) for (const l of layers) l.setVisible(id, false);

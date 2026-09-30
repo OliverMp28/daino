@@ -61,9 +61,14 @@ export function createAudioFilter() {
                 uHigh:       { value: 0.0, type: 'f32' },
                 uBpmPulse:   { value: 0.0, type: 'f32' },
                 uDebugMode:  { value: 0.0, type: 'f32' },
-                // Y del horizonte en uv [0,1] (v=0 arriba). El engine la deriva
-                // de GROUND_OFFSET_PX / viewport height y la refresca en resize.
+                // Y del horizonte del CIELO en uv [0,1] (v=0 arriba): la línea del
+                // suelo, o más arriba si la escena lo sube (T02.2, la Costa: el mar
+                // llega hasta él). El engine la refresca en resize y al cambiar de
+                // escena.
                 uHorizon:    { value: 0.94, type: 'f32' },
+                // Y de la línea del SUELO en uv: donde se anclan los efectos (el
+                // ecualizador), que no cambian con la escena.
+                uGround:     { value: 0.94, type: 'f32' },
                 // Tamaño del frame en px CSS y px CSS por celda del arte (vista
                 // del mundo): el sol es redondo y las estrellas miden una celda
                 // en cualquier formato de pantalla.
@@ -119,7 +124,7 @@ export function createAudioFilter() {
     // datos y el sample devuelve memoria sin inicializar.
     fftSource.update();
 
-    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, frame, cell, intensity, climax, flash, build, calm, hue }) {
+    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, ground, frame, cell, intensity, climax, flash, build, calm, hue }) {
         const u = filter.resources.audioUniforms.uniforms;
         if (frame     !== undefined) {
             u.uFrame[0] = frame[0];
@@ -134,6 +139,7 @@ export function createAudioFilter() {
         if (bpmPulse  !== undefined) u.uBpmPulse  = bpmPulse;
         if (debugMode !== undefined) u.uDebugMode = debugMode;
         if (horizon   !== undefined) u.uHorizon   = horizon;
+        if (ground    !== undefined) u.uGround    = ground;
         if (intensity !== undefined) u.uIntensity = intensity;
         if (climax    !== undefined) u.uClimax    = climax;
         if (flash     !== undefined) u.uFlash     = flash;

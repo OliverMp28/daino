@@ -11,7 +11,7 @@
 >
 > **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
 >
-> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 y T03 sin empezar.
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02) y T02.1 (escena por nivel) y T02.2 (la Costa) ✅. T03 sin empezar.
 
 ---
 
@@ -68,7 +68,7 @@ Verificado con capturas de What's Up Danger en 0:24 y 0:44 (bandas de niebla gri
 
 ### 1.C Las barras del ecualizador se esconden detrás de las montañas
 
-El user: "se ve bien, solo que a veces parece escondido". Es literal: las barras suben desde el horizonte `bin² × (0.11 + 0.09 · intensidad)` de la altura, 0.03-0.13 con la música típica y como mucho 0.20. La cordillera lejana mide 40-130 unidades de 620 (0.065-0.21) y **se dibuja encima** (el escenario va sobre el shader). Solo asoman por los valles. Es trabajo de la T03.1: el ecualizador necesita su propio plano, no el fondo del fondo.
+El user: "se ve bien, solo que a veces parece escondido". Es literal: las barras suben desde el horizonte `bin² × (0.11 + 0.09 · intensidad)` de la altura, 0.03-0.13 con la música típica y como mucho 0.20. La cordillera lejana tiene crestas de hasta ~81 unidades de 620 (0.13; se creía que 130: ver la T02.2) y **se dibuja encima** (el escenario va sobre el shader). Solo asoman por los valles. Es trabajo de la T03.1: el ecualizador necesita su propio plano, no el fondo del fondo. Desde la T02.2 las barras salen de la línea del suelo en cualquier escena (`uGround`): en la Costa el mar las tapa igual que la cordillera.
 
 ### 1.D Legibilidad: los sprites están pensados para un cielo oscuro
 
@@ -136,6 +136,20 @@ Elegido por el user frente a "hora real del jugador" y "noche con luna": sol con
 
 Cada elemento del escenario (y, desde la T03.1, cada efecto) tiene un id y una etiqueta en español, y un interruptor en el panel dev. Así el user y el desarrollo hablan de lo mismo ("la neblina del horizonte", "el filo de las crestas") en vez de adivinar.
 
+### 2.8 Un escenario tiene tres capas (T02, con el user)
+
+1. **Ambiente** (dónde pasa): genérico y reutilizable (la Cordillera, la Costa, la lluvia…). Está en un **inventario cerrado y probado**: quien sube un nivel elige entre los ambientes curados (pasan el guardián y se ven bien). Por dentro, lugar y clima se componen (una capa de lluvia sirve para cualquier lugar); fuera se enseña una lista de ambientes.
+2. **Arco del ambiente** (qué le pasa con la canción): automático. Lee la hora y la estructura del chart, **nunca la señal en vivo** (eso son efectos, §2.4): el cielo del T01, el faro que se enciende al anochecer, la tormenta que arrecia hacia el clímax. Es la personalidad que reciben los niveles de la comunidad sin que nadie programe nada.
+3. **Historia de autor** (de UNA canción): momentos coreografiados y props propios, hechos en código, montados sobre un ambiente (One Day = Costa + su historia). Solo en oficiales (o, en el futuro, en un nivel de la comunidad destacado a mano). **Nunca en el inventario**: el barco pirata no puede acabar en un reguetón.
+
+### 2.9 La escena no toca el juego
+
+Ni el chart, ni las marcas, ni los obstáculos. Por eso el autor de un nivel puede cambiar su ambiente **siempre**, también publicado (a diferencia de la dificultad). Un id que un cliente no conozca (una escena más nueva que él) se juega con la de siempre.
+
+### 2.10 Una historia se ancla a su canción
+
+A eventos de la canción (`planSky(...).events`, el clímax, los drops, el final), nunca a segundos puestos a mano: sobrevive a un re-charteo y a un analizador nuevo. Nada con forma de obstáculo en el escenario (§6: los pájaros).
+
 ---
 
 ## 3. Los trabajos y sus olas
@@ -147,12 +161,14 @@ Cada elemento del escenario (y, desde la T03.1, cada efecto) tiene un id y una e
   - [x] T01.2 — Ciclo del cielo (día, atardecer, noche con luna, amanecer) anclado a la canción, escenario en capas y panel dev "Cielo" (Sep 2026).
   - [x] T01.3 — Luna con más detalle y magia (Sep 2026).
   - [ ] T01.4 — Playtest humano del ciclo y ajustes de tablas.
-- [ ] **T02 — Escenas con personalidad e historia**: cada nivel puede tener su escenario.
-  - [ ] T02.1 — Escena por nivel (base de datos, manifest, selector de quien sube).
-  - [ ] T02.2 — Momentos de la historia (cues) anclados al cielo y a la canción.
-  - [ ] T02.3 — Primera escena propia, "Costa": mar, barco y destello verde.
-  - [ ] T02.4 — Clima (lluvia, niebla, nieve).
-  - [ ] T02.5 — Escena elegida por el carácter de la canción.
+- [ ] **T02 — Escenas con personalidad e historia**: cada nivel puede tener su escenario (§2.8-2.10).
+  - [x] T02.1 — Escena por nivel: base de datos, manifest, selector de quien sube, runtime y carga bajo demanda (Sep 2026).
+  - [x] T02.2 — La Costa: horizonte despejado, mar con reflejos, islas, faro y arena (Sep 2026).
+  - [ ] T02.3 — Clima como capa: lluvia/tormenta y nieve, y ambientes compuestos.
+  - [ ] T02.4 — Ciudad de noche.
+  - [ ] T02.5 — Automático por el carácter de la canción.
+  - [ ] T02.6 — Historias de autor, empezando por One Day.
+  - [ ] T02.7+ — Una ola por cada historia nueva.
 - [ ] **T03 — Efectos al ritmo de la música**: lo que reacciona a lo que suena.
   - [ ] T03.1 — Registro de efectos con nombre, panel "Efectos" y ecualizador fuera de las montañas.
   - [ ] T03.2 — Efectos nuevos, progresivos y repartidos por canción.
@@ -184,7 +200,7 @@ Ver §1.B.
 - **Panel dev "Cielo"** (`ui/devTools.js`): hora y fase, anclas del nivel en curso, fijar hora con un deslizador, "Recorrer el ciclo" (de 14:30 a 7:00 en 24 s), efectos del audio sí/no, selector de escena y un interruptor por elemento con nombre.
 
 Desviaciones del plan:
-- **El momento synthwave, a 4.5° y no en el horizonte.** La cordillera lejana tapa hasta 130 unidades: con el sol a 0° el disco entero queda detrás. El keyframe `SUNSET` se puso con el sol asomando sobre las crestas, y el menú a esa hora (18:12).
+- **El momento synthwave, a 4.5° y no en el horizonte.** Con el sol a 0° el disco queda detrás de la cordillera. El keyframe `SUNSET` se puso con el sol asomando sobre las crestas (ajustado con capturas), y el menú a esa hora (18:12). *(Corrección de la T02.2: aquí se escribió que la cordillera lejana "tapa hasta 130 unidades". Sus crestas llegan a ~81 y sus valles bajan casi al suelo: el hash de las alturas devolvía [−0.5, 0.5) y no [0, 1). El dibujo no cambió; los números y el guardián, sí.)*
 - **El sol vive a la derecha: sale en x 0.72 y se pone en 0.82.** Con la salida al este de verdad (x ≈ 0.3), el sol del amanecer caía en la zona que se lee justo delante del Dino y su halo lavaba a los obstáculos. Y saliendo en 0.62, el panel de resultados (que ocupa ~0.33-0.67) tapaba el epílogo. La luna sí cruza el cielo entero.
 - **El halo del sol, antes que el disco.** Sumado encima quemaba el disco a blanco y se perdía el degradado dorado→rosa del ocaso; con máscara aparecía un anillo oscuro. Ahora se pinta el resplandor y el disco encima, como un objeto delante de su propia luz.
 - **Neblina de día casi nula y horizonte más oscuro de lo previsto.** La franja de 40-58 unidades (justo sobre la cordillera) es donde vuela el ptero: con la neblina prevista bajaba de 2.5:1. El brillo del día lo dan el sol, las nubes y la parte alta del cielo.
@@ -225,22 +241,86 @@ Jugar niveles largos y cortos y ajustar las tablas (`SKY_HOURS`, `SKY_RULES`, `p
 
 ### T02 — Escenas con personalidad e historia
 
-#### ⬜ T02.1 — Escena por nivel
+#### Diseño (con el user, Sep 2026)
 
-- **Escena por nivel**: columna `levels.scene` (NULL = la de siempre), `scene` en el manifest de oficiales, selector para quien sube la canción (junto a la dificultad) y lectura en el runtime.
-#### ⬜ T02.2 — Momentos de la historia (cues)
+El user abrió el T02 con preguntas antes de construir nada: ¿es solo para One Day (aún no está en el catálogo)?, ¿para qué canciones y cómo se eligen?, ¿cómo se desarrolla un escenario propio?, y sobre todo: ¿cómo encaja con que la gente suba sus canciones y cree niveles sin código? Un inventario de escenarios le parecía bien para lo genérico (lluvia, playa), pero no para la personalidad de un nivel. La respuesta es el modelo de tres capas (§2.8).
 
-- **Cues**: momentos de la historia de una escena anclados a eventos del cielo (`planSky(...).events`: `eveningStart`, `sunDown`, `nightfall`, `dawnStart`, `sunrise`; y `timeAtHour` para cualquier otra hora) o de la canción (inicio del clímax, drops, secciones, final). Un cue es `{ prop, from, to }` o `{ fx, at }`.
-#### ⬜ T02.3 — Primera escena propia: "Costa"
+**Qué es viable y qué no:**
 
-- **Primera escena propia, "Costa"** (el ejemplo del user): capa de mar en el horizonte con reflejo del sol y de la luna, costa o acantilado a un lado; el **barco** aparece en el horizonte al alba; el **destello verde** (el "rayo verde" real, que se ve sobre el mar en el último instante del ocaso o el primero del orto) en `sunDown`. Historia de Will y Elizabeth: se separan al anochecer y el barco vuelve con el amanecer del final del nivel.
-#### ⬜ T02.4 — Clima
+| Opción | ¿Viable? | Por qué |
+|---|---|---|
+| Inventario de ambientes, elegido por quien sube | ✅ | No toca chart ni marcas: se puede cambiar siempre (§2.9) |
+| Arco automático de cada ambiente | ✅ | Es el mecanismo del cielo del T01, generalizado |
+| Historias de autor en los oficiales | ✅ | En código, ancladas a eventos de la canción (§2.10) |
+| "Automático" por el carácter de la canción | ⚠️ | Como el reparto de modos; el audio no dice "piratas" ni "triste" con fiabilidad: solo encajes claros y, si no, la Cordillera |
+| Historia de autor para un nivel destacado de la comunidad | ⏳ | Viable, pero es trabajo a mano |
+| Momentos genéricos colocados por quien sube | ⏳ | Solo con el editor (Ola 7, aplazada) |
+| Subir imágenes o dibujar escenarios | ❌ | Moderación, derechos, estilo pixel y guardián de legibilidad |
+| Elegir por título o letra, o con IA | ❌ | Sin modelos pesados (servidor pequeño), derechos, fiabilidad |
+| Historias de autor en el inventario | ❌ | Lo que el user descarta: pierden su sentido |
 
-- **Clima** como props de escena con su propia línea de tiempo: lluvia, niebla, nieve.
-#### ⬜ T02.5 — Escena por el carácter de la canción
+**Qué canciones tienen historia y cómo se eligen:** un oficial con imágenes reconocibles que se puedan contar en el cielo evocándolas (sin logos ni personajes), con momentos donde anclarlas (clímax, drop, final), y solo si aporta. Candidatas del catálogo actual, por confirmar: Running With the Wolves (lobos y aurora), Time (si es la de Origen: la ciudad que se pliega), What's Up Danger (si es la de Spider-Verse: la ciudad y el salto de fe, que ya coincide con la antigravedad).
 
-- **Elección de escena por el carácter de la canción**, como `MODE_CASTING` elige los modos: tonalidad, energía, bandas y percusividad del análisis del servidor proponen una escena, y quien sube puede cambiarla.
-- Opcional: la hora real del jugador en el menú (descartada como menú por defecto en §2.6, puede ser un ajuste).
+**Decisiones del user:**
+- **Automático = por el carácter de la canción, con red** (T02.5): el análisis del servidor propone un ambiente solo si el encaje es claro, se mide con los oficiales antes de encenderlo y quien sube ve la propuesta. Hasta entonces, Automático es la Cordillera.
+- **One Day primero**; las demás historias, una ola cada una.
+- **Aún no hay MP3 de One Day**: la historia se construye y se prueba con otra canción, y se hornea como oficial cuando llegue.
+- **Primera tanda de ambientes: Costa, lluvia/tormenta, nieve y ciudad de noche.**
+
+#### ✅ T02.1 — Escena por nivel (Sep 2026)
+
+- **Registro** (`scenes/registry.js`): cada escena declara `kind` (`ambient`/`story`), `selectable`, `blurb` (su línea del selector) y `horizonRise`. `SELECTABLE_SCENES`, `AUTO_SCENE`, `SCENE_ID_PATTERN` y `playSceneId(level)`: la elegida si este cliente la conoce; si no, la de siempre (hasta la T02.5).
+- **Servidor**: migración `012_add_level_scene.sql` (`levels.scene VARCHAR(32)`, NULL = Automático, CHECK del formato con `BINARY`: con la colación de la tabla, `REGEXP` no distingue mayúsculas); `Services/SceneCatalog.php` (ambientes elegibles, espejo del registro vigilado por un test JS); `Level` (`scene` en `LIST_COLUMNS`, `create` y `updateMetadata`); `LevelPresenter` lo expone; `POST /api/levels/{id}/scene` (`changeScene`: solo el autor, 404 a los demás, 422 si no es elegible, en cualquier estado); el seeder de oficiales lee `scene` del manifiesto (una historia de autor solo llega así).
+- **Cliente**: selector "Escenario" en la ficha de los niveles propios (Automático + ambientes, con una muestra del cielo de cada uno calculada con el modelo del cielo: `catalogModel.sceneChoiceView`/`sceneSwatch`); en los ajenos, "Escenario: Costa" entre los datos. `publishTracker.changeScene`.
+- **Runtime**: `AppController` carga la escena del nivel (`request.level`, o el nivel propio de una canción local) con `engine.loadScene` mientras sigue el aviso de carga, la pone en `startAttempt` ANTES de crear la sesión (su plan del cielo usa el ciclo de la escena) y el menú vuelve a la de siempre bajo el fundido.
+- **Carga bajo demanda**: `entities/scenery/index.js` separa `LAYER_TYPES` (en el bundle: cordillera, nubes, suelo) de `LAZY_LAYER_TYPES` (`import()` literal: mar y faro, 2.7 KB gzip en sus chunks). `engine.loadScene` (async, cae a la Cordillera si el chunk no llega) y `setScene` (síncrona con la escena cargada; desde el panel dev, la carga y la pone al llegar salvo que se pida otra).
+- **Panel dev**: el selector de escena carga la que se elija y sigue a la escena vigente (la del nivel en partida).
+
+#### ✅ T02.2 — La Costa (Sep 2026)
+
+- **Horizonte por escena**: `horizonRise` (120 en la Costa). El engine pasa al shader `uHorizon` (el horizonte del cielo) y `uGround` (la línea del suelo, donde se anclan los efectos: el ecualizador sigue saliendo del suelo, tapado por el mar como por la cordillera). Sol, luna, estrellas, lucero y neblina ya iban en fracciones del cielo: el sol se pone en el agua a la vista. Con reduced motion, el degradado CSS termina en la línea del mar (`--daino-sky-horizon-offset`).
+- **El mar** (`entities/scenery/Sea.js`, bajo demanda): pixel art en 7 bandas más finas cuanto más lejos, cada una con el color del agua a su distancia (`skyModel.seaColorAt`: refleja el cielo, más a ras del horizonte y menos en la orilla, y se oscurece; el agua profunda la pone la escena, `sea.deep`); crestas en 6 filas con parallax por profundidad que cabecean en dos fotogramas; **reflejo del sol y de la luna** (`seaGlint`): una columna de guiones que titila bajo el astro, larga y encendida con el sol bajo, apagada al ponerse, y plateada de noche. Capa Pixi y no shader: el mar se ve también con reduced motion (sin el reflejo, porque tampoco hay sol ni luna).
+- **Islas**: la capa `ridge` gana `anchor: 'horizon'` y `gaps`/`gapRun` (tramos hundidos en rachas): islas y cabos sobre la línea del mar, con el filo de luz de las crestas.
+- **El faro** (`entities/scenery/Lighthouse.js` + `lighthouseArt.js`, bajo demanda): torre a rayas en un cabo, teñida con el color de lo lejano. Su arco: la lámpara se enciende al anochecer (con la elevación del sol) y gira toda la noche (el haz se estira y se encoge al girar y la lámpara destella cuando apunta hacia quien mira); al amanecer se apaga. Tan lejos que cruza la pantalla en 3-4 minutos: entra por la derecha al empezar y sigue a la vista cuando anochece.
+- **Arena**: `Ground` gana `params.sprite`; tira `groundSand` (paleta `A`/`a`/`b`) en `pixelart.js`, que también gana `artTexture(key, rows)` para que las capas bajo demanda traigan su propio arte.
+- **Guardián de legibilidad con cualquier capa**: `scenes/backdrops.js` dice qué pone detrás del juego cada tipo de capa (montañas e islas, mar, faro; nubes y suelo nada) y a qué alturas; un tipo sin entrada hace fallar la prueba. `readability.js` lo usa y el cielo empieza en el horizonte de la escena.
+
+**Hallazgos (y lo que cambió fuera de la Costa):**
+- **El hash de las crestas devolvía [−0.5, 0.5), no [0, 1)**: el último `^=` deja un entero con signo. La cordillera se dibujaba con alturas `baseRise ± jag/2` (crestas lejanas de ~1 a ~81, no de 40 a 130). Arreglado (`entities/scenery/ridgeShape.js`) y la cordillera reescrita con `baseRise` −5 y −10: **se dibuja idéntica** (diferencia 0 medida en 4 anchos de vista). Las islas y el mar, que usan el hash como [0, 1), dependían del arreglo.
+- **El guardián del T01 medía una cordillera que no existía**: daba por tapado el cielo por debajo de 40 unidades, pero los valles bajan casi al suelo. Ahora mide la forma real (la de la vista más ancha, que contiene a las demás). Con la forma real, la Cordillera fallaba **439 veces** entre el atardecer y el alba: la neblina del horizonte borraba el cristal afilado, el cristal y el portal de la antigravedad a 8-32 unidades; y en la Costa, con el horizonte a la vista, el orbe. **La neblina de las horas cálidas y de luz baja quedó a la mitad** (`GOLDEN`, `SUNSET`, `SUN_DOWN`, `BLUE_HOUR`, `BLUE_DAWN`, `PINK_DAWN`, `SUNRISE`, `LATE_AFTERNOON`, `MORNING` y `LATE_MORNING`; las noches conservan la suya, que es oscura). Las dos escenas pasan con 0 fallos a 620 horas. En el menú el cambio casi no se ve (comparado con una captura del menú del T01).
+- **En producción, un chunk bajo demanda que importa Pixi rompía el juego entero**: el reparto por defecto de Rolldown partió Pixi en varios chunks que se importaban en círculo y el build no arrancaba ("Class extends value undefined" en el chunk del CanvasRenderer). En desarrollo no pasa (Vite no parte nada). `vite.config.js` pone **Pixi entero en su propio chunk** (`advancedChunks`). Verificado con el build real: menú, un oficial en la Costa (el mar y el faro se descargan al empezarlo) y una canción local (análisis en el Worker y charter bajo demanda).
+
+**Desviaciones del plan:**
+- El cargador de escenas vive en `entities/scenery/index.js` (junto a los tipos de capa), no en `scenes/sceneLoader.js`: el núcleo `scenes/` es puro y sin Pixi.
+- La neblina se tocó en la paleta y no con un factor por escena: la necesitaban las dos escenas.
+- El brillo del horizonte que late con los graves (un efecto) ahora se ve entero sobre el mar, como una línea de neón; en la Cordillera asomaba por los valles. Se deja como está: su plano y su fuerza son de la T03.1.
+
+**Verificación — hecha, con medidas reales:**
+- **Tests**: `tests/js/scenes.test.mjs` (11: registro, lista elegible igual en PHP y JS y mismo patrón que la migración, cada capa con fondo declarado e implementación, escenas del manifiesto, `playSceneId`, selector, el mar sin saltos y más oscuro en la orilla, el reflejo, las islas y la cordillera idéntica, el guardián mide el mar, el guardián mide la forma real y la neblina cabe justa); guardián a 620 horas en las dos escenas. `tests/php/SceneTest.php` (6) y el seeder con escenario en `CatalogTest`. **306 JS, 78 PHP.**
+- **E2E** con Playwright y una sesión de prueba: el autor elige Costa en la ficha de su nivel privado (petición, respuesta y BD), lo juega con su MP3 y la partida va en la Costa; un oficial con `scene = coast` en la BD se juega en la Costa desde el catálogo (el mar y el faro se descargan al empezar), acaba bajo el panel con el epílogo en el mar y el menú vuelve a la Cordillera. **60 FPS** en partida en la Costa de día (media 16.64 ms, p95 17.0) y de noche (16.89, p95 17.1), 1280×720. Capturas a cada hora con obstáculos y HUD; reduced motion con el degradado hasta el mar. Sin errores de consola.
+- **Bundle** (build real): el chunk principal pasa de 186.1 a 77.9 KB gzip porque Pixi va aparte (140.7 KB); lo que se carga al arrancar suma 220.8 KB frente a 219.2 (principal + Geometry, +1.6). La Costa, 2.7 KB aparte, solo al empezar un nivel con ella.
+
+#### ⬜ T02.3 — Clima como capa: lluvia/tormenta y nieve
+
+- Tipos de capa de clima que sirven sobre cualquier lugar (Cordillera con tormenta, Costa con lluvia, cordillera nevada…), con su arco: la lluvia arrecia hacia el clímax y escampa en el alba; la nevada, igual. A quien sube se le enseñan ambientes compuestos ya probados, no dos selectores.
+- Relámpagos: nunca más de 3 destellos por segundo (WCAG 2.3.1) y apagados con reduced motion. Su coste en `RenderProfile` (el tier bajo reduce la lluvia). Todo tipo nuevo, con su entrada en `scenes/backdrops.js`.
+
+#### ⬜ T02.4 — Ciudad de noche
+
+- Siluetas de edificios en vez de montañas, con ventanas que se encienden al anochecer (su arco). Encaja con la electrónica o lo urbano.
+
+#### ⬜ T02.5 — Automático por el carácter de la canción
+
+- `SCENE_CASTING` en JS compartido, como `MODE_CASTING`: tonalidad, energía, bandas, percusividad y tempo del análisis del servidor proponen un ambiente solo si el encaje es claro; si no, la Cordillera. Se guarda al analizar (`levels.scene_auto`) y quien sube ve la propuesta. Se mide con los 8 oficiales antes de encenderlo; si no acierta, Automático sigue siendo la Cordillera. Las canciones locales sin publicar (análisis del navegador) se quedan en la Cordillera.
+
+#### ⬜ T02.6 — Historias de autor, empezando por One Day
+
+- Sistema de historias: `kind: 'story'` sobre un ambiente, **cues** anclados a eventos de la canción (`planSky(...).events`, clímax, drops, final) → props o momentos; un ciclo propio si la historia lo pide (la puesta del sol en el clímax); panel dev "Historia" (saltar a cada momento, apagar cada prop). Todo cue tiene que resolverse en su canción (test).
+- **One Day** (Piratas del Caribe: En el fin del mundo): la escena post-créditos. La Costa, un acantilado a un lado; el sol se pone en el mar y en su último instante, el **destello verde** (el "rayo verde" real); tras él, **el barco emerge del mar** en el horizonte. Barco genérico en pixel art que evoca sin copiar (sin logos ni personajes). A afinar con la estructura real de la canción: se prueba con otra y se hornea y se siembra como oficial cuando llegue el MP3 (`scene` en el manifiesto).
+
+#### ⬜ T02.7+ — Una historia más por ola
+
+- Cuando se elija la canción (candidatas arriba). Cada una, con su ambiente y sus cues.
 
 ### T03 — Efectos al ritmo de la música
 
@@ -268,12 +348,15 @@ El guardián de legibilidad también para los efectos (brillo máximo en la fran
 ## 4. Orden y dependencias
 
 ```
-T01 (escenario vivo) ──► T02 (escenas por nivel, cues, Costa)
+T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.3 (clima) ─┐
+                    │                    │                T02.4 (ciudad) ─┴─► T02.5 (automático)
+                    │                    └──────────────────────────────────► T02.6 (historias, One Day) ──► T02.7+
                     └─► T03 (efectos): T03.1 ──► T03.2 ──► T03.3
 ```
 
 - El T01 va primero porque separa escenario y efectos (§1.F): la T03.1 registra efectos sobre un cielo que ya no los necesita.
 - T02 y T03 no dependen entre sí: se pueden hacer en cualquier orden. El T02 necesita el T01 (registro de escenas, eventos del cielo). La T03.2 necesita la T03.1 (registro) y aprovecha el T01 (estrellas, luna y hora como lienzo).
+- Dentro del T02: el automático (T02.5) necesita varios ambientes entre los que elegir; One Day (T02.6) necesita la Costa y, para hornearse, su MP3. T02.3 y T02.4 no dependen entre sí.
 
 ---
 
@@ -285,7 +368,10 @@ T01 (escenario vivo) ──► T02 (escenas por nivel, cues, Costa)
 | Un obstáculo cruza el sol del atardecer (rosa sobre disco rosa) | Ya pasaba (captura de 1:07 en §1.B). El disco es pequeño y se cruza en décimas. El sol vive en la mitad derecha (T01.2): nunca delante del Dino. |
 | Coste del shader (luna, estrellas giradas, estrella fugaz) | Sin bucles, cálculos locales con recorte por distancia, se quitan las ondas. Medido en la T01.2: 60 FPS en todas las fases de What's Up Danger (p95 17.1 ms). |
 | Teñir `Graphics` cada frame rehace el lote | Tintes cuantizados a 8 bits por canal y aplicados solo cuando cambian. |
-| `prefers-reduced-motion` no tiene shader | Variables CSS del cielo por hora (≤ 2 Hz); los tintes del escenario siguen la hora. Sol, luna y estrellas no se dibujan (limitación aceptada). |
+| `prefers-reduced-motion` no tiene shader | Variables CSS del cielo por hora (≤ 2 Hz); los tintes del escenario siguen la hora. Sol, luna y estrellas no se dibujan (limitación aceptada), y el mar tampoco pinta su reflejo. |
+| Un chunk bajo demanda parte Pixi y el build de producción no arranca (visto en la T02.1) | Pixi entero en su chunk (`advancedChunks` en `vite.config.js`). Todo cambio en cómo se parte el bundle se verifica con el build real en el navegador, no con el servidor de Vite. |
+| Cada escena nueva engorda el arranque | Sus capas van bajo demanda (`LAZY_LAYER_TYPES`) y traen su arte (`artTexture`). |
+| "Automático" pone un ambiente que no pega | Solo encajes claros, medido con los oficiales antes de encenderlo, y quien sube lo cambia (T02.5). |
 
 ---
 
@@ -296,3 +382,8 @@ T01 (escenario vivo) ──► T02 (escenas por nivel, cues, Costa)
 - **Día claro sin contorno.** El cactus queda a 1.02:1 (§1.D).
 - **Día claro con contorno de 1 píxel en los sprites.** Posible, pero cambia el aspecto de todos los personajes y obstáculos; el user eligió el día azul intenso.
 - **Reloj fijo** (atardecer siempre a las 2:00) y **ciclo proporcional**. El primero deja de día las canciones de menos de 2:00 y no sabe dónde está el clímax; el segundo mete una noche de 8 s en un clip de 40 s. El user eligió anclarlo a la música.
+- **Gaviotas en la Costa.** Por lo mismo que los pájaros al atardecer: vuelan como el ptero.
+- **Que quien sube suba imágenes o dibuje su escenario.** Moderación, derechos, un estilo que no casa con el pixel art y nada que garantice la legibilidad (T02).
+- **Elegir el escenario por el título, la letra o con IA.** Sin modelos pesados en un servidor pequeño, con derechos de por medio y sin fiabilidad (T02).
+- **Historias de autor en el inventario de ambientes.** Pierden su sentido: la historia de One Day es de One Day (T02, decisión del user).
+- **El mar dentro del shader.** El reflejo sería más fácil, pero con reduced motion (sin shader) la Costa se quedaría sin mar, y el guardián no mediría su color. Es una capa Pixi (T02.2).

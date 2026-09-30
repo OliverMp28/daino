@@ -311,7 +311,7 @@ test('D21: la shell deja que Vout la embeba, y solo Vout', function (): void {
 /**
  * Directorio de seed temporal con MP3 falsos: el seeder solo mira bytes y hash.
  *
- * @param array<string, array{title?: string, artist?: ?string, bytes?: string, difficulty?: int, events?: int, charter?: int}> $levels
+ * @param array<string, array{title?: string, artist?: ?string, bytes?: string, difficulty?: int, events?: int, charter?: int, scene?: mixed}> $levels
  * @return array{seed: string, audio: string, from: string, cleanup: callable}
  */
 function makeSeedFixture(array $levels): array
@@ -326,7 +326,8 @@ function makeSeedFixture(array $levels): array
         $bytes = $spec['bytes'] ?? "ID3 audio de {$slug}";
         file_put_contents("{$base}/from/{$file}", $bytes);
         $s = hash('sha256', $bytes);
-        $manifest['levels'][] = ['slug' => $slug, 'file' => $file, 'title' => $spec['title'] ?? ucfirst($slug), 'artist' => $spec['artist'] ?? null];
+        $manifest['levels'][] = ['slug' => $slug, 'file' => $file, 'title' => $spec['title'] ?? ucfirst($slug), 'artist' => $spec['artist'] ?? null]
+            + (array_key_exists('scene', $spec) ? ['scene' => $spec['scene']] : []);
         file_put_contents("{$base}/seed/baked/{$slug}.json", json_encode([
             'formatVersion' => 1, 'slug' => $slug, 'file' => $file,
             'audio'         => ['sha256' => $s, 'bytes' => strlen($bytes), 'durationSec' => 60.5],
@@ -452,6 +453,34 @@ test('seed: audio ausente o distinto del horneado se salta sin frenar a los demÃ
         assertTrue(!is_file("{$fx['audio']}/test-cambiado.mp3"), 'un audio que no casa no llega a storage');
         assertSame('created', $report['test-bien']['result']);
         assertSame(null, Level::findOfficialBySlug('test-falta'));
+    } finally {
+        ($fx['cleanup'])();
+    }
+});
+
+test('seed: el escenario del manifiesto (T02) llega al oficial y se actualiza sin tocar el chart', function (): void {
+    $fx = makeSeedFixture(['test-costa' => ['scene' => 'coast'], 'test-sin' => []]);
+    try {
+        seedWith($fx, ['from' => $fx['from']]);
+        $level = Level::findOfficialBySlug('test-costa');
+        assertSame('coast', $level->scene);
+        assertSame(null, Level::findOfficialBySlug('test-sin')->scene, 'sin escenario: AutomÃ¡tico');
+        $chart = Level::findChart($level->id)['json'];
+
+        // Cambiar el escenario en el manifiesto es solo metadata.
+        $manifest = json_decode(file_get_contents("{$fx['seed']}/manifest.json"), true);
+        $manifest['levels'][0]['scene'] = 'one-day';
+        file_put_contents("{$fx['seed']}/manifest.json", json_encode($manifest));
+        $report = seedWith($fx)['test-costa'];
+        assertSame('updated', $report['result']);
+        assertSame('one-day', Level::findById($level->id)->scene, 'una historia de autor solo llega por el manifiesto');
+        assertSame($chart, Level::findChart($level->id)['json']);
+
+        $manifest['levels'][0]['scene'] = 'Mal Escenario';
+        file_put_contents("{$fx['seed']}/manifest.json", json_encode($manifest));
+        $bad = seedWith($fx)['test-costa'];
+        assertSame('skipped', $bad['result']);
+        assertTrue(str_contains($bad['detail'], 'scene'), $bad['detail']);
     } finally {
         ($fx['cleanup'])();
     }

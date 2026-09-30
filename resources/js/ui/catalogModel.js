@@ -11,6 +11,9 @@
 
 import { mergeBest } from '../storage/localBests.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
+import { DEFAULT_SCENE, SELECTABLE_SCENES, playSceneId, resolveScene } from '../game/scenes/registry.js';
+import { createSkyState, seaColorAt, skyColorAt, skyStateAt } from '../game/scenes/skyModel.js';
+import { rgbToHex } from '../game/scenes/color.js';
 import { publishView, PUBLISH_STATE } from './publishModel.js';
 
 // Los nombres viven con los perfiles del charter (Ola 5); se reexportan para
@@ -131,6 +134,8 @@ export function cardView(level, localBest = null) {
         title,
         byline,
         badge: level.is_official ? 'Oficial' : (level.is_mine ? publish.badge : null),
+        /** T02: el escenario con el que se juega (nombre para la ficha). */
+        scene: resolveScene(playSceneId(level)).label,
         difficulty,
         bpm: Number.isFinite(level.bpm) && level.bpm > 0 ? `${level.bpm} BPM` : null,
         duration,
@@ -145,6 +150,58 @@ export function cardView(level, localBest = null) {
         playLabel: PLAY_LABELS[playMode],
         /** Lo que anuncia la tarjeta a un lector de pantalla: qué hace pulsarla. */
         actionLabel: `${actionLabel}. ${difficulty.label}. ${duration}.`,
+    };
+}
+
+// --------------------------- Escenario (T02.1) ---------------------------
+
+/** Muestras ya calculadas, por escena (el cielo de su menú no cambia). */
+const swatches = new Map();
+
+/**
+ * Colores de la muestra de un ambiente en el selector: su cielo a la hora del
+ * menú (el ocaso) y, abajo, lo que tiene delante del horizonte (el mar o las
+ * montañas). Sale del mismo modelo que pinta el juego.
+ *
+ * @param {import('../game/scenes/registry.js').SceneDef} scene
+ * @returns {{ top: string, mid: string, horizon: string, land: string }}
+ */
+export function sceneSwatch(scene) {
+    let swatch = swatches.get(scene.id);
+    if (swatch) return swatch;
+    const state = skyStateAt(scene.menuHour, scene, createSkyState());
+    const land = scene.sea ? seaColorAt(state, 0.35) : state.mountains.far;
+    swatch = Object.freeze({
+        top: rgbToHex(state.sky.top),
+        mid: rgbToHex(skyColorAt(state, 0.55)),
+        horizon: rgbToHex(skyColorAt(state, 1)),
+        land: rgbToHex(land),
+    });
+    swatches.set(scene.id, swatch);
+    return swatch;
+}
+
+/**
+ * Selector del escenario de un nivel propio (T02.1). Cualquier nivel tuyo, en
+ * cualquier estado: el escenario no toca ni el chart ni las marcas, así que se
+ * puede cambiar también publicado. Ajeno: null (la ficha enseña solo el nombre).
+ *
+ * `auto` = que lo decida el juego (hoy, la escena de siempre; con la T02.5, el
+ * carácter de la canción).
+ *
+ * @param {object} level  Fila de GET /api/levels.
+ * @returns {{ current: string, options: Array<{ value: string, label: string, hint: string, swatch: ReturnType<typeof sceneSwatch> }> } | null}
+ */
+export function sceneChoiceView(level) {
+    if (level?.is_mine !== true) return null;
+    const chosen = SELECTABLE_SCENES.find((s) => s.id === level.scene);
+    const auto = resolveScene(DEFAULT_SCENE);
+    return {
+        current: chosen ? chosen.id : 'auto',
+        options: [
+            { value: 'auto', label: 'Automático', hint: `Por ahora, ${auto.label}.`, swatch: sceneSwatch(auto) },
+            ...SELECTABLE_SCENES.map((s) => ({ value: s.id, label: s.label, hint: s.blurb, swatch: sceneSwatch(s) })),
+        ],
     };
 }
 

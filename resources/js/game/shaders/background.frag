@@ -49,7 +49,8 @@ uniform float uMid;
 uniform float uHigh;
 uniform float uBpmPulse;
 uniform float uDebugMode;   // 0=normal, 1=fft crudo, 2=uv coords, 3=uniforms
-uniform float uHorizon;
+uniform float uHorizon;     // horizonte del cielo (T02.2: la Costa lo sube hasta la línea del mar)
+uniform float uGround;      // línea del suelo: donde se anclan los efectos
 uniform vec2  uFrame;       // tamaño del frame en px CSS
 uniform float uCell;        // px CSS por celda del arte (vista del mundo)
 uniform float uIntensity;
@@ -177,8 +178,9 @@ void main(void) {
     vec3 col = mix(uSkyTop, uSkyMid, smoothstep(0.0, SKY_MID_AT, yf));
     float toH = smoothstep(SKY_MID_AT, 1.0, yf);
     col = mix(col, uSkyHorizon, toH * toH);
-    // Neblina del horizonte: pegada a la línea del suelo (la cordillera tapa casi
-    // todo lo que queda por debajo de 40 unidades).
+    // Neblina del horizonte: pegada al horizonte del cielo (en la Cordillera, la
+    // línea del suelo, y las crestas tapan casi todo lo que queda por debajo de 40
+    // unidades; en la Costa, la línea del mar, a la vista).
     col += uHaze.rgb * uHaze.a * exp(-(1.0 - min(yf, 1.0)) * SKY_HAZE_K) * uShow1.z;
 
     // (efecto) Tinte del clímax, más fuerte arriba y latiendo con el beat.
@@ -347,11 +349,12 @@ void main(void) {
     col += beatCol * horizonGlow * (bass * 0.55 + pulse * (0.15 + 0.30 * intensity + 0.35 * build) + 0.45 * flash + 0.30 * build);
     col += highCol * exp(-hd * 60.0) * (high * 0.35 + 0.25 * flash);
 
-    // ---------- Ecualizador pixel desde el horizonte (solo partida) ----------
+    // ---------- Ecualizador pixel desde el suelo (solo partida) ----------
     // Barras DISCRETAS con hueco entre ellas, 3 taps promediados por barra, altura
-    // contenida y alpha que se desvanece hacia la punta. (La cordillera tapa buena
-    // parte: la T03.1 le da su propio plano, doc 11 §1.C.)
-    if (uShaderMode > 0.5 && uv.y < uHorizon) {
+    // contenida y alpha que se desvanece hacia la punta. Anclado a la línea del
+    // suelo en cualquier escena (la cordillera o el mar tapan buena parte: la
+    // T03.1 le da su propio plano, doc 11 §1.C).
+    if (uShaderMode > 0.5 && uv.y < uGround) {
         const float BARS = 40.0;
         float slot = floor(uv.x * BARS);
         float cx = (slot + 0.5) / BARS;
@@ -361,10 +364,10 @@ void main(void) {
         float bin = (b0 * 2.0 + b1 + b2) * 0.25;
         // ² para que el silencio sea plano; más alto cuanto más empuja el tramo.
         float h = bin * bin * (0.11 + 0.09 * intensity);
-        float top = uHorizon - h;
+        float top = uGround - h;
         float gap = step(fract(uv.x * BARS), 0.68);   // 68% barra, 32% hueco
         if (uv.y > top && h > 0.004) {
-            float t = (uHorizon - uv.y) / max(h, 1e-4);   // 0 en la base, 1 en la punta
+            float t = (uGround - uv.y) / max(h, 1e-4);   // 0 en la base, 1 en la punta
             vec3 barCol = mix(mix(beatCol, highCol, cx), beatCol, climax * 0.5);
             col += barCol * gap * (1.0 - t) * (0.12 + 0.10 * intensity + bass * 0.10);
         }

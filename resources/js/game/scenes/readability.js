@@ -20,9 +20,14 @@
 // Las alturas y los colores salen del registro de obstáculos (config.js) y de la
 // paleta del pixel art (assets/palette.js): un obstáculo nuevo entra solo en la
 // prueba, y si su sprite no tiene color asignado aquí, la prueba lo dice.
+//
+// Lo que hay detrás lo declara cada tipo de capa (backdrops.js, T02.2): montañas,
+// mar, islas, el faro… Y el cielo empieza en el horizonte de la escena
+// (`horizonRise`), no siempre en el suelo.
 
 import { PALETTE } from '../assets/palette.js';
 import { CORRIDOR_HEIGHT_PX, GROUND_OFFSET_PX, MODE_COLORS, OBSTACLE_KIND, WORLD_VIEW } from '../config.js';
+import { sceneBackdrops } from './backdrops.js';
 import { contrastRatio, hexToRgb } from './color.js';
 import { skyColorAt } from './skyModel.js';
 
@@ -81,16 +86,12 @@ export function playSubjects() {
     return out;
 }
 
-/** Fracción del cielo (0 arriba, 1 el horizonte) de una altura sobre el suelo. */
-export function heightToSkyFrac(heightPx, viewHeight = WORLD_VIEW.targetHeight) {
-    return 1 - heightPx / (viewHeight - GROUND_OFFSET_PX);
-}
-
-/** Base (lo que tapa siempre) y techo de cada capa de montañas de una escena. */
-function ridgeSpans(scene) {
-    return scene.layers
-        .filter((l) => l.type === 'ridge')
-        .map((l) => ({ id: l.id, color: l.color, base: l.params.baseRise, top: l.params.baseRise + l.params.jag }));
+/**
+ * Fracción del cielo (0 arriba, 1 el horizonte) de una altura sobre el suelo.
+ * `horizonRise`: el horizonte de la escena sobre el suelo (0 en la Cordillera).
+ */
+export function heightToSkyFrac(heightPx, viewHeight = WORLD_VIEW.targetHeight, horizonRise = 0) {
+    return 1 - (heightPx - horizonRise) / (viewHeight - GROUND_OFFSET_PX - horizonRise);
 }
 
 /**
@@ -102,16 +103,19 @@ function ridgeSpans(scene) {
  */
 export function checkReadability(state, scene) {
     const R = READABILITY_RULES;
-    const ridges = ridgeSpans(scene);
-    // Por debajo de la base de la cordillera más alta no asoma el cielo.
-    const skyFrom = Math.max(0, ...ridges.map((r) => r.base));
+    const rise = scene.horizonRise ?? 0;
+    const spans = sceneBackdrops(scene);
+    // Por debajo del horizonte, o de lo que alguna capa tapa siempre, no asoma el cielo.
+    const skyFrom = Math.max(rise, ...spans.map((b) => b.solid));
     const failures = [];
-    const sky = [0, 0, 0];
+    const tmp = [0, 0, 0];
     for (const s of playSubjects()) {
         for (let h = s.from; h <= s.to; h += R.stepPx) {
             const backdrops = [];
-            if (h >= skyFrom) backdrops.push(['cielo', skyColorAt(state, heightToSkyFrac(h), sky).slice()]);
-            for (const r of ridges) if (h <= r.top) backdrops.push([r.id, state.mountains[r.color]]);
+            if (h >= skyFrom) backdrops.push(['cielo', skyColorAt(state, heightToSkyFrac(h, undefined, rise), tmp).slice()]);
+            for (const b of spans) {
+                if (h >= b.from && h <= b.to) backdrops.push([b.id, Array.from(b.colorAt(state, h, tmp))]);
+            }
             for (const [name, color] of backdrops) {
                 const ratio = contrastRatio(s.color, color);
                 if (ratio < s.min) failures.push({ subject: s.id, heightPx: h, backdrop: name, ratio, min: s.min });

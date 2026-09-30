@@ -104,6 +104,12 @@ export function createSkyState() {
         clouds: { body: f3(), rimTop: f3(), rimTopAmt: 0, rimBottom: f3(), rimBottomAmt: 0, cover: 0, alpha: 0 },
         mountains: { far: f3(), near: f3(), rim: f3(), rimAmt: 0 },
         ground: f3(),
+        /**
+         * El mar (T02.2, solo escenas con `sea`): `far` en la línea del horizonte,
+         * `near` en la orilla (seaColorAt interpola entre los dos), las crestas de
+         * las olas y el reflejo del sol y de la luna (rgb + fuerza).
+         */
+        sea: { far: f3(), near: f3(), crest: f3(), crestAmt: 0, sunGlint: f4(), moonGlint: f4() },
         _p: createPaletteSample(),
     };
 }
@@ -216,7 +222,104 @@ export function skyStateAt(hour, scene, out) {
     out.mountains.rim.set(p.rim);
     out.mountains.rimAmt = p.rimAmt * moonlit;
     out.ground.set(p.ground);
+
+    if (scene.sea) seaStateAt(out, scene.sea);
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// El mar (T02.2)
+
+/**
+ * Cuánto se parece el mar al cielo que refleja: casi todo en el horizonte (a
+ * ras del agua refleja mucho) y poco en la orilla, donde se ve el agua de verdad.
+ * Y cuánto se oscurece (L de OKLab): el mar es el fondo de contraste de la franja
+ * del ptero y los cactus, como las montañas en la Cordillera (el guardián lo mide).
+ */
+const SEA_SHAPE = Object.freeze({
+    reflectFar: 0.62,
+    reflectNear: 0.3,
+    darkFar: 0.8,
+    darkNear: 0.66,
+    /** Las crestas: la luz del cielo bajo sobre el agua, más tenue de noche. */
+    crestDay: 0.5,
+    crestNight: 0.24,
+});
+
+const labA = [0, 0, 0];
+const labB = [0, 0, 0];
+const deepCache = new Map();
+const skyTmp = [0, 0, 0];
+
+/** OKLab de un hex, una vez por color (las escenas declaran pocos). */
+function deepLab(hex) {
+    let lab = deepCache.get(hex);
+    if (!lab) {
+        lab = rgbToOklab(hexToRgb(hex));
+        deepCache.set(hex, lab);
+    }
+    return lab;
+}
+
+/** Mezcla en OKLab `sky` (rgb) con `deep` (lab) y oscurece: el agua a una distancia. */
+function waterColor(sky, deep, reflect, dark, out) {
+    rgbToOklab(sky, labA);
+    labB[0] = (deep[0] + (labA[0] - deep[0]) * reflect) * dark;
+    labB[1] = deep[1] + (labA[1] - deep[1]) * reflect;
+    labB[2] = deep[2] + (labA[2] - deep[2]) * reflect;
+    oklabToRgb(labB, out);
+}
+
+/**
+ * El mar de una hora: el cielo que refleja (con su neblina a ras del horizonte y
+ * el cenit en la orilla), las crestas y el reflejo de los astros. El reflejo del
+ * sol es más largo y fuerte con el sol bajo, y se apaga cuando se ha puesto.
+ *
+ * @param {ReturnType<typeof createSkyState>} out  Con el cielo ya calculado.
+ * @param {{ deep: string }} sea
+ */
+function seaStateAt(out, sea) {
+    const S = SEA_SHAPE;
+    const deep = deepLab(sea.deep);
+    waterColor(skyColorAt(out, 1, skyTmp), deep, S.reflectFar, S.darkFar, out.sea.far);
+    waterColor(out.sky.top, deep, S.reflectNear, S.darkNear, out.sea.near);
+
+    // Crestas: el color del cielo a ras del agua, aclarado.
+    skyColorAt(out, 0.9, skyTmp);
+    for (let i = 0; i < 3; i++) out.sea.crest[i] = Math.min(1, skyTmp[i] + (1 - skyTmp[i]) * 0.35);
+    out.sea.crestAmt = S.crestDay + (S.crestNight * (0.4 + 0.6 * out.moon.light) - S.crestDay) * out.night;
+
+    // Reflejo del sol: de −0.5° (puesto) a +1.5° aparece; con el sol alto se queda
+    // en un brillo corto.
+    const elev = out.elev;
+    const sunIn = clamp01((elev + 0.5) / 2);
+    const low = 1 - clamp01((elev - 6) / 29);
+    const g = out.sea.sunGlint;
+    for (let i = 0; i < 3; i++) g[i] = out.sun.core[i] + (out.sun.edge[i] - out.sun.core[i]) * 0.45;
+    g[3] = sunIn * (0.3 + 0.62 * low);
+
+    // Reflejo de la luna: tanto como la luz que da.
+    const m = out.sea.moonGlint;
+    m[0] = out.moon.color[0];
+    m[1] = out.moon.color[1];
+    m[2] = out.moon.color[2];
+    m[3] = out.moon.light * 0.85;
+}
+
+/**
+ * Color del mar a una distancia: 0 en la línea del horizonte, 1 en la orilla.
+ * El mismo que pinta la capa `sea` (bandas) y el que mide el guardián.
+ *
+ * @param {ReturnType<typeof createSkyState>} state
+ * @param {number} t
+ * @param {number[] | Float32Array} [out]
+ */
+export function seaColorAt(state, t, out = [0, 0, 0]) {
+    const k = Math.pow(clamp01(t), 0.7);
+    rgbToOklab(state.sea.far, labA);
+    rgbToOklab(state.sea.near, labB);
+    for (let i = 0; i < 3; i++) labA[i] += (labB[i] - labA[i]) * k;
+    return oklabToRgb(labA, out);
 }
 
 /**

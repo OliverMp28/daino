@@ -140,7 +140,8 @@ test('registro de escenas: paletas, ciclos, capas y elementos con nombre', () =>
         assert.ok(SKY_PALETTES[sc.palette], `${sc.id}: paleta ${sc.palette}`);
         assert.ok(SKY_CYCLES[sc.cycle], `${sc.id}: ciclo ${sc.cycle}`);
         for (const l of sc.layers) {
-            assert.match(layerTypes, new RegExp(`\\b${l.type}: create`), `${sc.id}: sin implementación para la capa "${l.type}"`);
+            // En el bundle (`tipo: createX`) o bajo demanda (`tipo: () => import(...)`, T02.1).
+            assert.match(layerTypes, new RegExp(`\\b${l.type}: (create|\\(\\) => import\\()`), `${sc.id}: sin implementación para la capa "${l.type}"`);
         }
         const ids = sceneElements(sc).map((e) => e.id);
         assert.equal(new Set(ids).size, ids.length, `${sc.id}: ids repetidos`);

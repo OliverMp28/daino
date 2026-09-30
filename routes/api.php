@@ -73,6 +73,8 @@ $router->group(['prefix' => '/api'], static function (Router $r): void {
         // Dificultad de un nivel listo para publicar (su autor la elige antes de
         // publicarlo; un nivel publicado tiene una sola).
         $r->post('/levels/{id}/difficulty',  'Api\\LevelApiController@changeDifficulty');
+        // T02: escenario de un nivel propio, en cualquier estado (no toca el chart).
+        $r->post('/levels/{id}/scene',       'Api\\LevelApiController@changeScene');
 
         $r->post('/comments', 'Api\\CommentApiController@store');
     });

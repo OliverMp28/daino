@@ -168,13 +168,14 @@ export function mountDevTools() {
     fx.row.title = 'Apagado: se ve el escenario solo, sin lo que late con la música';
     panel.appendChild(fx.row);
 
-    // Escena (con el T02 habrá más de una).
+    // Escena (T02: cada nivel trae la suya; aquí se ve cualquiera sin jugar). Si
+    // sus capas no están en el bundle, el engine las carga y la pone al llegar.
     const sceneRow = el('label', 'daino-devtools__row', 'Escena ');
     const sceneSelect = document.createElement('select');
     for (const s of Object.values(SCENES)) {
         const opt = document.createElement('option');
         opt.value = s.id;
-        opt.textContent = s.label;
+        opt.textContent = s.kind === 'story' ? `${s.label} (historia)` : s.label;
         sceneSelect.appendChild(opt);
     }
     sceneSelect.value = DEFAULT_SCENE;
@@ -215,6 +216,12 @@ export function mountDevTools() {
                 slider.value = String(((sky.hour % 24) + 24) % 24);
                 sliderValue.textContent = clock(sky.hour);
             }
+        }
+        // La escena vigente (la del nivel en partida, la de siempre en el menú),
+        // salvo mientras se está eligiendo otra.
+        if (sky?.sceneId && sky.sceneId !== sceneSelect.value && document.activeElement !== sceneSelect) {
+            sceneSelect.value = sky.sceneId;
+            renderElements(sky.sceneId);
         }
         const ev = window.__daino.session?._sky?.events;
         if (ev) {

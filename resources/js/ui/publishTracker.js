@@ -7,6 +7,7 @@
 //     elija la dificultad y lo publique.
 //   - Elegir dificultad (`changeDifficulty`) y publicar (`confirmPublish`) son
 //     inmediatos: el servidor ya generó el chart de cada dificultad al analizar.
+//   - Elegir el escenario (`changeScene`, T02) también, y en cualquier estado.
 //   - Recargar la página a mitad de un análisis no lo pierde: al iniciar sesión
 //     se piden "Míos" y se retoma el seguimiento de los pendientes.
 //   - Un aviso no interrumpe una partida: si llega jugando, espera a que se
@@ -81,6 +82,26 @@ export async function changeDifficulty(level, difficulty) {
     const message = res.data?.message
         ?? res.data?.fields?.difficulty
         ?? `No se pudo cambiar la dificultad (error ${res.status}).`;
+    return { ok: false, message };
+}
+
+/**
+ * Cambia el escenario de un nivel propio (T02.1). Inmediato y en cualquier
+ * estado: no toca el chart ni las marcas.
+ *
+ * @param {{ id: number }} level
+ * @param {string | null} scene  Id de un ambiente elegible, o null (Automático).
+ * @returns {Promise<{ ok: true, level: object } | { ok: false, message: string }>}
+ */
+export async function changeScene(level, scene) {
+    const res = await apiRequest('POST', `/api/levels/${level.id}/scene`, { body: { scene } });
+    if (res.ok && res.data?.level) {
+        patchCachedLevel(res.data.level);
+        return { ok: true, level: res.data.level };
+    }
+    const message = res.data?.fields?.scene
+        ?? res.data?.message
+        ?? `No se pudo cambiar el escenario (error ${res.status}).`;
     return { ok: false, message };
 }
 

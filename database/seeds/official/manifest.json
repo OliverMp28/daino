@@ -1,6 +1,6 @@
 {
     "formatVersion": 1,
-    "description": "Catálogo de niveles oficiales. Los MP3 NO están en el repo (pistas comerciales, remote público): van en storage/official/ con exactamente estos nombres. Ver scripts/bake-official.mjs y scripts/seed-official.php. `difficulty` (Ola 5) es la dificultad con la que se chartea cada oficial, 1-5 o \"auto\"; nunca supera el techo que la canción admite. El catálogo oficial se lista de menos a más difícil: es la curva de aprendizaje de quien empieza (una corta y relajada, dos suaves, dos normales, dos difíciles y la más larga como reto final).",
+    "description": "Catálogo de niveles oficiales. Los MP3 NO están en el repo (pistas comerciales, remote público): van en storage/official/ con exactamente estos nombres. Ver scripts/bake-official.mjs y scripts/seed-official.php. `difficulty` (Ola 5) es la dificultad con la que se chartea cada oficial, 1-5 o \"auto\"; nunca supera el techo que la canción admite. El catálogo oficial se lista de menos a más difícil: es la curva de aprendizaje de quien empieza (una corta y relajada, dos suaves, dos normales, dos difíciles y la más larga como reto final). `scene` (T02, opcional): el escenario del oficial, un ambiente o su historia de autor (resources/js/game/scenes/registry.js); sin él, Automático.",
     "levels": [
         { "slug": "sugar-red", "file": "Sugar Red.mp3", "title": "Sugar Red", "artist": null, "difficulty": 3 },
         { "slug": "last-christmas", "file": "Last Christmas - Cardi B.mp3", "title": "Last Christmas", "artist": "Cardi B", "difficulty": 1 },

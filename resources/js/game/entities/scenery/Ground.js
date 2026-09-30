@@ -4,6 +4,9 @@
 //
 // La hora le da un tinte sutil: el suelo es oscuro a propósito, es el fondo de
 // contraste de todo lo que se juega.
+//
+// `params.sprite` elige la tira (T02.2: la arena de la Costa); la de siempre si
+// no se dice.
 
 import { Container, Graphics, TilingSprite } from 'pixi.js';
 import { getTexture, spriteSize, PIXEL_SCALE } from '../../assets/pixelart.js';
@@ -13,15 +16,16 @@ import { rgbToNumber } from '../../scenes/color.js';
 const GROUND_GLOW_COLOR = 0x8fe0ff;
 
 /**
- * @param {{ id: string }} def
+ * @param {{ id: string, params?: { sprite?: string } }} def
  * @param {{ width: number, height: number, groundY: number }} view
  */
 export function createGroundLayer(def, view) {
+    const sprite = def.params?.sprite ?? 'ground';
     const container = new Container({ label: def.id });
     const strip = new TilingSprite({
-        texture: getTexture('ground'),
+        texture: getTexture(sprite),
         width: view.width,
-        height: spriteSize('ground').h,
+        height: spriteSize(sprite).h,
     });
     strip.tileScale.set(PIXEL_SCALE);
     const glow = new Graphics();

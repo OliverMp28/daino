@@ -301,6 +301,23 @@ const ground = [
     'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
 ];
 
+// Arena de la Costa (T02.2): la misma tira, con la línea de la orilla y conchas.
+// Fila 0: montoncitos de arena sobre la línea; fila 1: la orilla.
+const groundSand = [
+    '.....AA.............AAA.........',
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'aabaaaaaaaaaaaaaaabaaaaaaaaaaaaa',
+    'aaaaaaaaabaaaaaaaaaaaaaaaaabaaaa',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'aaaaabaaaaaaaaaaaaaaaabaaaaaaaaa',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaba',
+    'aaaaaaaaaaaaabaaaaaaaaaaaaaaaaaa',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'abaaaaaaaaaaaaaaaaaaaaabaaaaaaaa',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+];
+
 // Nubes (T01): en claros, porque la hora del cielo las tiñe. Cuerpo
 // blanco con la sombra abajo; el color lo pone `Sprite.tint` (entities/scenery/
 // Clouds.js). Grid 20×8 → 80×32 y 28×10 → 112×40.
@@ -481,7 +498,7 @@ const DEFS = {
     jetpack, jetFlameA, jetFlameB, jetFlameIdle,
     cactusSmall, cactusWide, ...cactusRows,
     pteroA, pteroB,
-    ground, dot,
+    ground, groundSand, dot,
     cloud, cloudB, cloudRimTop, cloudRimBottom, cloudBRimTop, cloudBRimBottom,
     crystal, crystalSharp, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
     orbA, orbB, orbLit,
@@ -563,6 +580,26 @@ export function getTexture(name, skinId = 'classic') {
     tex = Texture.from(rasterize(def, skin.overrides));
     tex.source.scaleMode = 'nearest';
     cache.set(key, tex);
+    return tex;
+}
+
+/**
+ * Textura de un arte que no vive en este archivo (T02): las capas de las escenas
+ * nuevas se cargan bajo demanda y traen su propio arte, que no tiene por qué ir
+ * en el bundle principal. Misma paleta, mismo rasterizado y misma caché, por
+ * clave: la segunda llamada con la misma clave devuelve la misma textura.
+ *
+ * @param {string} key   Única entre todo el arte (p. ej. 'scene:lighthouse').
+ * @param {string[]} rows
+ * @returns {Texture}
+ */
+export function artTexture(key, rows) {
+    const cacheKey = `${key}@art`;
+    let tex = cache.get(cacheKey);
+    if (tex) return tex;
+    tex = Texture.from(rasterize(rows, null));
+    tex.source.scaleMode = 'nearest';
+    cache.set(cacheKey, tex);
     return tex;
 }
 

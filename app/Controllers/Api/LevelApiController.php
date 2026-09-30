@@ -17,6 +17,7 @@ use App\Services\ChartValidator;
 use App\Services\FileUploadService;
 use App\Services\LevelPresenter;
 use App\Services\PublishService;
+use App\Services\SceneCatalog;
 use PDOException;
 
 /**
@@ -34,6 +35,7 @@ use PDOException;
  *   - GET  /api/levels/{id}/analysis     (auth)    estado del análisis del servidor (solo el autor)
  *   - POST /api/levels/{id}/analysis     (auth)    reintentar el análisis tras un fallo (solo el autor)
  *   - POST /api/levels/{id}/difficulty   (auth)    dificultad de un nivel listo para publicar (solo el autor)
+ *   - POST /api/levels/{id}/scene        (auth)    escenario del nivel, en cualquier estado (solo el autor, T02)
  *
  * Autoría: cualquier mutación valida `$level->userId === AuthContext::user()->id`,
  * 403 si no.
@@ -398,6 +400,33 @@ final class LevelApiController
             };
         }
         return Response::json(['level' => self::serialize($fresh)]);
+    }
+
+    /**
+     * Elige el escenario de un nivel propio (T02.1, doc 11).
+     *
+     * Body `{scene: "<ambiente>" | null}`; null = Automático. Solo ambientes
+     * elegibles (`SceneCatalog::SELECTABLE`): las historias de autor son de los
+     * oficiales. Vale en cualquier estado, también publicado: el escenario no
+     * cambia el chart ni las marcas, solo lo que se ve.
+     *   200  aplicado
+     *   404  no existe o no es tuyo
+     *   422  escenario desconocido o no elegible
+     *
+     * @param array<string, string> $params
+     */
+    public function changeScene(Request $req, array $params): Response
+    {
+        $level = self::ownLevel(self::parseId($params));
+        if ($level === null) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        $raw = $req->input('scene');
+        if ($raw !== null && (!is_string($raw) || !SceneCatalog::isSelectable($raw))) {
+            throw new ValidationException(['scene' => 'Ese escenario no existe o no se puede elegir.']);
+        }
+        $level->updateMetadata(['scene' => $raw]);
+        return Response::json(['level' => self::serialize($level)]);
     }
 
     /**

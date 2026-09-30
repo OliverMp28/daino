@@ -87,6 +87,8 @@ final class LevelPresenter
             'bpm_exact'      => $level->bpmExact,
             'game_speed'     => $level->gameSpeed,
             'difficulty'     => $level->difficulty,
+            // T02: escenario elegido (null = Automático). Lo ve todo el que juega.
+            'scene'          => $level->scene,
             'generator_seed' => $level->generatorSeed,
             'is_public'      => $level->isPublic,
             'is_official'    => $level->isOfficial,

@@ -47,6 +47,7 @@ import { PLAY_REQUEST_EVENT, PREFETCH_REQUEST_EVENT } from './playRequests.js';
 import { showToast } from './toast.js';
 import { Input } from '../game/systems/input.js';
 import { SCENERY } from '../game/config.js';
+import { DEFAULT_SCENE, playSceneId } from '../game/scenes/registry.js';
 import { fetchBinary, getUser, request as apiRequest } from '../api/client.js';
 import { invalidateLevels } from '../api/levelsCache.js';
 import {
@@ -90,6 +91,7 @@ const attempts = createAttemptCounter();
  *   best: { points: number, percentage: number } | null,   marca antes del intento en curso
  *   attempt: number,
  *   sections: Array<object>,
+ *   scene: string,                   escenario del nivel (T02), ya cargado
  * } | null}
  */
 let run = null;
@@ -311,12 +313,16 @@ async function handlePlayRequest(request) {
     // rechazaría con 401. Canción local con sesión: se registra (o se recupera,
     // si ya se jugó) para poder guardar el progreso.
     let levelId = loaded.levelId;
+    // El nivel tal como lo da la API (su escenario, entre otras cosas): el del
+    // catálogo, o el tuyo si la canción local ya era un nivel tuyo.
+    let levelMeta = request.level ?? null;
     if (getUser() === null) {
         levelId = null;
     } else if (levelId === null) {
         const saved = await persistLocalLevel(loaded);
         if (seq !== playRequestSeq) return;
         levelId = saved?.id ?? null;
+        if (saved !== null) levelMeta = saved.level;
         if (saved !== null && !saved.created) {
             // La canción ya era un nivel tuyo (publicado, listo para publicar con
             // la dificultad elegida…): se juega SU chart y no el recién generado
@@ -335,6 +341,11 @@ async function handlePlayRequest(request) {
             if (seq !== playRequestSeq) return;
         }
     }
+    if (seq !== playRequestSeq) return;
+
+    // El escenario del nivel (T02): sus capas se descargan ahora, con el aviso de
+    // carga aún en pantalla, y se pone al empezar, bajo el fundido.
+    const scene = await engineApi.loadScene(playSceneId(levelMeta));
     if (seq !== playRequestSeq) return;
 
     // Móvil en vertical: antes de empezar, sugerir girarlo (la canción no
@@ -360,6 +371,7 @@ async function handlePlayRequest(request) {
         best: loaded.levelId !== null ? mergeBest(request.level?.my_best, localBests.get(loaded.levelId)) : null,
         attempt: 0,
         sections: loaded.chart.events.filter((e) => e.type === 'section'),
+        scene,
     };
 
     await fadeOverlay({
@@ -390,6 +402,9 @@ function startAttempt() {
     engineApi.attachAudio(audioEngine);
 
     run.attempt = attempts.next(run.key);
+    // El escenario del nivel ANTES de crear la sesión: su plan del cielo usa el
+    // ciclo de la escena vigente. En un reintento es la misma (no hace nada).
+    engineApi.setScene(run.scene);
     // La sesión arranca ella misma la reproducción cuando termina de
     // montarse: es la única dueña del reloj de la partida.
     activeSession = new GameSession({
@@ -663,9 +678,13 @@ function setState(next) {
 
     // El dino ambiente del scenery solo corre en el menú.
     engineApi?.setAmbientDinoVisible?.(next === STATE.MENU);
-    // En el menú, el cielo del menú de la escena (T01): la partida ya no
-    // empuja su hora. Se llega aquí bajo el fundido a negro: no se ve el salto.
-    if (next === STATE.MENU) engineApi?.setSkyHour?.(null);
+    // En el menú, la escena de siempre (T02) con el cielo de su menú (T01): la
+    // partida ya no empuja su hora. Se llega aquí bajo el fundido a negro: no se
+    // ve el salto.
+    if (next === STATE.MENU) {
+        engineApi?.setScene?.(DEFAULT_SCENE);
+        engineApi?.setSkyHour?.(null);
+    }
 
     // Presupuesto de render del estado (Ola 1). Las claves de STATE y de
     // RENDER_PROFILES coinciden a propósito.

@@ -2,32 +2,30 @@
 //
 // Cresta poligonal generada una vez por tamaño de vista y dibujada dos veces
 // seguidas (patrón periódico): el scroll da la vuelta sin que se note. Las
-// alturas salen de un hash por índice (no de Math.random): al redimensionar (en
-// un móvil, cada vez que se esconde la barra del navegador) la cordillera
-// conserva su forma.
+// alturas salen de un hash por índice (ridgeShape.js, no de Math.random): al
+// redimensionar (en un móvil, cada vez que se esconde la barra del navegador) la
+// cordillera conserva su forma.
 //
 // Se dibuja en blanco y el color lo pone la hora (`tint`, scenes/skyModel.js).
 // Encima, el FILO de la cresta: la luz del sol bajo al atardecer y la de la luna
 // de noche (elemento 'ridgeRim' del panel dev).
+//
+// T02.2: la misma capa hace las islas de la Costa. `anchor: 'horizon'` la apoya
+// en el horizonte del cielo de la escena (la línea del mar) en vez de en el
+// suelo, y `gaps` deja tramos hundidos bajo esa línea: montañas sueltas en vez de
+// una cordillera.
 
 import { Container, Graphics } from 'pixi.js';
 import { rgbToNumber } from '../../scenes/color.js';
-
-/** [0,1) estable para (índice, semilla). */
-export function hash01(i, seed) {
-    let x = (Math.imul(i + 1, 2654435761) ^ Math.imul(seed, 1597334677)) >>> 0;
-    x ^= x >>> 15;
-    x = Math.imul(x, 2246822519) >>> 0;
-    x ^= x >>> 13;
-    return x / 4294967296;
-}
+import { ridgeHeights, ridgePoints } from './ridgeShape.js';
 
 /**
- * @param {{ id: string, color: 'far' | 'near', rim?: number, params: { baseRise: number, jag: number, step: number, seed: number, parallax: number } }} def
- * @param {{ width: number, height: number, groundY: number }} view
+ * @param {{ id: string, color: 'far' | 'near', rim?: number, params: { anchor?: 'ground' | 'horizon', baseRise: number, jag: number, step: number, seed: number, parallax: number, gaps?: number, gapRun?: number } }} def
+ * @param {{ width: number, height: number, groundY: number, horizonRise?: number }} view
  */
 export function createRidgeLayer(def, view) {
-    const { baseRise, jag, step, seed, parallax } = def.params;
+    const { step, parallax } = def.params;
+    const lift = def.params.anchor === 'horizon' ? (view.horizonRise ?? 0) : 0;
     const rimFactor = def.rim ?? 0;
     const container = new Container({ label: def.id });
     const body = new Graphics();
@@ -47,10 +45,9 @@ export function createRidgeLayer(def, view) {
         rim.clear();
         // Periodo múltiplo del paso: la cresta cierra exactamente donde empieza la
         // copia siguiente.
-        period = Math.ceil(Math.max(width, 640) / step) * step;
-        const n = period / step;
-        const heights = [];
-        for (let i = 0; i < n; i++) heights.push(baseRise + hash01(i, seed) * jag);
+        const n = ridgePoints(width, step);
+        period = n * step;
+        const heights = ridgeHeights(n, def.params);
         for (let copy = 0; copy < 2; copy++) {
             const x0 = copy * period;
             body.moveTo(x0, 0);
@@ -62,8 +59,8 @@ export function createRidgeLayer(def, view) {
         }
         body.fill(0xffffff);
         rim.stroke({ width: 3, color: 0xffffff });
-        // +4: la falda queda bajo la línea del suelo.
-        container.y = groundY + 4;
+        // +4: la falda queda bajo su línea de apoyo (el suelo o el mar la tapan).
+        container.y = groundY - lift + 4;
         // El scroll se conserva dentro del periodo nuevo: redimensionar no hace saltar el paisaje.
         container.x %= period;
     }

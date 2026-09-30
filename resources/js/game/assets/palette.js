@@ -24,6 +24,11 @@ export const PALETTE = Object.freeze({
     E: '#8b9aff', // línea de borde superior — periwinkle brillante
     D: '#12152e', // relleno tierra
     s: '#333b66', // motas
+    // Arena de la Costa (T02.2): el mismo papel que el suelo (oscuro, el fondo de
+    // contraste de lo que se juega) en tonos de arena mojada; la hora la tiñe.
+    A: '#ffd9a0', // línea de la orilla
+    a: '#221a2c', // arena mojada
+    b: '#5c4a5e', // conchas y guijarros
     // Nube (T01): en claros, porque la hora la tiñe (Sprite.tint). El cuerpo
     // es blanco y su sombra un gris azulado: de día queda blanca con volumen, al
     // atardecer toma el color del cielo y de noche es una silueta.

@@ -33,7 +33,7 @@ final class Level
      * `analysis_json` aquí: de las variantes solo interesa si existen.
      */
     private const LIST_COLUMNS = 'id, user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
-        difficulty, difficulty_requested, file_path, audio_sha256, generator_seed, is_public, pending_public, chart_status, chart_version,
+        difficulty, difficulty_requested, scene, file_path, audio_sha256, generator_seed, is_public, pending_public, chart_status, chart_version,
         chart_hash, difficulty_ceiling, (chart_variants_json IS NOT NULL) AS has_variants, is_official, official_slug, created_at, updated_at';
 
     /** Pestañas públicas del catálogo. */
@@ -74,6 +74,8 @@ final class Level
         public int $difficulty,
         /** Ola 5: la dificultad que pidió el autor (null = Automática). `difficulty` es la efectiva. */
         public ?int $difficultyRequested,
+        /** T02: escenario del nivel (id del registro de escenas del juego; null = Automático). */
+        public ?string $scene,
         public ?string $filePath,
         public ?string $audioSha256,
         public string $generatorSeed,
@@ -337,7 +339,8 @@ final class Level
      *     is_public?: bool,
      *     is_official?: bool,
      *     official_slug?: ?string,
-     *     difficulty_ceiling?: ?int
+     *     difficulty_ceiling?: ?int,
+     *     scene?: ?string
      * } $data
      */
     public static function create(array $data): self
@@ -346,11 +349,11 @@ final class Level
         $pdo = Database::getInstance();
         $stmt = $pdo->prepare(
             'INSERT INTO levels (user_id, title, artist, duration_sec, duration_ms, bpm, bpm_exact, game_speed,
-                                 difficulty, file_path, audio_sha256, generator_seed, is_public,
+                                 difficulty, scene, file_path, audio_sha256, generator_seed, is_public,
                                  chart_json, analysis_json, chart_status, chart_version, chart_hash,
                                  difficulty_ceiling, is_official, official_slug)
              VALUES (:user_id, :title, :artist, :duration_sec, :duration_ms, :bpm, :bpm_exact, :game_speed,
-                     :difficulty, :file_path, :audio_sha256, :generator_seed, :is_public,
+                     :difficulty, :scene, :file_path, :audio_sha256, :generator_seed, :is_public,
                      :chart_json, :analysis_json, :chart_status, :chart_version, :chart_hash,
                      :difficulty_ceiling, :is_official, :official_slug)',
         );
@@ -364,6 +367,7 @@ final class Level
             'bpm_exact'      => $data['bpm_exact'] ?? null,
             'game_speed'     => $data['game_speed'] ?? null,
             'difficulty'     => $data['difficulty'],
+            'scene'          => $data['scene'] ?? null,
             'file_path'      => $data['file_path'] ?? null,
             'audio_sha256'   => $data['audio_sha256'] ?? null,
             'generator_seed' => $data['generator_seed'],
@@ -428,14 +432,15 @@ final class Level
     }
 
     /**
-     * Actualiza la metadata mostrable de un nivel (no toca audio ni chart).
+     * Actualiza la metadata mostrable de un nivel (no toca audio ni chart). El
+     * escenario (T02) es metadata: cambiarlo no cambia el nivel que se juega.
      *
-     * @param array{title?: string, artist?: ?string, difficulty?: int, file_path?: ?string} $data
+     * @param array{title?: string, artist?: ?string, difficulty?: int, file_path?: ?string, scene?: ?string} $data
      * @return bool  true si cambió algo.
      */
     public function updateMetadata(array $data): bool
     {
-        $map = ['title' => 'title', 'artist' => 'artist', 'difficulty' => 'difficulty', 'file_path' => 'filePath'];
+        $map = ['title' => 'title', 'artist' => 'artist', 'difficulty' => 'difficulty', 'file_path' => 'filePath', 'scene' => 'scene'];
         $sets = [];
         $params = ['id' => $this->id];
         foreach ($map as $column => $property) {
@@ -553,6 +558,7 @@ final class Level
             gameSpeed:         $row['game_speed'] === null ? null : (int) $row['game_speed'],
             difficulty:        (int) $row['difficulty'],
             difficultyRequested: $row['difficulty_requested'] === null ? null : (int) $row['difficulty_requested'],
+            scene:             $row['scene'] === null ? null : (string) $row['scene'],
             filePath:          $row['file_path'] === null ? null : (string) $row['file_path'],
             audioSha256:       $row['audio_sha256'] === null ? null : (string) $row['audio_sha256'],
             generatorSeed:     (string) $row['generator_seed'],

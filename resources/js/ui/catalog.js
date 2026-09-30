@@ -15,6 +15,8 @@
 //   - Pulsar una tarjeta JUEGA. La ficha (ranking, publicar, dificultad) se abre
 //     con el botón de detalles de la tarjeta: jugar no pasa por ella.
 //   - La dificultad solo se elige en un nivel propio listo para publicar.
+//   - El escenario (T02) se elige en cualquier nivel propio, también publicado:
+//     no cambia el nivel que se juega, solo lo que se ve.
 //
 // Arquitectura:
 //   - Qué se enseña lo decide `catalogModel.js` / `publishModel.js` (puros,
@@ -32,14 +34,14 @@ import { requestCatalogPlay, requestPrefetch } from './playRequests.js';
 import { pickFileViaInput, uploadMaxMb } from './upload.js';
 import { createLocalBests } from '../storage/localBests.js';
 import { renderAvatar } from './avatar.js';
-import { cardView, emptyView, tabsFor, PLAY_MODE, formatPoints } from './catalogModel.js';
+import { cardView, emptyView, sceneChoiceView, tabsFor, PLAY_MODE, formatPoints } from './catalogModel.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { createModal } from './modals.js';
 import { showToast } from './toast.js';
 import { analysisView, difficultyChoiceView, PUBLISH_STATE } from './publishModel.js';
 import {
-    LEVEL_UPDATED_EVENT, changeDifficulty, confirmPublish, retryAnalysis, subscribeAnalysis, trackPending, trackPublish,
-    withdrawPublish,
+    LEVEL_UPDATED_EVENT, changeDifficulty, changeScene, confirmPublish, retryAnalysis, subscribeAnalysis, trackPending,
+    trackPublish, withdrawPublish,
 } from './publishTracker.js';
 
 const DIALOG_ID = 'modal-catalog';
@@ -527,6 +529,8 @@ function openDetail(level, fromButton, opts = {}) {
     addStat(stats, 'Dificultad', renderStars(view.difficulty), view.difficulty.name);
     if (view.bpm) addStat(stats, 'Tempo', view.bpm);
     addStat(stats, 'Duración', view.duration);
+    // Un nivel tuyo lo enseña (y lo cambia) en su selector, más abajo.
+    if (level.is_mine !== true) addStat(stats, 'Escenario', view.scene);
     if (level.is_public === true) addStat(stats, 'Jugadores', level.players > 0 ? String(level.players) : '—');
     info.appendChild(stats);
 
@@ -595,6 +599,8 @@ function openDetail(level, fromButton, opts = {}) {
         info.appendChild(el('p', 'daino-detail__hint',
             'Pruébalo con Jugar si quieres. Una vez publicado, su dificultad queda fija para todos.'));
     }
+    const sceneChoice = renderSceneChoice(level, status);
+    if (sceneChoice !== null) info.appendChild(sceneChoice);
     if (publish.analysis !== null) {
         info.appendChild(renderAnalysisPanel(level, publish));
     }
@@ -846,6 +852,77 @@ async function applyDifficulty(level, value, box, guarded, status) {
         // foco donde estaba: en la opción elegida.
         openDetail({ ...level, ...res.level, my_best: res.level.my_best ?? null }, null, {
             focus: `.daino-difficulty__option[data-value="${CSS.escape(String(value))}"]`,
+        });
+    }
+}
+
+/**
+ * Selector del escenario de un nivel propio (T02.1). Qué opciones hay lo decide
+ * `sceneChoiceView`; aquí se pinta (con una muestra del cielo de cada ambiente)
+ * y se envía. No toca el chart: jugar y publicar siguen disponibles mientras se
+ * aplica.
+ *
+ * @param {object} level
+ * @param {HTMLElement} status
+ * @returns {HTMLElement | null}
+ */
+function renderSceneChoice(level, status) {
+    const view = sceneChoiceView(level);
+    if (view === null) return null;
+
+    const box = el('fieldset', 'daino-scene');
+    const legend = el('legend', 'daino-scene__legend', 'Escenario');
+    const group = el('div', 'daino-scene__options');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Escenario del nivel');
+
+    for (const option of view.options) {
+        const selected = option.value === view.current;
+        const b = button('', 'daino-scene__option');
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(selected));
+        b.dataset.value = option.value;
+        const swatch = el('span', 'daino-scene__swatch');
+        swatch.setAttribute('aria-hidden', 'true');
+        const s = option.swatch;
+        swatch.style.background = `linear-gradient(to bottom, ${s.top} 0%, ${s.mid} 38%, ${s.horizon} 64%, ${s.land} 64%, ${s.land} 100%)`;
+        const text = el('span', 'daino-scene__text');
+        text.append(el('span', 'daino-scene__label', option.label), el('span', 'daino-scene__hint', option.hint));
+        b.append(swatch, text);
+        b.addEventListener('click', () => {
+            if (b.getAttribute('aria-checked') !== 'true') void applyScene(level, option.value, box, status);
+        });
+        group.appendChild(b);
+    }
+    box.append(legend, group, el('p', 'daino-scene__note', 'Solo cambia lo que se ve: el nivel y las marcas son los mismos.'));
+    return box;
+}
+
+async function applyScene(level, value, box, status) {
+    const options = [...box.querySelectorAll('.daino-scene__option')];
+    const previous = options.find((b) => b.getAttribute('aria-checked') === 'true') ?? null;
+    for (const b of options) {
+        b.setAttribute('aria-checked', String(b.dataset.value === value));
+        b.disabled = true;
+    }
+    box.setAttribute('aria-busy', 'true');
+    box.dataset.busy = 'true';
+    status.textContent = '';
+
+    const res = await changeScene(level, value === 'auto' ? null : value);
+    if (!res.ok) {
+        for (const b of options) {
+            b.setAttribute('aria-checked', String(b === previous));
+            b.disabled = false;
+        }
+        box.removeAttribute('aria-busy');
+        box.dataset.busy = 'false';
+        status.textContent = res.message;
+        return;
+    }
+    if (ui.detail?.id === level.id) {
+        openDetail({ ...level, ...res.level }, null, {
+            focus: `.daino-scene__option[data-value="${CSS.escape(value)}"]`,
         });
     }
 }

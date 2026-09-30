@@ -81,6 +81,18 @@ export default defineConfig(({ command, mode }) => {
           main: resolve(__dirname, 'resources/js/main.js'),
           styles: resolve(__dirname, 'resources/css/main.css'),
         },
+        output: {
+          // PixiJS entero en un solo chunk (T02.1). Sus renderers se cargan con
+          // import() y sus clases se heredan en círculo; en cuanto hay chunks
+          // propios que importan Pixi (las capas de escena que se cargan bajo
+          // demanda), el reparto por defecto partía Pixi en varios chunks que se
+          // importaban en círculo, y en producción el juego no arrancaba
+          // ("Class extends value undefined" en el chunk del CanvasRenderer). En
+          // desarrollo no pasa: Vite no parte nada.
+          advancedChunks: {
+            groups: [{ name: 'pixi', test: /[\\/]node_modules[\\/](pixi\.js|@pixi)[\\/]/ }],
+          },
+        },
       },
     },
 

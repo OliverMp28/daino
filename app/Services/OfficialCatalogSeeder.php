@@ -95,7 +95,7 @@ final class OfficialCatalogSeeder
      */
     private function seedOne(mixed $entry, ?string $from, bool $rechart): array
     {
-        [$slug, $file, $title, $artist] = $this->parseEntry($entry);
+        [$slug, $file, $title, $artist, $scene] = $this->parseEntry($entry);
 
         $bakedPath = "{$this->seedDir}/baked/{$slug}.json";
         if (!is_file($bakedPath)) {
@@ -144,6 +144,7 @@ final class OfficialCatalogSeeder
             'artist'     => $artist,
             'difficulty' => $difficulty,
             'file_path'  => FileUploadService::OFFICIAL_PREFIX . $file,
+            'scene'      => $scene,
         ];
 
         $level = Level::findOfficialBySlug($slug);
@@ -162,7 +163,8 @@ final class OfficialCatalogSeeder
             // El audio en disco es el del horneado nuevo, pero la fila conserva
             // el hash anterior: el cargador del cliente lo detecta y rechaza el
             // audio (no se juega desincronizado). Hay que decidirlo a propósito.
-            $level->updateMetadata(['title' => $title, 'artist' => $artist]);
+            // Lo que solo se ve (título, artista, escenario) sí se aplica.
+            $level->updateMetadata(['title' => $title, 'artist' => $artist, 'scene' => $scene]);
             throw new SeedSkip($level->audioSha256 !== $sha
                 ? 'el audio cambió: usa --rechart para sustituir audio y chart (invalida la comparación de marcas)'
                 : 'hay un chart nuevo: usa --rechart para aplicarlo (invalida la comparación de marcas)');
@@ -191,7 +193,7 @@ final class OfficialCatalogSeeder
     }
 
     /**
-     * @return array{0: string, 1: string, 2: string, 3: ?string}
+     * @return array{0: string, 1: string, 2: string, 3: ?string, 4: ?string}
      */
     private function parseEntry(mixed $entry): array
     {
@@ -202,6 +204,9 @@ final class OfficialCatalogSeeder
         $file = $entry['file'] ?? null;
         $title = $entry['title'] ?? null;
         $artist = $entry['artist'] ?? null;
+        // T02: escenario del oficial (un ambiente o su historia de autor); sin él,
+        // Automático. Que exista en el registro del juego lo vigila un test JS.
+        $scene = $entry['scene'] ?? null;
         if (!is_string($slug) || preg_match(self::SLUG_PATTERN, $slug) !== 1) {
             throw new SeedSkip('slug inválido');
         }
@@ -215,7 +220,10 @@ final class OfficialCatalogSeeder
         if ($artist !== null && (!is_string($artist) || mb_strlen($artist) > 120)) {
             throw new SeedSkip('artist debe ser null o texto de hasta 120 caracteres');
         }
-        return [$slug, $file, $title, $artist === '' ? null : $artist];
+        if ($scene !== null && (!is_string($scene) || !SceneCatalog::isValidId($scene))) {
+            throw new SeedSkip('scene debe ser null o el id de una escena (minúsculas, cifras y guiones)');
+        }
+        return [$slug, $file, $title, $artist === '' ? null : $artist, $scene];
     }
 
     /**
