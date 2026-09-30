@@ -5,6 +5,9 @@ declare(strict_types=1);
  * Escenario de cada nivel (T02.1, doc 11): lo elige su autor entre los ambientes
  * elegibles, en cualquier estado del nivel, sin tocar el chart ni las marcas.
  * (El del catálogo oficial llega por el manifiesto: CatalogTest.)
+ *
+ * T02.5: `scene_auto`, lo que propone Automático por cómo suena la canción. Lo
+ * escribe el analizador (o el seeder); la API lo enseña y nunca lo cambia.
  */
 
 use App\Controllers\Api\LevelApiController;
@@ -93,6 +96,41 @@ test('escenario: la BD rechaza un id con otra forma (también en mayúsculas)', 
     foreach (['Costa Brava', 'COAST'] as $bad) {
         assertThrows(\PDOException::class, function () use ($level, $bad): void {
             Database::getInstance()->prepare('UPDATE levels SET scene = :s WHERE id = :id')->execute(['s' => $bad, 'id' => $level->id]);
+        });
+    }
+});
+
+test('escenario automático (T02.5): la API lo enseña, lo elegido manda y ninguna petición lo escribe', function (): void {
+    $author = makeUser('autor-auto');
+    $level = ownLevelFor($author, 'escena-auto-1');
+    assertSame(null, $level->sceneAuto, 'sin análisis del servidor no hay propuesta');
+    // Lo escribe el worker del analizador junto al chart.
+    Database::getInstance()->prepare("UPDATE levels SET scene_auto = 'storm' WHERE id = :id")->execute(['id' => $level->id]);
+
+    $shape = LevelPresenter::one(Level::findById($level->id), null);
+    assertSame('storm', $shape['scene_auto']);
+    assertSame(null, $shape['scene'], 'el autor no ha elegido: Automático');
+
+    // Elegir un ambiente no toca la propuesta; volver a Automático la recupera.
+    AuthContext::set($author);
+    $res = decode(changeScene($level, 'coast'));
+    assertSame('coast', $res['level']['scene']);
+    assertSame('storm', $res['level']['scene_auto']);
+    $back = decode(changeScene($level, null));
+    assertSame(null, $back['level']['scene']);
+    assertSame('storm', $back['level']['scene_auto']);
+
+    // El endpoint del escenario solo lee `scene`: la propuesta no se puede fijar.
+    $req = Request::make('POST', '/', ['scene' => null, 'scene_auto' => 'city']);
+    (new LevelApiController())->changeScene($req, ['id' => (string) $level->id]);
+    assertSame('storm', Level::findById($level->id)->sceneAuto);
+});
+
+test('escenario automático: la BD rechaza un id con otra forma', function (): void {
+    $level = ownLevelFor(makeUser('autor-auto-check'), 'escena-auto-2');
+    foreach (['Tormenta Fuerte', 'STORM'] as $bad) {
+        assertThrows(PDOException::class, function () use ($level, $bad): void {
+            Database::getInstance()->prepare('UPDATE levels SET scene_auto = :s WHERE id = :id')->execute(['s' => $bad, 'id' => $level->id]);
         });
     }
 });

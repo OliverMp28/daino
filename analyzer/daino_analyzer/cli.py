@@ -4,6 +4,8 @@
     python -m daino_analyzer analyze <mp3> [--out f]     analiza un archivo y escribe el JSON
     python -m daino_analyzer report <mp3>...             resumen legible de varias canciones
     python -m daino_analyzer bake-official [--from DIR]  hornea los niveles oficiales
+    python -m daino_analyzer cast-scenes [--dry-run]      vuelve a repartir el escenario Automático (T02.5)
+                                       [--level=IDS]     …solo de esos niveles
     python -m daino_analyzer sonify <mp3> --out f.wav    la canción con clics en beats y downbeats
                                        [--chords]        …y los acordes detectados sonando debajo
                                        [--melody]        …y la melodía detectada (un seno que la sigue)
@@ -38,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out-dir")
     p.add_argument("--only")
 
+    p = sub.add_parser("cast-scenes", help="recalcula el escenario Automático de los niveles analizados")
+    p.add_argument("--dry-run", action="store_true", help="enseña los cambios sin escribirlos")
+    p.add_argument("--level", help="ids separados por comas")
+
     p = sub.add_parser("sonify", help="canción + clics en beats/downbeats para escucharla")
     p.add_argument("file")
     p.add_argument("--out", required=True)
@@ -62,11 +68,37 @@ def main(argv: list[str] | None = None) -> int:
         from daino_analyzer.bake import bake_official
 
         return bake_official(Path(args.seed_dir), Path(args.source), Path(args.out_dir) if args.out_dir else None, args.only)
+    if args.command == "cast-scenes":
+        return _cast_scenes(args.dry_run, args.level)
     if args.command == "sonify":
         from daino_analyzer.sonify import sonify
 
         return sonify(Path(args.file), Path(args.out), chords=args.chords, melody=args.melody)
     return 2
+
+
+def _cast_scenes(dry_run: bool, level: str | None) -> int:
+    from daino_analyzer import db
+    from daino_analyzer.scenes import CastError, cast_scenes
+
+    try:
+        ids = [int(x) for x in level.split(",") if x.strip()] if level else None
+    except ValueError:
+        print("--level: ids separados por comas", file=sys.stderr)
+        return 2
+    conn = db.connect()
+    try:
+        result = cast_scenes(conn, dry_run=dry_run, level_ids=ids)
+    except CastError as exc:
+        print(f"reparto fallido: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    for level_id, title, before, after in result["changed"]:
+        print(f"  {level_id:>6}  {title[:40]:<40}  {before or 'Cordillera'} → {after or 'Cordillera'}")
+    verb = "cambiarían" if dry_run else "cambiados"
+    print(f"{result['total']} niveles con análisis, {len(result['changed'])} {verb}")
+    return 0
 
 
 def _analyze(file: str, out: str | None) -> int:

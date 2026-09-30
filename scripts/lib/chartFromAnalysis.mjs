@@ -12,12 +12,17 @@
 // dificultad que la canción admite ('auto' y 1..techo). Un nivel recién analizado
 // queda listo para publicar con todas generadas, y su autor cambia entre ellas
 // al instante, sin volver a pasar por la cola del analizador.
+//
+// T02.5: también el escenario Automático (scenes/sceneCasting.js): el ambiente
+// que pega con cómo suena la canción, o null (la Cordillera). No toca el chart;
+// va aquí porque es donde el servidor tiene su análisis.
 
 import { buildChart } from '../../resources/js/game/levels/charter.js';
 import { normalizeChart, seedFromSha256 } from '../../resources/js/game/levels/chartFormat.js';
 import { chartStats, difficultyFromStats, difficultyScore } from '../../resources/js/game/levels/chartStats.js';
 import { difficultyCeiling } from '../../resources/js/game/levels/difficultyCeiling.js';
 import { DIFFICULTY_AUTO, difficultyOptions, normalizeRequestedDifficulty } from '../../resources/js/game/levels/difficulty.js';
+import { castScene } from '../../resources/js/game/scenes/sceneCasting.js';
 
 /**
  * @param {object} analysis
@@ -49,6 +54,7 @@ export function chartFromAnalysis(analysis, sha256, opts = {}) {
 
     const stats = chartStats(normalizeChart(built).chart);
     const ceiling = difficultyCeiling(analysis);
+    const casting = castScene(analysis);
     return {
         chart: built,
         report,
@@ -63,5 +69,9 @@ export function chartFromAnalysis(analysis, sha256, opts = {}) {
         musicalDensity: ceiling?.density ?? null,
         /** Charts de cada dificultad admitida, por clave ('auto', '1'…), o null si no se pidieron. */
         variants,
+        /** Escenario Automático propuesto (T02.5), o null: la Cordillera. */
+        sceneAuto: casting.scene,
+        /** Por qué: rasgos de la canción y encaje de cada ambiente (informe, horneado, registro del worker). */
+        sceneCasting: casting,
     };
 }

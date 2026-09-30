@@ -11,7 +11,7 @@
 >
 > **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
 >
-> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve) y T02.4 (ciudad de noche) ✅; faltan el automático (T02.5) y las historias (T02.6+). T03 sin empezar.
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche) y T02.5 (Automático por el carácter de la canción) ✅; faltan las historias (T02.6+). T03 sin empezar.
 
 ---
 
@@ -166,7 +166,7 @@ A eventos de la canción (`planSky(...).events`, el clímax, los drops, el final
   - [x] T02.2 — La Costa: horizonte despejado, mar con reflejos, islas, faro y arena (Sep 2026).
   - [x] T02.3 — Clima como capa: lluvia/tormenta y nieve, y ambientes compuestos (Sep 2026).
   - [x] T02.4 — Ciudad de noche (Sep 2026).
-  - [ ] T02.5 — Automático por el carácter de la canción.
+  - [x] T02.5 — Automático por el carácter de la canción (Sep 2026).
   - [ ] T02.6 — Historias de autor, empezando por One Day.
   - [ ] T02.7+ — Una ola por cada historia nueva.
 - [ ] **T03 — Efectos al ritmo de la música**: lo que reacciona a lo que suena.
@@ -262,7 +262,7 @@ El user abrió el T02 con preguntas antes de construir nada: ¿es solo para One 
 **Qué canciones tienen historia y cómo se eligen:** un oficial con imágenes reconocibles que se puedan contar en el cielo evocándolas (sin logos ni personajes), con momentos donde anclarlas (clímax, drop, final), y solo si aporta. Candidatas del catálogo actual, por confirmar: Running With the Wolves (lobos y aurora), Time (si es la de Origen: la ciudad que se pliega), What's Up Danger (si es la de Spider-Verse: la ciudad y el salto de fe, que ya coincide con la antigravedad).
 
 **Decisiones del user:**
-- **Automático = por el carácter de la canción, con red** (T02.5): el análisis del servidor propone un ambiente solo si el encaje es claro, se mide con los oficiales antes de encenderlo y quien sube ve la propuesta. Hasta entonces, Automático es la Cordillera.
+- **Automático = por el carácter de la canción, con red** (T02.5): el análisis del servidor propone un ambiente solo si el encaje es claro, se mide con los oficiales antes de encenderlo y quien sube ve la propuesta. Si no hay encaje claro, la Cordillera.
 - **One Day primero**; las demás historias, una ola cada una.
 - **Aún no hay MP3 de One Day**: la historia se construye y se prueba con otra canción, y se hornea como oficial cuando llegue.
 - **Primera tanda de ambientes: Costa, lluvia/tormenta, nieve y ciudad de noche.**
@@ -382,9 +382,114 @@ El user abrió el T02 con preguntas antes de construir nada: ¿es solo para One 
 - La lluvia no moja nada: ni charcos ni el Dino.
 - Clima sobre la Ciudad (lluvia de neón): el registro ya lo permite, pero no está entre los ambientes probados.
 
-#### ⬜ T02.5 — Automático por el carácter de la canción
+#### ✅ T02.5 — Automático por el carácter de la canción (Sep 2026)
 
-- `SCENE_CASTING` en JS compartido, como `MODE_CASTING`: tonalidad, energía, bandas, percusividad y tempo del análisis del servidor proponen un ambiente solo si el encaje es claro; si no, la Cordillera. Se guarda al analizar (`levels.scene_auto`) y quien sube ve la propuesta. Se mide con los 8 oficiales antes de encenderlo; si no acierta, Automático sigue siendo la Cordillera. Las canciones locales sin publicar (análisis del navegador) se quedan en la Cordillera.
+Lo pedido (§3, decisiones del user): Automático propone un ambiente por cómo suena la canción solo si el encaje es claro; si no, la Cordillera. Se mide con los oficiales antes de encenderlo, y quien sube ve la propuesta. El audio no dice "piratas" ni "Navidad". Sí dice si una canción es intensa, sombría, un bucle de club o una pieza quieta, y eso es lo que se usa.
+
+**Cómo decide:**
+- **`levels/songTraits.js`** (puro) mide la canción ENTERA frente a todas las demás. (`songCharacter.js` mide cada tramo frente a su propia canción.) Son ocho rasgos en [0,1], comparables entre canciones:
+
+  | Rasgo | Qué es | De qué sale |
+  |---|---|---|
+  | `arousal` | Activación | Percusividad de los golpes, pulso marcado, golpes fuertes por minuto, tempo y sonoridad |
+  | `valence` | Luminosa (1) o sombría (0) | Modo de la tonalidad (con su confianza) y cuánto rato suenan acordes menores |
+  | `drama` | Contrastes | Rango dinámico, y separación entre pasajes fuertes y suaves (ventanas de 4 s, p90 − p25, sin los extremos) |
+  | `groove` | Bucle de máquina | Armonía que no se mueve (cambios de acorde por compás) o graves que dominan la mezcla |
+  | `sparkle` | Brillo | Nivel de los agudos en la mezcla |
+  | `brightHits` / `shimmer` | Brillo de los golpes / brillo entre golpes | El brillo, repartido según la parte aguda del ataque de los golpes |
+  | `stillness` | Quietud | Tempo lento y pocos sucesos por minuto |
+
+  `arousal` y `valence` son los dos ejes del modelo circumplejo de las emociones en música. Los demás separan lo que esos dos no distinguen. Todo sale del análisis del servidor de analizador ≥ 2 y de canciones de al menos 20 s. Con el análisis del navegador, un analizador 1 o un clip corto no hay propuesta.
+- **`scenes/sceneCasting.js`**: en `SCENE_CASTING`, cada ambiente declara uno o varios **retratos** (rutas) de las canciones que le pegan, con dos o más condiciones sobre los rasgos.
+  - El encaje de un retrato es el **producto** de sus condiciones: un solo rasgo nunca basta.
+  - Se propone el mejor ambiente si encaja (`minFit` 0.45) y le saca ventaja al segundo (`minMargin` 0.15). Un empate es la Cordillera: una propuesta equivocada es peor que ninguna.
+  - La Cordillera no tiene retrato: es la red.
+  - `castScene(analysis)` nunca lanza: el escenario no puede impedir chartear un nivel.
+  - `SCENE_CASTING_VERSION` 1.
+
+  | Ambiente | Retrato (`why`) | Condiciones |
+  |---|---|---|
+  | Tormenta | intensa, sombría y con grandes contrastes | activación ≥ media, drama alto, valencia baja |
+  | Ciudad de noche | rítmica, en bucle y oscura | activación alta, bucle, valencia no luminosa |
+  | Costa | luminosa y bailable | activación alta, brillo de los golpes, valencia luminosa |
+  | Costa | tranquila y cálida | calma, valencia muy luminosa, que se mueva (no quieta) |
+  | Nieve | tranquila y pausada | calma, quietud, valencia no sombría |
+  | Nieve | brillante y cristalina | brillo entre golpes, valencia luminosa, sin bucle de club |
+  | Lluvia | melancólica y suave | calma de verdad, valencia sombría, sin brillo ni estallidos |
+
+**Dónde se calcula:**
+- **En el servidor**, junto al chart y con el mismo análisis: `scripts/lib/chartFromAnalysis.mjs` devuelve `sceneAuto` y `sceneCasting` (el porqué).
+  - El worker lo guarda en **`levels.scene_auto`** (migración `013`). Con el chart de un nivel publicado congelado no cambia: la propuesta es la de su análisis guardado.
+  - Los oficiales lo llevan en el horneado (`sceneAuto` y `sceneCasting` con rasgos y encajes) y el seeder lo importa como metadata.
+  - `python -m daino_analyzer cast-scenes [--dry-run] [--level=IDS]` (con `scripts/cast-scenes.mjs`) reparte de nuevo los niveles que ya tienen análisis cuando cambian las reglas.
+  - `bun run scenes:report [-- x.json]` enseña rasgos y encajes de los oficiales o de cualquier análisis.
+- **En el cliente**, solo `scene_auto`: el reparto no viaja en el bundle.
+  - `registry.playSceneId`: la elegida, si no la de Automático, si no la Cordillera. `autoSceneId` solo acepta ambientes elegibles que el cliente conoce.
+  - Selector de la ficha propia (`catalogModel.sceneChoiceView`): "Automático: Tormenta", con la muestra de ese cielo y "Elegido por cómo suena tu canción". Si no hay propuesta, dice por qué: no encaja con otro ambiente, se está analizando, o se decidirá al publicarla (análisis del navegador).
+  - En la ficha ajena: "Escenario: Ciudad de noche".
+
+**Medido con los 8 oficiales y 2 niveles de la comunidad** (`bun run scenes:report`):
+
+| Canción | Automático | Por qué | Encaje | Lo que le pega (juicio) |
+|---|---|---|---|---|
+| Dawn of Faith | Tormenta | intensa, sombría y con grandes contrastes | 0.70 | Tormenta o Cordillera |
+| HOPE | Costa | tranquila y cálida | 0.98 | Costa, Nieve, Lluvia o Cordillera |
+| Last Christmas | Nieve | brillante y cristalina | 0.64 | Nieve, Ciudad, Costa o Cordillera |
+| Mi Fiesta | Ciudad de noche | rítmica, en bucle y oscura | 1.00 | Ciudad, Costa o Cordillera |
+| Running With the Wolves | Cordillera | ningún ambiente encaja | 0 | Tormenta, Nieve o Cordillera |
+| Sugar Red | Ciudad de noche | rítmica, en bucle y oscura | 1.00 | Ciudad, Tormenta o Cordillera |
+| Time | Nieve | tranquila y pausada | 1.00 | Nieve, Lluvia, Costa o Cordillera |
+| What's Up Danger | Ciudad de noche | rítmica, en bucle y oscura (Tormenta 0.05) | 0.60 | Ciudad, Tormenta o Cordillera |
+| conga (comunidad) | Costa | luminosa y bailable | 0.81 | — |
+| Instrumental (comunidad) | Cordillera | ningún ambiente encaja | 0 | — |
+
+**Robustez:** se aplicaron 14 alteraciones, una a una, a los 8 oficiales, y **ninguno acabó en un ambiente que no le pega**.
+- Las alteraciones cubren los errores típicos del analizador y las diferencias de máster: tempo al doble y a la mitad, tonalidad relativa, confianza −0.15, máster ±3 dB, rango ±3 dB, agudos ±2 dB, graves ±1.5 dB y sucesos ±20 %.
+- La tonalidad relativa (el error típico del modo) deja siempre sin propuesta, nunca en otra.
+- Tempo al doble o a la mitad solo mueve entre Costa y Nieve, que les pegan a las dos.
+
+**Hallazgos:**
+- **El brillo solo no distingue una canción de invierno de una latina: brillan las dos.** Las separa de dónde viene. En conga sale de los golpes (congas, timbales: el 44 % del ataque es agudo); en Last Christmas suena entre golpes (campanas, pads: el 27 %). De ahí `brightHits` y `shimmer`.
+- **El rango dinámico engaña.** HOPE tiene 24 dB, casi todos por su final en silencio. Lo que cuenta es la separación entre pasajes: 0.10 en HOPE y 0.52 en Dawn of Faith.
+- **Un test lo pilló: con energía media, cualquier canción muy en menor salía Lluvia.** Las otras condiciones de su retrato ("sin brillo, sin estallidos") las cumple una canción neutra. Lluvia pide ahora calma de verdad (activación de 0.6 a 0.3).
+- **La valencia es el rasgo más frágil** (relativa, paralela, acordes de quinta): nunca decide sola.
+
+**Decisiones (vinculantes):**
+- **Automático sale de rasgos absolutos de la canción entera y de retratos de al menos dos condiciones.** Un solo rasgo nunca propone un ambiente.
+- **Una propuesta equivocada es peor que ninguna.** Pide encaje y ventaja sobre el segundo; si no, la Cordillera.
+- **Se calcula en el servidor con su análisis, junto al chart.** El cliente solo lee `scene_auto`, y lo elegido por el autor (o el `scene` del manifiesto) manda.
+- **Cambiar las reglas no re-chartea**: sube `SCENE_CASTING_VERSION`, re-hornea, siembra y `cast-scenes`.
+
+**Verificación:**
+- **Tests JS**: `tests/js/scene-casting.test.mjs` (9):
+  - los oficiales como regresión;
+  - las 14 alteraciones;
+  - la tonalidad relativa;
+  - la tabla completa y con sentido;
+  - un retrato de libro por ambiente, Lluvia incluida;
+  - la red: neutro, empate y un rasgo extremo solo;
+  - sin análisis del servidor;
+  - determinismo;
+  - el charter devuelve la propuesta sin cambiar el chart, igual que el horneado.
+
+  En `scenes.test.mjs`, además, el orden de la escena al jugar y los tres textos del selector.
+- **Tests PHP**: la API enseña `scene_auto`, ninguna petición lo escribe, CHECK de la BD, y el seeder importa, actualiza y rechaza lo que no es un ambiente elegible.
+- **Tests Python**: se guarda con su análisis (también un id malformado y un chart congelado), el contrato con Node usando un análisis real, y `cast-scenes` (dry-run, idempotente, análisis del navegador).
+- **Totales**: 326 JS, 81 PHP y 112 Python.
+- **Charts idénticos** tras re-hornear: solo se añaden `sceneAuto` y `sceneCasting`.
+- **Bundle**: chunk principal 80.26 KB gzip (+0.22). El reparto no viaja al cliente (comprobado en el build: sus textos no están).
+- **E2E**:
+  - las fichas de los 8 oficiales enseñan su escenario;
+  - el selector de un nivel propio muestra los tres estados;
+  - Time se juega en la Nieve y Dawn of Faith en la Tormenta, y el menú vuelve a la Cordillera;
+  - sin errores.
+
+**Limitaciones:**
+- **Calibrado con 10 canciones.** Los retratos se afinarán con más; `cast-scenes --dry-run` y `scenes:report` dicen qué cambiaría.
+- **Lluvia no le toca a ninguna de las 10** (ninguna es triste y tranquila): está probada solo con un retrato de libro.
+- **Géneros sin datos** (reggae, lo-fi, metal) quedan en la Cordillera salvo encaje claro.
+- **Una canción local sin publicar se juega en la Cordillera**: el análisis del navegador no sirve para esto, como para la dificultad.
+- **La ficha no enseña el porqué** ("intensa, sombría…"), solo el ambiente. El porqué está en el horneado y en el informe.
 
 #### ⬜ T02.6 — Historias de autor, empezando por One Day
 
@@ -446,7 +551,7 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 | Cada escena nueva engorda el arranque | Sus capas van bajo demanda (`LAZY_LAYER_TYPES`) y traen su arte (`artTexture`). |
 | Los relámpagos provocan una crisis fotosensible | Como mucho 2 destellos por rayo y ≥ 1.4 s entre rayos: nunca más de 3 destellos en un segundo (WCAG 2.3.1; lo prueba un test sobre 30 minutos de tormenta a tope). Apagados con reduced motion y con "Reducir efectos visuales" (AJUSTES). El destello solo aclara el cielo detrás de las montañas (alfa 0.2), no la pantalla (T02.3). |
 | La lluvia o la nieve tapan el juego o cuestan FPS | Gotas de media celda y tenues, detrás del juego; cuántas caen lo multiplica el presupuesto de render (`setDetail`: el tier bajo y los modales, menos). Medido: 60 FPS con la tormenta a tope (T02.3). |
-| "Automático" pone un ambiente que no pega | Solo encajes claros, medido con los oficiales antes de encenderlo, y quien sube lo cambia (T02.5). |
+| "Automático" pone un ambiente que no pega | Solo encajes claros (retratos de ≥ 2 condiciones, encaje y ventaja mínimos), medido con los oficiales y con 14 alteraciones de su análisis sin un solo fallo, y quien sube lo cambia (T02.5). |
 
 ---
 

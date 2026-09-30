@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 
 LEASE_SECONDS = 90
@@ -51,6 +52,9 @@ class Result:
     # El chart de cada dificultad que la canción admite ('auto', '1'…). Solo se
     # guarda en niveles sin publicar: su autor elige una antes de publicar.
     variants: dict | None = None
+    # T02.5: el escenario que propone el reparto por cómo suena la canción
+    # (resources/js/game/scenes/sceneCasting.js), o None: la Cordillera.
+    scene_auto: str | None = None
 
 
 # Trabajos que sustituyen el chart de un nivel ya publicado: una reanálisis o un
@@ -218,7 +222,7 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                          duration_sec = %s, duration_ms = %s, bpm = %s, bpm_exact = %s, game_speed = %s,
                          generator_seed = %s, chart_json = %s, analysis_json = %s, chart_status = 'ready',
                          chart_version = %s, chart_hash = %s, difficulty = %s, difficulty_ceiling = %s,
-                         chart_variants_json = %s, pending_public = FALSE
+                         chart_variants_json = %s, pending_public = FALSE, scene_auto = %s
                        WHERE id = %s""",
                     (
                         result.audio_sha256,
@@ -229,6 +233,9 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                         result.charter_version, chart_hash, result.difficulty, result.difficulty_ceiling,
                         # Un nivel publicado tiene una sola dificultad: sin variantes.
                         None if public else variants_json,
+                        # T02.5: el escenario Automático sale del mismo análisis que
+                        # se guarda (cast-scenes lo recalcula desde analysis_json).
+                        scene_id_or_none(result.scene_auto),
                         job.level_id,
                     ),
                 )
@@ -279,6 +286,14 @@ def release(conn, job: Job, worker_id: str) -> bool:
         ok = cur.rowcount == 1
     conn.commit()
     return ok
+
+
+SCENE_ID = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
+
+
+def scene_id_or_none(value) -> str | None:
+    """Un id de escena con la forma del CHECK de `levels.scene_auto`, o None."""
+    return value if isinstance(value, str) and SCENE_ID.fullmatch(value) else None
 
 
 def _release_level(cur, level_id: int) -> None:

@@ -17,7 +17,7 @@
 | ID | Trabajo | Roadmap | Olas | Estado |
 |---|---|---|---|---|
 | **T01** | Escenario vivo: el cielo cuenta la canción (día → atardecer → noche con luna → amanecer) | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T01.1 ✅ niebla fuera · T01.2 ✅ ciclo del cielo · T01.3 ✅ luna · T01.4 ⬜ playtest | En curso (falta el playtest) |
-| **T02** | Escenas con personalidad e historia: ambientes que elige quien sube (Cordillera, Costa, Lluvia, Tormenta, Nieve, Ciudad de noche), su arco con la canción e historias de autor para oficiales (One Day: mar, barco y destello verde) | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T02.1 ✅ escena por nivel · T02.2 ✅ la Costa · T02.3 ✅ lluvia, tormenta y nieve · T02.4 ✅ ciudad de noche · T02.5 ⬜ automático · T02.6 ⬜ historias y One Day · T02.7+ ⬜ más historias | En curso |
+| **T02** | Escenas con personalidad e historia: ambientes que elige quien sube (Cordillera, Costa, Lluvia, Tormenta, Nieve, Ciudad de noche), su arco con la canción e historias de autor para oficiales (One Day: mar, barco y destello verde) | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T02.1 ✅ escena por nivel · T02.2 ✅ la Costa · T02.3 ✅ lluvia, tormenta y nieve · T02.4 ✅ ciudad de noche · T02.5 ✅ automático · T02.6 ⬜ historias y One Day · T02.7+ ⬜ más historias | En curso |
 | **T03** | Efectos visuales al ritmo de la música (registro con nombre, panel "Efectos", reparto por canción) | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T03.1-T03.3 ⬜ | Pendiente |
 
 ## Series anteriores (no se renumeran)

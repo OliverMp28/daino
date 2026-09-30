@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-    DEFAULT_SCENE, SCENES, SCENE_ID_PATTERN, SELECTABLE_SCENES, playSceneId, sceneElements,
+    DEFAULT_SCENE, SCENES, SCENE_ID_PATTERN, SELECTABLE_SCENES, autoSceneId, playSceneId, sceneElements,
 } from '../../resources/js/game/scenes/registry.js';
 import { LAYER_BACKDROPS, sceneBackdrops } from '../../resources/js/game/scenes/backdrops.js';
 import { createSkyState, seaColorAt, skyStateAt } from '../../resources/js/game/scenes/skyModel.js';
@@ -77,13 +77,21 @@ test('los escenarios del manifiesto de oficiales existen en el registro', () => 
     }
 });
 
-test('con qué escena se juega un nivel: la elegida si este cliente la conoce; si no, la de siempre', () => {
+test('con qué escena se juega un nivel: la elegida; si no, la de Automático; si no, la de siempre', () => {
     assert.equal(playSceneId(null), DEFAULT_SCENE);
     assert.equal(playSceneId({ scene: null }), DEFAULT_SCENE);
     assert.equal(playSceneId({ scene: 'coast' }), 'coast');
     // Una escena más nueva que el cliente (o un valor raro) no rompe la partida.
     assert.equal(playSceneId({ scene: 'volcano' }), DEFAULT_SCENE);
     assert.equal(playSceneId({ scene: 'toString' }), DEFAULT_SCENE);
+    // T02.5: Automático propone por cómo suena la canción; lo elegido manda.
+    assert.equal(playSceneId({ scene: null, scene_auto: 'storm' }), 'storm');
+    assert.equal(playSceneId({ scene: 'coast', scene_auto: 'storm' }), 'coast');
+    assert.equal(playSceneId({ scene: 'volcano', scene_auto: 'snow' }), 'snow', 'una elegida desconocida cae en Automático');
+    // Automático solo propone ambientes elegibles que este cliente conoce.
+    assert.equal(autoSceneId({ scene_auto: 'volcano' }), null);
+    assert.equal(autoSceneId({ scene_auto: 'toString' }), null);
+    assert.equal(playSceneId({ scene: null, scene_auto: 'volcano' }), DEFAULT_SCENE);
 });
 
 test('selector del escenario: solo en niveles propios, Automático primero y la elegida marcada', () => {
@@ -91,13 +99,29 @@ test('selector del escenario: solo en niveles propios, Automático primero y la 
     const auto = sceneChoiceView({ id: 1, is_mine: true, scene: null });
     assert.equal(auto.current, 'auto');
     assert.deepEqual(auto.options.map((o) => o.value), ['auto', ...SELECTABLE_SCENES.map((s) => s.id)]);
-    assert.ok(auto.options[0].hint.includes(SCENES[DEFAULT_SCENE].label), 'dice qué es Automático hoy');
+    assert.ok(auto.options[0].label.includes(SCENES[DEFAULT_SCENE].label), 'dice qué es Automático para este nivel');
     for (const o of auto.options) {
         for (const c of Object.values(o.swatch)) assert.match(c, /^#[0-9a-f]{6}$/);
     }
     assert.equal(sceneChoiceView({ id: 1, is_mine: true, scene: 'coast' }).current, 'coast');
     // Una historia de autor o un id desconocido no son una opción: se ve Automático.
     assert.equal(sceneChoiceView({ id: 1, is_mine: true, scene: 'volcano' }).current, 'auto');
+});
+
+test('selector del escenario: Automático enseña su propuesta, o por qué no la hay', () => {
+    const mine = { id: 1, is_mine: true, scene: null };
+    const proposed = sceneChoiceView({ ...mine, scene_auto: 'storm', difficulty_ceiling: 4 }).options[0];
+    assert.equal(proposed.label, `Automático: ${SCENES.storm.label}`);
+    assert.match(proposed.hint, /cómo suena/);
+    assert.deepEqual(proposed.swatch, sceneSwatch(SCENES.storm), 'la muestra es la del ambiente propuesto');
+
+    const hints = {
+        analizando: sceneChoiceView({ ...mine, scene_auto: null, analysis: { status: 'running' } }).options[0].hint,
+        'sin encaje': sceneChoiceView({ ...mine, scene_auto: null, difficulty_ceiling: 3 }).options[0].hint,
+        'sin análisis del servidor': sceneChoiceView({ ...mine, scene_auto: null, difficulty_ceiling: null }).options[0].hint,
+    };
+    assert.equal(new Set(Object.values(hints)).size, 3, JSON.stringify(hints));
+    assert.equal(sceneChoiceView({ ...mine, scene_auto: null }).options[0].label, `Automático: ${SCENES[DEFAULT_SCENE].label}`);
 });
 
 test('la Costa: el mar refleja el cielo, es más oscuro en la orilla y cambia sin saltos', () => {

@@ -311,7 +311,7 @@ test('D21: la shell deja que Vout la embeba, y solo Vout', function (): void {
 /**
  * Directorio de seed temporal con MP3 falsos: el seeder solo mira bytes y hash.
  *
- * @param array<string, array{title?: string, artist?: ?string, bytes?: string, difficulty?: int, events?: int, charter?: int, scene?: mixed}> $levels
+ * @param array<string, array{title?: string, artist?: ?string, bytes?: string, difficulty?: int, events?: int, charter?: int, scene?: mixed, sceneAuto?: mixed}> $levels
  * @return array{seed: string, audio: string, from: string, cleanup: callable}
  */
 function makeSeedFixture(array $levels): array
@@ -334,7 +334,7 @@ function makeSeedFixture(array $levels): array
             'difficulty'    => $spec['difficulty'] ?? 2,
             'chart'         => chartFor($s, $spec['charter'] ?? 1, $spec['events'] ?? 3),
             'analysis'      => storeBody($s)['analysis'],
-        ], JSON_PRESERVE_ZERO_FRACTION));
+        ] + (array_key_exists('sceneAuto', $spec) ? ['sceneAuto' => $spec['sceneAuto']] : []), JSON_PRESERVE_ZERO_FRACTION));
     }
     file_put_contents("{$base}/seed/manifest.json", json_encode($manifest));
 
@@ -481,6 +481,39 @@ test('seed: el escenario del manifiesto (T02) llega al oficial y se actualiza si
         $bad = seedWith($fx)['test-costa'];
         assertSame('skipped', $bad['result']);
         assertTrue(str_contains($bad['detail'], 'scene'), $bad['detail']);
+    } finally {
+        ($fx['cleanup'])();
+    }
+});
+
+test('seed: el escenario automático del horneado (T02.5) llega al oficial sin tocar el chart', function (): void {
+    $fx = makeSeedFixture(['test-auto' => ['sceneAuto' => 'city'], 'test-sin-auto' => []]);
+    try {
+        seedWith($fx, ['from' => $fx['from']]);
+        $level = Level::findOfficialBySlug('test-auto');
+        assertSame('city', $level->sceneAuto);
+        assertSame(null, $level->scene, 'el manifiesto no eligió: se juega en Automático');
+        assertSame(null, Level::findOfficialBySlug('test-sin-auto')->sceneAuto, 'un horneado anterior a la T02.5: la Cordillera');
+        $chart = Level::findChart($level->id)['json'];
+
+        // Otras reglas de reparto: se re-hornea y el seed lo aplica como metadata.
+        $bakedPath = "{$fx['seed']}/baked/test-auto.json";
+        $baked = json_decode(file_get_contents($bakedPath), true);
+        $baked['sceneAuto'] = 'storm';
+        file_put_contents($bakedPath, json_encode($baked, JSON_PRESERVE_ZERO_FRACTION));
+        assertSame('updated', seedWith($fx)['test-auto']['result']);
+        assertSame('storm', Level::findById($level->id)->sceneAuto);
+        assertSame($chart, Level::findChart($level->id)['json']);
+
+        // Solo ambientes elegibles: ni una historia de autor ni un id raro.
+        foreach (['one-day', 'Mal Id', 7] as $bad) {
+            $baked['sceneAuto'] = $bad;
+            file_put_contents($bakedPath, json_encode($baked, JSON_PRESERVE_ZERO_FRACTION));
+            $report = seedWith($fx)['test-auto'];
+            assertSame('skipped', $report['result'], json_encode($bad));
+            assertTrue(str_contains($report['detail'], 'automático'), $report['detail']);
+        }
+        assertSame('storm', Level::findById($level->id)->sceneAuto);
     } finally {
         ($fx['cleanup'])();
     }

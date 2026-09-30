@@ -125,6 +125,12 @@ final class OfficialCatalogSeeder
         if ($ceiling !== null && (!is_int($ceiling) || $ceiling < 1 || $ceiling > 5)) {
             throw new SeedSkip('horneado con techo de dificultad inválido');
         }
+        // Escenario Automático (T02.5): el ambiente que propone el reparto por cómo
+        // suena la canción. Un horneado anterior no lo trae: la Cordillera.
+        $sceneAuto = $baked['sceneAuto'] ?? null;
+        if ($sceneAuto !== null && (!is_string($sceneAuto) || !SceneCatalog::isSelectable($sceneAuto))) {
+            throw new SeedSkip('horneado con un escenario automático que no es un ambiente elegible');
+        }
 
         $audioColumns = [
             'audio_sha256'   => $sha,
@@ -145,6 +151,7 @@ final class OfficialCatalogSeeder
             'difficulty' => $difficulty,
             'file_path'  => FileUploadService::OFFICIAL_PREFIX . $file,
             'scene'      => $scene,
+            'scene_auto' => $sceneAuto,
         ];
 
         $level = Level::findOfficialBySlug($slug);
@@ -164,7 +171,7 @@ final class OfficialCatalogSeeder
             // el hash anterior: el cargador del cliente lo detecta y rechaza el
             // audio (no se juega desincronizado). Hay que decidirlo a propósito.
             // Lo que solo se ve (título, artista, escenario) sí se aplica.
-            $level->updateMetadata(['title' => $title, 'artist' => $artist, 'scene' => $scene]);
+            $level->updateMetadata(['title' => $title, 'artist' => $artist, 'scene' => $scene, 'scene_auto' => $sceneAuto]);
             throw new SeedSkip($level->audioSha256 !== $sha
                 ? 'el audio cambió: usa --rechart para sustituir audio y chart (invalida la comparación de marcas)'
                 : 'hay un chart nuevo: usa --rechart para aplicarlo (invalida la comparación de marcas)');

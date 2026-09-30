@@ -89,6 +89,9 @@ final class LevelPresenter
             'difficulty'     => $level->difficulty,
             // T02: escenario elegido (null = Automático). Lo ve todo el que juega.
             'scene'          => $level->scene,
+            // T02.5: lo que Automático propone por cómo suena la canción (null: la
+            // Cordillera, o sin análisis del servidor todavía).
+            'scene_auto'     => $level->sceneAuto,
             'generator_seed' => $level->generatorSeed,
             'is_public'      => $level->isPublic,
             'is_official'    => $level->isOfficial,

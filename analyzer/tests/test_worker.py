@@ -604,3 +604,85 @@ def test_not_audio_in_the_child_is_a_permanent_failure(tmp_path):
         assert exc.value.code == "decode_failed" and exc.value.permanent
     finally:
         child.close()
+
+
+# --------------------------- Escenario Automático (T02.5) ---------------------------
+
+BAKED = Path(os.environ.get("DAINO_ROOT", "/srv/daino")) / "database" / "seeds" / "official" / "baked"
+
+
+def _with_scene(scene):
+    """El charter real, con la propuesta de escenario que diga el test."""
+    def charter(*args, **kwargs):
+        return {**chart_from_analysis(*args, **kwargs), "sceneAuto": scene}
+    return charter
+
+
+def test_the_automatic_scene_is_stored_with_the_analysis_it_comes_from(conn, tmp_path):
+    level_id, path = make_level(conn, tmp_path)
+    enqueue(conn, level_id, path)
+    w = worker(_connect, tmp_path, FakeAnalyzer())
+    w.charter = _with_scene("storm")
+    assert w.run_once() == "ready"
+    assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", level_id)["scene_auto"] == "storm"
+
+    # Un id que no tiene la forma de una escena no llega a la BD.
+    w.charter = _with_scene("../../etc")
+    enqueue(conn, level_id, path, purpose="rechart")
+    assert w.run_once() == "chart_updated"
+    assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", level_id)["scene_auto"] is None
+
+    # Con el chart de un nivel publicado congelado, su análisis guardado no cambia,
+    # y la propuesta (que sale de ese análisis) tampoco.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE levels SET is_public = TRUE, chart_variants_json = NULL, scene_auto = 'snow' WHERE id = %s",
+                    (level_id,))
+    conn.commit()
+    w.charter = _with_scene("city")
+    enqueue(conn, level_id, path, purpose="publish")
+    assert w.run_once() == "chart_frozen"
+    assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", level_id)["scene_auto"] == "snow"
+
+
+def test_the_real_charter_proposes_the_scene_of_a_real_song():
+    """El contrato Node → Python con un análisis de verdad (el horneado de HOPE)."""
+    baked = json.loads((BAKED / "hope.json").read_text(encoding="utf-8"))
+    out = chart_from_analysis(baked["analysis"], baked["audio"]["sha256"])
+    assert out["sceneAuto"] == baked["sceneAuto"] == "coast"
+    assert out["sceneCasting"]["reason"] == "clear"
+
+
+def _insert_level_with_analysis(conn, title: str, analysis: dict | None, scene_auto: str | None = None) -> int:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO users (vout_id, username) VALUES (UUID(), %s)", ("scene-test",))
+        cur.execute(
+            """INSERT INTO levels (user_id, title, duration_sec, difficulty, generator_seed, analysis_json, scene_auto)
+               VALUES (%s, %s, 60, 3, '1', %s, %s)""",
+            (cur.lastrowid, title, None if analysis is None else json.dumps(analysis), scene_auto),
+        )
+        level_id = cur.lastrowid
+    conn.commit()
+    return level_id
+
+
+def test_cast_scenes_recasts_the_levels_that_have_an_analysis(conn):
+    from daino_analyzer.scenes import cast_scenes
+
+    hope = json.loads((BAKED / "hope.json").read_text(encoding="utf-8"))["analysis"]
+    stale = _insert_level_with_analysis(conn, "HOPE", hope, scene_auto="storm")
+    browser = _insert_level_with_analysis(conn, "Local", {"formatVersion": 1, "durationSec": 60, "bpm": 120, "onsets": []}, "city")
+    none = _insert_level_with_analysis(conn, "Sin análisis", None, None)
+
+    dry = cast_scenes(conn, dry_run=True)
+    assert dry["total"] == 2, "solo los niveles con análisis"
+    assert sorted((c[0], c[2], c[3]) for c in dry["changed"]) == [(stale, "storm", "coast"), (browser, "city", None)]
+    assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", stale)["scene_auto"] == "storm", "dry-run no escribe"
+
+    done = cast_scenes(conn)
+    assert len(done["changed"]) == 2
+    assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", stale)["scene_auto"] == "coast"
+    assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", browser)["scene_auto"] is None, \
+        "con análisis del navegador no hay propuesta"
+    assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", none)["scene_auto"] is None
+    assert cast_scenes(conn)["changed"] == [], "idempotente"
+    assert cast_scenes(conn, level_ids=[stale])["total"] == 1

@@ -301,10 +301,12 @@ class Worker:
                 difficulty=int(charted["difficulty"]), difficulty_ceiling=charted["difficultyCeiling"],
                 charter_version=int(charted["chart"]["charter"]["version"]),
                 variants=charted.get("variants"),
+                scene_auto=jobs.scene_id_or_none(charted.get("sceneAuto")),
             )
             outcome = jobs.complete(conn, job, self.config.worker_id, result)
             self.log("job_done", job=job.id, level=job.level_id, outcome=outcome, cached_analysis=cached,
-                     events=len(result.chart["events"]), ms=int((time.monotonic() - started) * 1000))
+                     events=len(result.chart["events"]), scene_auto=result.scene_auto,
+                     ms=int((time.monotonic() - started) * 1000))
             return outcome
         except Cancelled:
             if self.stopping:

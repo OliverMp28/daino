@@ -124,13 +124,22 @@ export function buildMusicModel(analysis) {
         // vacío si el análisis no lo trae (formato 1, analizador 1).
         /** Percusividad media de los golpes de [t0, t1), ponderada por fuerza: >0.5 batería, <0.5 notas. null sin dato. */
         percussiveness: (t0, t1) => weightedPercussive(onsets, t0, t1),
+        /**
+         * Nivel de graves, medios y agudos de la canción ENTERA respecto a la mezcla,
+         * en dB (analizador 2): comparable entre canciones, al contrario que las
+         * curvas relativas de `bandsMean`. null sin dato (T02.5).
+         */
+        bandLevelDb: readBandLevels(analysis),
         /** Nivel medio de graves, medios y agudos en [t0, t1), relativos [0,1]. null sin dato. */
         bandsMean: (t0, t1) => (bands === null ? null : {
             low: meanOver(bands.low, t0, t1),
             mid: meanOver(bands.mid, t0, t1),
             high: meanOver(bands.high, t0, t1),
         }),
-        /** Tonalidad global, acordes por beat y modulaciones (null sin análisis tonal). */
+        /**
+         * Tonalidad global (con su confianza), acordes por beat, cambios de acorde
+         * por compás y modulaciones (null sin análisis tonal).
+         */
         tonal,
         /** Cambios de acorde por segundo en [t0, t1) (null sin acordes). */
         chordChangeRate: (t0, t1) => chordChangeRate(tonal, t0, t1),
@@ -632,10 +641,20 @@ function readTonal(analysis, durationSec) {
         : [];
     return {
         key: typeof t.key === 'string' ? t.key : null,
+        keyConfidence: Number.isFinite(t.keyConfidence) ? t.keyConfidence : 0,
         chordConfidence: Number.isFinite(t.chordConfidence) ? t.chordConfidence : 0,
+        /** Cambios de acorde por compás, donde hay acordes (null sin dato). */
+        harmonicRhythm: Number.isFinite(t.harmonicRhythm) ? t.harmonicRhythm : null,
         chords,
         modulations,
     };
+}
+
+/** `energy.bandLevelDb` del analizador 2 como `{ low, mid, high }`, o null. */
+function readBandLevels(analysis) {
+    const v = analysis.energy?.bandLevelDb;
+    if (!Array.isArray(v) || v.length !== 3 || !v.every(Number.isFinite)) return null;
+    return { low: v[0], mid: v[1], high: v[2] };
 }
 
 /** Contorno melódico del análisis, o null si no lo trae (analizadores 1-2, navegador). */

@@ -320,16 +320,31 @@ export function resolveScene(id) {
 
 /**
  * Escena con la que se juega un nivel: la que eligió su autor (o la de su
- * historia, en un oficial) si este cliente la conoce; si no, la automática.
- * Hasta la T02.5 (reparto por el carácter de la canción) la automática es la de
- * siempre.
+ * historia, en un oficial); si no eligió ninguna, la que propone Automático por
+ * cómo suena la canción (T02.5, `scene_auto`: scenes/sceneCasting.js); y si no
+ * hay propuesta, la de siempre. Una escena que este cliente no conoce (más nueva
+ * que él) se salta.
  *
- * @param {{ scene?: string | null } | null | undefined} level  Fila de la API.
+ * @param {{ scene?: string | null, scene_auto?: string | null } | null | undefined} level  Fila de la API.
  * @returns {string}
  */
 export function playSceneId(level) {
-    const id = level?.scene;
-    return typeof id === 'string' && Object.prototype.hasOwnProperty.call(SCENES, id) ? id : DEFAULT_SCENE;
+    for (const id of [level?.scene, autoSceneId(level)]) {
+        if (typeof id === 'string' && Object.prototype.hasOwnProperty.call(SCENES, id)) return id;
+    }
+    return DEFAULT_SCENE;
+}
+
+/**
+ * Lo que propone Automático para un nivel: un ambiente elegible que este cliente
+ * conoce, o null (la de siempre).
+ *
+ * @param {{ scene_auto?: string | null } | null | undefined} level
+ * @returns {string | null}
+ */
+export function autoSceneId(level) {
+    const id = level?.scene_auto;
+    return typeof id === 'string' && SELECTABLE_SCENES.some((scene) => scene.id === id) ? id : null;
 }
 
 /**

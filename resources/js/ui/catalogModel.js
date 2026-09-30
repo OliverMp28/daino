@@ -11,7 +11,7 @@
 
 import { mergeBest } from '../storage/localBests.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
-import { DEFAULT_SCENE, SELECTABLE_SCENES, playSceneId, resolveScene } from '../game/scenes/registry.js';
+import { DEFAULT_SCENE, SELECTABLE_SCENES, autoSceneId, playSceneId, resolveScene } from '../game/scenes/registry.js';
 import { createSkyState, seaColorAt, skyColorAt, skyStateAt } from '../game/scenes/skyModel.js';
 import { rgbToHex } from '../game/scenes/color.js';
 import { publishView, PUBLISH_STATE } from './publishModel.js';
@@ -189,8 +189,9 @@ export function sceneSwatch(scene) {
  * cualquier estado: el escenario no toca ni el chart ni las marcas, así que se
  * puede cambiar también publicado. Ajeno: null (la ficha enseña solo el nombre).
  *
- * `auto` = que lo decida el juego (hoy, la escena de siempre; con la T02.5, el
- * carácter de la canción).
+ * `auto` = que lo decida el juego (T02.5): el ambiente que pega con cómo suena
+ * la canción (`scene_auto`, lo propone el servidor al analizarla), o la
+ * Cordillera si ninguno encaja claramente. La opción enseña la propuesta.
  *
  * @param {object} level  Fila de GET /api/levels.
  * @returns {{ current: string, options: Array<{ value: string, label: string, hint: string, swatch: ReturnType<typeof sceneSwatch> }> } | null}
@@ -198,14 +199,27 @@ export function sceneSwatch(scene) {
 export function sceneChoiceView(level) {
     if (level?.is_mine !== true) return null;
     const chosen = SELECTABLE_SCENES.find((s) => s.id === level.scene);
-    const auto = resolveScene(DEFAULT_SCENE);
+    const proposed = autoSceneId(level);
+    const auto = resolveScene(proposed ?? DEFAULT_SCENE);
     return {
         current: chosen ? chosen.id : 'auto',
         options: [
-            { value: 'auto', label: 'Automático', hint: `Por ahora, ${auto.label}.`, swatch: sceneSwatch(auto) },
+            { value: 'auto', label: `Automático: ${auto.label}`, hint: autoSceneHint(level, proposed !== null), swatch: sceneSwatch(auto) },
             ...SELECTABLE_SCENES.map((s) => ({ value: s.id, label: s.label, hint: s.blurb, swatch: sceneSwatch(s) })),
         ],
     };
+}
+
+/** Por qué Automático es lo que es: propuesta, ningún encaje, o aún sin escuchar. */
+function autoSceneHint(level, proposed) {
+    if (proposed) return 'Elegido por cómo suena tu canción.';
+    const job = level.analysis?.status;
+    if (job === 'queued' || job === 'running') return 'Se decidirá cuando termine de analizarse tu canción.';
+    // El techo de dificultad solo existe con el análisis del servidor.
+    if (level.difficulty_ceiling !== null && level.difficulty_ceiling !== undefined) {
+        return 'Tu canción no encaja claramente con ningún otro ambiente.';
+    }
+    return 'Al publicarla, el servidor escuchará tu canción y propondrá el ambiente que mejor le pegue.';
 }
 
 /**
