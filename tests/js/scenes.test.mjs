@@ -16,7 +16,11 @@ import { createSkyState, seaColorAt, skyStateAt } from '../../resources/js/game/
 import { relativeLuminance, rgbToOklab } from '../../resources/js/game/scenes/color.js';
 import { checkReadability } from '../../resources/js/game/scenes/readability.js';
 import { ridgeHeights } from '../../resources/js/game/entities/scenery/ridgeShape.js';
-import { sceneChoiceView } from '../../resources/js/ui/catalogModel.js';
+import {
+    WINDOW_STEPS, buildingWindows, skylineBuildings, skylineCells, skylineGapless,
+} from '../../resources/js/game/entities/scenery/skylineShape.js';
+import { PIXEL_SCALE, WORLD_VIEW } from '../../resources/js/game/config.js';
+import { sceneChoiceView, sceneSwatch } from '../../resources/js/ui/catalogModel.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const coast = SCENES.coast;
@@ -178,4 +182,45 @@ test('el guardián mide la forma real de las crestas: sus valles dejan ver el ho
         }
         assert.ok(fails > 0, `${sc.id}: con el doble de neblina el guardián ya no pasa`);
     }
+});
+
+test('la ciudad: los edificios lejanos tapan el cielo sin huecos a cualquier ancho; los cercanos dejan hueco', () => {
+    const far = SCENES.city.layers.find((l) => l.id === 'cityFar').params;
+    const nearP = SCENES.city.layers.find((l) => l.id === 'cityNear').params;
+    for (const width of [520, 1000, 1066, 1100, 1333, WORLD_VIEW.maxWidth]) {
+        const cells = skylineCells(width, PIXEL_SCALE);
+        const farB = skylineBuildings(cells, far);
+        assert.ok(skylineGapless(farB, cells), `a ${width} de ancho hay huecos en los lejanos`);
+        for (const b of farB) {
+            assert.ok(b.h >= far.minH && b.h <= far.maxH, `alto ${b.h}`);
+            // Las ventanas, dentro de su edificio y con su escalón de encendido.
+            for (const w of buildingWindows(b, 0, far.seed)) {
+                assert.ok(w.x > b.x && w.x < b.x + b.w - 1 && w.y > 0 && w.y < b.h - 1, 'ventana fuera del edificio');
+                assert.ok(w.step >= 0 && w.step < WINDOW_STEPS);
+            }
+        }
+        const nearB = skylineBuildings(cells, nearP);
+        assert.ok(nearB.at(-1).x + nearB.at(-1).w <= cells, 'ningún edificio cruza el borde del periodo');
+    }
+    // La misma ciudad cada vez (por hash): no cambia al redimensionar.
+    const c = skylineCells(1100, PIXEL_SCALE);
+    assert.deepEqual(skylineBuildings(c, far), skylineBuildings(c, far));
+});
+
+test('el cielo encapotado: vela el sol y la luna, esconde las estrellas y cubre de nubes', () => {
+    const clear = createSkyState();
+    const storm = createSkyState();
+    skyStateAt(15, SCENES.mountains, clear);
+    skyStateAt(15, SCENES.storm, storm);
+    assert.ok(storm.sun.glow[3] === clear.sun.glow[3] && storm.sun.glow[0] < clear.sun.glow[0], 'el resplandor del sol, apagado');
+    assert.ok(storm.clouds.cover > clear.clouds.cover, 'más nubes');
+    assert.ok(relativeLuminance(storm.sky.top) < relativeLuminance(clear.sky.top), 'un cielo más oscuro');
+    skyStateAt(23, SCENES.mountains, clear);
+    skyStateAt(23, SCENES.storm, storm);
+    assert.ok(storm.stars.vis < 0.1, 'casi sin estrellas en la tormenta');
+    assert.ok(storm.moon.color[3] < clear.moon.color[3] * 0.5, 'la luna, velada');
+    // La nieve y la lluvia se tiñen con la hora y son más claras que el cielo.
+    skyStateAt(18.2, SCENES.snow, storm);
+    assert.ok(relativeLuminance(storm.arc.snowColor) > relativeLuminance(storm.sky.horizon) * 2);
+    assert.equal(sceneSwatch(SCENES.snow).land.length, 7);
 });

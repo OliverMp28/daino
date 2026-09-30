@@ -11,7 +11,7 @@
 >
 > **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
 >
-> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02) y T02.1 (escena por nivel) y T02.2 (la Costa) ✅. T03 sin empezar.
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve) y T02.4 (ciudad de noche) ✅; faltan el automático (T02.5) y las historias (T02.6+). T03 sin empezar.
 
 ---
 
@@ -164,8 +164,8 @@ A eventos de la canción (`planSky(...).events`, el clímax, los drops, el final
 - [ ] **T02 — Escenas con personalidad e historia**: cada nivel puede tener su escenario (§2.8-2.10).
   - [x] T02.1 — Escena por nivel: base de datos, manifest, selector de quien sube, runtime y carga bajo demanda (Sep 2026).
   - [x] T02.2 — La Costa: horizonte despejado, mar con reflejos, islas, faro y arena (Sep 2026).
-  - [ ] T02.3 — Clima como capa: lluvia/tormenta y nieve, y ambientes compuestos.
-  - [ ] T02.4 — Ciudad de noche.
+  - [x] T02.3 — Clima como capa: lluvia/tormenta y nieve, y ambientes compuestos (Sep 2026).
+  - [x] T02.4 — Ciudad de noche (Sep 2026).
   - [ ] T02.5 — Automático por el carácter de la canción.
   - [ ] T02.6 — Historias de autor, empezando por One Day.
   - [ ] T02.7+ — Una ola por cada historia nueva.
@@ -300,14 +300,87 @@ El user abrió el T02 con preguntas antes de construir nada: ¿es solo para One 
 - **E2E** con Playwright y una sesión de prueba: el autor elige Costa en la ficha de su nivel privado (petición, respuesta y BD), lo juega con su MP3 y la partida va en la Costa; un oficial con `scene = coast` en la BD se juega en la Costa desde el catálogo (el mar y el faro se descargan al empezar), acaba bajo el panel con el epílogo en el mar y el menú vuelve a la Cordillera. **60 FPS** en partida en la Costa de día (media 16.64 ms, p95 17.0) y de noche (16.89, p95 17.1), 1280×720. Capturas a cada hora con obstáculos y HUD; reduced motion con el degradado hasta el mar. Sin errores de consola.
 - **Bundle** (build real): el chunk principal pasa de 186.1 a 77.9 KB gzip porque Pixi va aparte (140.7 KB); lo que se carga al arrancar suma 220.8 KB frente a 219.2 (principal + Geometry, +1.6). La Costa, 2.7 KB aparte, solo al empezar un nivel con ella.
 
-#### ⬜ T02.3 — Clima como capa: lluvia/tormenta y nieve
+#### ✅ T02.3 — Clima como capa: lluvia, tormenta y nieve (Sep 2026)
 
-- Tipos de capa de clima que sirven sobre cualquier lugar (Cordillera con tormenta, Costa con lluvia, cordillera nevada…), con su arco: la lluvia arrecia hacia el clímax y escampa en el alba; la nevada, igual. A quien sube se le enseñan ambientes compuestos ya probados, no dos selectores.
-- Relámpagos: nunca más de 3 destellos por segundo (WCAG 2.3.1) y apagados con reduced motion. Su coste en `RenderProfile` (el tier bajo reduce la lluvia). Todo tipo nuevo, con su entrada en `scenes/backdrops.js`.
+**El arco del ambiente** (§2.8, capa 2), ya como mecanismo general:
+- `scenes/weather.js` (puro): una escena declara `arc`, curvas `[[hora, valor]]` en horas continuas (12:00 a 36:00; las 5:00 son 29) para `overcast`, `rain`, `lightning`, `snow` y `windows` (`ARC_KEYS`). `arcAt(escena, hora, out)` las muestrea. **Van por hora, no por segundos**: como la hora ya sigue la estructura de la canción (la noche cae con el clímax y el alba llega con el final), una curva que sube hacia la noche sube hacia el clímax. La tormenta estalla con él sin leer nada más del chart y sin tocar el charter.
+- **Cielo encapotado**: `scene.overcast {tint, mix, dark}`. `skyModel.overcastStateAt` vela en OKLab, con la fuerza del arco `overcast`, el cielo, el sol (el disco hacia el color del cielo, halo y brillo apagados), la luna, las estrellas y el lucero, las nubes (más cobertura y más opacas), las montañas, su filo y el suelo. `state.arc` lleva además los colores de la lluvia y de la nieve, sacados del cielo de esa hora: las gotas y los copos se tiñen con la luz.
 
-#### ⬜ T02.4 — Ciudad de noche
+**Tres ambientes compuestos** (lugar + clima), elegibles en el selector (`SceneCatalog.php` al día):
+- **Lluvia**: la Costa bajo una lluvia mansa que arrecia al anochecer y escampa con el alba. Nubes de tormenta (10) y cielo gris azulado.
+- **Tormenta**: la Cordillera con relámpagos. La lluvia sube hasta el clímax y los relámpagos empiezan en el ocaso, llegan al máximo con la noche y paran antes del alba.
+- **Nieve**: cordillera con las crestas nevadas, suelo nevado ("Suelo nevado") y una nevada que arrecia hacia el clímax y amaina con el alba.
 
-- Siluetas de edificios en vez de montañas, con ventanas que se encienden al anochecer (su arco). Encaja con la electrónica o lo urbano.
+**Capas nuevas** (bajo demanda, cada una en su chunk):
+- `entities/scenery/Rain.js`: gotas en dos profundidades, sesgadas por el viento. Las cercanas salpican en el suelo.
+- `entities/scenery/Snow.js`: copos de media celda (lejos) y de una celda (cerca) que se mecen y se van hacia atrás con el mundo, más deprisa cuanto más cerca.
+- `entities/scenery/Lightning.js`: destello del cielo (aditivo, alfa 0.2, hasta el horizonte) y rayo quebrado con ramas. Va detrás de las montañas y las nubes: las crestas quedan en silueta.
+- `Ridge` gana `snowRim`, la nieve de las crestas (elemento "Nieve de las crestas" en el panel dev). `Ground` usa los sprites nuevos `groundSnow` y `groundCity` de `pixelart.js`.
+
+**Los relámpagos y la seguridad:**
+- El reloj de relámpagos (`createLightningClock`, `LIGHTNING` en `weather.js`) decide cuándo cae un rayo con la frecuencia del arco: de ~10 s entre rayos a 2.8 s con la tormenta a tope. Nunca sigue al beat: es escenario, no efecto (§2.4).
+- Límite WCAG 2.3.1 (≤ 3 destellos por segundo): un rayo son dos destellos y entre dos rayos pasan ≥ 1.4 s. Lo prueba un test sobre 30 minutos de tormenta a tope.
+- Apagados con reduced motion y con **"Reducir efectos visuales"** de AJUSTES. Hasta ahora ese interruptor no hacía nada visible: `settings.setReduceEffects` emite `daino:reduceeffectschange` y `AppController` llama `engine.setSceneryFlashes`.
+
+**Presupuesto:** `Scenery.setDetail(particleRatio)` desde `applyBudget` del engine. El tier bajo, y los modales abiertos, tienen menos gotas y copos.
+
+**Guardián:** lluvia, nieve y relámpagos no ponen fondo opaco detrás del juego (`backdrops.js` → `null`). El velo del encapotado sí cambia el cielo, y el guardián lo mide: **0 fallos a 620 horas en las seis escenas**.
+
+**Ajustes tras las capturas:**
+- Gotas de una celda de ancho: parecían barrotes. Pasan a media celda y en vertical.
+- Copos de 2×2: parecían bloques. Pasan a media celda y una celda.
+- De noche los copos se confundían con las estrellas: la Nieve se encapota a 0.9 de noche y las estrellas no salen.
+- La nieve de las crestas, fina, se leía como un contorno: ahora mide dos celdas.
+- Bajo la tormenta la luna se veía demasiado: el velo la apaga más (alfa × (1 − 0.8 · encapotado)).
+
+**Verificación:**
+- **Tests**: `tests/js/weather.test.mjs` (6):
+  - las curvas;
+  - la tormenta con los oficiales como regresión (estalla con el clímax y escampa con el alba);
+  - los arcos de la lluvia, la nieve y la ciudad;
+  - el límite WCAG y el hueco entre rayos;
+  - sin tormenta no cae ningún rayo y la misma semilla cae igual;
+  - la forma del destello.
+
+  En `scenes.test.mjs`, además, el encapotado vela el sol, la luna y las estrellas, y la muestra del selector usa el color de la nieve.
+- **E2E**, en 1280×720:
+  - 60 FPS en partida: tormenta de noche 16.64 ms (p95 16.9), lluvia 16.65, nieve 16.65.
+  - Relámpagos vistos en partida.
+  - Con "Reducir efectos visuales", 0 muestras con destello en 12 s, frente a 56 con el interruptor apagado.
+  - Con reduced motion no hay relámpagos y la lluvia se queda quieta.
+
+#### ✅ T02.4 — Ciudad de noche (Sep 2026)
+
+- **Ciclo `nocturne`** (`skyClock.js`, `NOCTURNE_RULES`): la ciudad vive la noche entera.
+  - Empieza a las 19:00 (hora azul) y anochece hacia el segundo 20 (entre 10 y 32 s, y nunca pasado el 35 % de la canción).
+  - La medianoche cae con el clímax (al menos 20 s después del anochecer).
+  - El alba y la salida del sol siguen las reglas del ciclo de siempre, pero **el alba nunca antes de que acabe el clímax**. En un clip corto caía encima de él (Last Christmas).
+  - Si no cabe el alba, el nivel acaba de noche: una canción muy corta, como mucho a las 23:00; una a la que el clímax no le deja sitio, de madrugada y sin llegar a la primera luz.
+  - El menú de la Ciudad, a las 21:30.
+- **Skyline** (`entities/scenery/Skyline.js`, bajo demanda, + `skylineShape.js`, puro):
+  - Dos filas de edificios en parallax, rasterizadas una vez por tamaño de vista (una celda por píxel) y dibujadas como tiras que se repiten.
+  - Teñidas con el color de lo lejano y de lo cercano (el de las montañas).
+  - Ventanas en 4 colores y 6 escalones: el arco `windows` las enciende al caer la noche, las tiene casi todas a medianoche y las apaga de madrugada. Tienen luz propia y no se tiñen.
+  - Luces rojas en las antenas que parpadean de noche.
+  - Suelo "Calle" (`groundCity`).
+- **Guardián**: el tipo `skyline` tiene su entrada en `backdrops.js`. Con huecos entre edificios lejanos fallaba **113 veces**: el cristal afilado a ras de suelo quedaba contra el cielo claro de la hora azul. La fila lejana va **sin huecos** (`gapMax: 0`, y `skylineBuildings` llena hasta el borde), y el guardián la da por opaca hasta la altura del edificio más bajo. 0 fallos.
+- **Verificación**:
+  - `sky-clock.test.mjs` (+2): el ciclo nocturno de los oficiales como regresión (What's Up Danger anochece a 20.7 s, medianoche en 157.2 s y alba en 202.7 s; Running With the Wolves, sin alba porque el clímax llega al final), los clips de 40 s acaban de noche, y 500 estructuras sintéticas empiezan a las 19:00, no retroceden ni saltan y, si tienen alba, dura lo que dicen las reglas.
+  - `scenes.test.mjs` (+1): la fila lejana sin huecos, los edificios y las ventanas.
+  - E2E con HOPE en la Ciudad: empieza a las 19:00, anochece a 26.7 s, alba a 62.7 s y sol asomando a 79 s. 60 FPS (16.63 ms). El menú vuelve a la Cordillera.
+
+**T02.3 y T02.4 juntas:**
+- **Build real** (`bun run build`, verificado en el navegador con `VITE_DEV_SERVER` vacío):
+  - Chunk principal 80.0 KB gzip (77.9 tras la T02.2): el arco y el velo van en el modelo del cielo, que se calcula siempre.
+  - Aparte, bajo demanda: lluvia 1.25, nieve 1.04, relámpagos 0.77 y ciudad 1.67 KB.
+  - Un oficial en la Tormenta descarga los chunks de la lluvia y los relámpagos al empezar; uno en la Ciudad, el del skyline. Sin errores (solo el 404 del favicon).
+- **Tests: 316 JS y 78 PHP.**
+
+**Limitaciones:**
+- El destello de un relámpago no lo mide el guardián: dura décimas y queda detrás de las montañas.
+- Con reduced motion la lluvia y la nieve se ven quietas, y no hay relámpagos.
+- La lluvia no moja nada: ni charcos ni el Dino.
+- Clima sobre la Ciudad (lluvia de neón): el registro ya lo permite, pero no está entre los ambientes probados.
 
 #### ⬜ T02.5 — Automático por el carácter de la canción
 
@@ -371,6 +444,8 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 | `prefers-reduced-motion` no tiene shader | Variables CSS del cielo por hora (≤ 2 Hz); los tintes del escenario siguen la hora. Sol, luna y estrellas no se dibujan (limitación aceptada), y el mar tampoco pinta su reflejo. |
 | Un chunk bajo demanda parte Pixi y el build de producción no arranca (visto en la T02.1) | Pixi entero en su chunk (`advancedChunks` en `vite.config.js`). Todo cambio en cómo se parte el bundle se verifica con el build real en el navegador, no con el servidor de Vite. |
 | Cada escena nueva engorda el arranque | Sus capas van bajo demanda (`LAZY_LAYER_TYPES`) y traen su arte (`artTexture`). |
+| Los relámpagos provocan una crisis fotosensible | Como mucho 2 destellos por rayo y ≥ 1.4 s entre rayos: nunca más de 3 destellos en un segundo (WCAG 2.3.1; lo prueba un test sobre 30 minutos de tormenta a tope). Apagados con reduced motion y con "Reducir efectos visuales" (AJUSTES). El destello solo aclara el cielo detrás de las montañas (alfa 0.2), no la pantalla (T02.3). |
+| La lluvia o la nieve tapan el juego o cuestan FPS | Gotas de media celda y tenues, detrás del juego; cuántas caen lo multiplica el presupuesto de render (`setDetail`: el tier bajo y los modales, menos). Medido: 60 FPS con la tormenta a tope (T02.3). |
 | "Automático" pone un ambiente que no pega | Solo encajes claros, medido con los oficiales antes de encenderlo, y quien sube lo cambia (T02.5). |
 
 ---

@@ -52,6 +52,7 @@ import { fetchBinary, getUser, request as apiRequest } from '../api/client.js';
 import { invalidateLevels } from '../api/levelsCache.js';
 import {
     getSkin, getQuality, getVolume, setVolume, getAutoRetry, setAutoRetry, countRunAndShouldHint,
+    getReduceEffects, REDUCE_EFFECTS_EVENT,
 } from './settings.js';
 import { openRunPanel, closeRunPanel } from './runPanel.js';
 import { RUN_ACTION, runPanelView, createAttemptCounter } from './runPanelModel.js';
@@ -186,6 +187,13 @@ export function start(cfg) {
     engineApi.setAmbientDinoSkin?.(getSkin());
     window.addEventListener('daino:skinchange', (ev) => {
         engineApi.setAmbientDinoSkin?.(ev.detail?.skinId ?? getSkin());
+    });
+
+    // "Reducir efectos visuales" apaga los destellos del escenario (los
+    // relámpagos de la Tormenta, T02.3), también en vivo.
+    engineApi.setSceneryFlashes?.(!getReduceEffects());
+    window.addEventListener(REDUCE_EFFECTS_EVENT, (ev) => {
+        engineApi.setSceneryFlashes?.(!(ev.detail?.enabled ?? getReduceEffects()));
     });
 }
 

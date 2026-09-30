@@ -456,7 +456,7 @@ export function openSettingsModal(opts = {}) {
     });
     const fxNote = document.createElement('p');
     fxNote.className = 'daino-settings__hint';
-    fxNote.textContent = 'Se guardará para que partículas y shader extras se desactiven cuando Bloque 8 lo cablée.';
+    fxNote.textContent = 'Apaga los destellos del escenario, como los relámpagos de la tormenta. Más efectos se sumarán aquí.';
     fxRow.appendChild(fxLabel);
     fxRow.appendChild(fxToggle);
     fxRow.appendChild(fxNote);

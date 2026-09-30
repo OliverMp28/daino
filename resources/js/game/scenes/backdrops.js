@@ -16,6 +16,7 @@
 import { PIXEL_SCALE, WORLD_VIEW } from '../config.js';
 import { lighthouseVisibleRows } from '../entities/scenery/lighthouseArt.js';
 import { ridgeHeights, ridgePoints } from '../entities/scenery/ridgeShape.js';
+import { skylineBuildings, skylineCells, skylineGapless } from '../entities/scenery/skylineShape.js';
 import { seaColorAt } from './skyModel.js';
 
 /** Base de una capa: la línea del suelo o la del horizonte del cielo. */
@@ -61,10 +62,35 @@ export const LAYER_BACKDROPS = Object.freeze({
         solid: -Infinity,
         colorAt: (state) => state.mountains.far,
     }),
+    /**
+     * La ciudad (T02.4): los edificios, con el color de lo lejano o lo cercano de
+     * la hora, hasta el remate más alto (antenas incluidas). Entre edificios asoma
+     * el cielo hasta el suelo. Las ventanas encendidas no se miden: son puntos de
+     * luz de una celda, como las estrellas.
+     */
+    skyline: (def) => {
+        const cells = skylineCells(WORLD_VIEW.maxWidth, PIXEL_SCALE);
+        const buildings = skylineBuildings(cells, def.params);
+        return {
+            from: 0,
+            to: Math.max(...buildings.map((b) => b.top)) * PIXEL_SCALE,
+            // Una fila sin huecos tapa el cielo hasta su edificio más bajo.
+            solid: skylineGapless(buildings, cells) ? Math.min(...buildings.map((b) => b.h)) * PIXEL_SCALE : -Infinity,
+            colorAt: (state) => state.mountains[def.color],
+        };
+    },
     /** Siempre por encima de lo que se juega (`clearancePx`, con su propio test). */
     clouds: () => null,
     /** Bajo la línea del suelo. */
     ground: () => null,
+    /**
+     * El clima (T02.3) no tapa: gotas y copos finos que caen, como las estrellas
+     * que titilan. Su color sale del cielo aclarado (weatherColorsAt en skyModel).
+     * Los relámpagos aclaran el cielo unas décimas de segundo: tampoco se miden.
+     */
+    rain: () => null,
+    snow: () => null,
+    lightning: () => null,
 });
 
 /**

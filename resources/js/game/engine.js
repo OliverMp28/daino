@@ -294,6 +294,8 @@ function applyBudget() {
         particleLayer.setActiveRatio(budget.particleRatio);
     }
     speedLines?.setActiveRatio(budget.particleRatio);
+    // La lluvia y la nieve del escenario (T02.3), con el mismo presupuesto.
+    scenery?.setDetail(budget.particleRatio);
 }
 
 /**
@@ -539,6 +541,15 @@ function applyScene(next) {
     skyDirty = true;
 }
 
+/**
+ * Destellos del escenario sí/no (T02.3: los relámpagos de la Tormenta). Lo
+ * decide "Reducir efectos visuales" de AJUSTES; con reduced motion nunca hay.
+ * @param {boolean} on
+ */
+export function setSceneryFlashes(on) {
+    scenery?.setFlashes(on);
+}
+
 /** Enciende o apaga un elemento del escenario por su id (panel dev). */
 export function setSkyElementVisible(id, visible) {
     const el = SKY_ELEMENTS.find((e) => e.id === id);
@@ -681,6 +692,7 @@ function getApi() {
         setSkyHour,
         loadScene,
         setScene,
+        setSceneryFlashes,
         setSkyElementVisible,
         setAudioFxEnabled,
         // Escenario vigente y su hora (lo lee la GameSession para su plan y el

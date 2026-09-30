@@ -42,6 +42,9 @@ export function createScenery(viewport, scene, opts = {}) {
     let lastState = null;
     /** Horizonte del cielo de la escena sobre el suelo (T02.2): lo usan el mar, las islas y el faro. */
     let horizonRise = 0;
+    /** Presupuesto de render para la lluvia y la nieve (T02.3), y si hay relámpagos. */
+    let detail = 1;
+    let flashes = true;
 
     // ---------- Dino ambiente (solo menú) ----------
     // Corre en el MISMO sitio donde la GameSession montará el Dino real: la
@@ -73,6 +76,10 @@ export function createScenery(viewport, scene, opts = {}) {
         });
         layers.forEach((l, i) => container.addChildAt(l.container, i));
         for (const id of hidden) for (const l of layers) l.setVisible(id, false);
+        for (const l of layers) {
+            l.setDetail?.(detail);
+            l.setFlashes?.(flashes);
+        }
         if (lastState) for (const l of layers) l.light(lastState);
     }
 
@@ -116,6 +123,22 @@ export function createScenery(viewport, scene, opts = {}) {
         /** Cambia de escena: otras capas, mismo dino ambiente. */
         setScene(sceneDef) {
             build(sceneDef);
+        },
+
+        /**
+         * Presupuesto de render (RenderProfile.particleRatio, T02.3): cuánta lluvia
+         * y nieve. El tier bajo pinta menos gotas.
+         * @param {number} ratio  [0,1]
+         */
+        setDetail(ratio) {
+            detail = ratio;
+            for (const l of layers) l.setDetail?.(ratio);
+        },
+
+        /** Destellos del escenario (los relámpagos) sí/no: "Reducir efectos visuales". */
+        setFlashes(on) {
+            flashes = on;
+            for (const l of layers) l.setFlashes?.(on);
         },
 
         /** Enciende o apaga un elemento del escenario por su id (panel dev). */

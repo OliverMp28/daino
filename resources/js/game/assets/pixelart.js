@@ -318,6 +318,38 @@ const groundSand = [
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 ];
 
+// Suelo nevado (T02.3): montoncitos de nieve sobre la línea y escarcha debajo.
+const groundSnow = [
+    '...SSS..........SS.......SSSS...',
+    'SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS',
+    'SJSSjjSSjjjjSSjjjjjjSSjjjjSSSjjj',
+    'jjjJjjjjjjjjjjjjJjjjjjjjjjjjjjjj',
+    'jjjjjjjjjJjjjjjjjjjjjjjjjjJjjjjj',
+    'jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj',
+    'jjjjjJjjjjjjjjjjjjjjjjJjjjjjjjjj',
+    'jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjJj',
+    'jjjjjjjjjjjjjJjjjjjjjjjjjjjjjjjj',
+    'jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj',
+    'jJjjjjjjjjjjjjjjjjjjjjjJjjjjjjjj',
+    'jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj',
+];
+
+// Calle de la ciudad (T02.4): el bordillo en la línea, asfalto con marcas.
+const groundCity = [
+    '................................',
+    'cccccccccccccccccccccccccccccccc',
+    'dddddddddddddddddddddddddddddddd',
+    'ddddeddddddddddddddeddddddddddde',
+    'dddddddddddddddddddddddddddddddd',
+    'dddeeeeeedddddddddddeeeeeedddddd',
+    'dddddddddddddddddddddddddddddddd',
+    'ddddddddeddddddddddddddddddedddd',
+    'dddddddddddddddddddddddddddddddd',
+    'dddddddddddddddeddddddddddddddde',
+    'dddddddddddddddddddddddddddddddd',
+    'dddddddddddddddddddddddddddddddd',
+];
+
 // Nubes (T01): en claros, porque la hora del cielo las tiñe. Cuerpo
 // blanco con la sombra abajo; el color lo pone `Sprite.tint` (entities/scenery/
 // Clouds.js). Grid 20×8 → 80×32 y 28×10 → 112×40.
@@ -498,7 +530,7 @@ const DEFS = {
     jetpack, jetFlameA, jetFlameB, jetFlameIdle,
     cactusSmall, cactusWide, ...cactusRows,
     pteroA, pteroB,
-    ground, groundSand, dot,
+    ground, groundSand, groundSnow, groundCity, dot,
     cloud, cloudB, cloudRimTop, cloudRimBottom, cloudBRimTop, cloudBRimBottom,
     crystal, crystalSharp, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
     orbA, orbB, orbLit,

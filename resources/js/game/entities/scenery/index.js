@@ -6,9 +6,11 @@
 //       container,                        Pixi, en unidades de mundo
 //       tick(dt, worldSpeed),             scroll y animación propia
 //       resize(width, height, groundY),
-//       light(skyState),                  color de la hora (scenes/skyModel.js)
+//       light(skyState),                  color de la hora y arco (scenes/skyModel.js)
 //       setVisible(elementId, on),        interruptores del panel dev
 //       setPulse?(pulse, intensity),      efectos que laten (solo si los tiene)
+//       setDetail?(ratio),                presupuesto de render: lluvia y nieve
+//       setFlashes?(on),                  "Reducir efectos visuales": relámpagos
 //       dispose(),
 //   }
 //
@@ -33,6 +35,10 @@ export const LAYER_TYPES = Object.freeze({
 export const LAZY_LAYER_TYPES = Object.freeze({
     sea: () => import('./Sea.js').then((m) => m.createSeaLayer),
     lighthouse: () => import('./Lighthouse.js').then((m) => m.createLighthouseLayer),
+    rain: () => import('./Rain.js').then((m) => m.createRainLayer),
+    snow: () => import('./Snow.js').then((m) => m.createSnowLayer),
+    lightning: () => import('./Lightning.js').then((m) => m.createLightningLayer),
+    skyline: () => import('./Skyline.js').then((m) => m.createSkylineLayer),
 });
 
 /** Implementaciones disponibles ya (las del bundle y las que se han cargado). */

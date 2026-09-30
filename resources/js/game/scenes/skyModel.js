@@ -15,6 +15,7 @@
 
 import { hexToRgb, oklabToRgb, rgbToOklab } from './color.js';
 import { SKY_PALETTES, createPaletteSample, samplePalette } from './palettes.js';
+import { arcAt } from './weather.js';
 
 /** Fases del cielo, en orden, con su nombre para el panel dev. */
 export const SKY_PHASES = Object.freeze({
@@ -110,6 +111,12 @@ export function createSkyState() {
          * las olas y el reflejo del sol y de la luna (rgb + fuerza).
          */
         sea: { far: f3(), near: f3(), crest: f3(), crestAmt: 0, sunGlint: f4(), moonGlint: f4() },
+        /**
+         * El arco del ambiente (T02.3/T02.4, weather.js): encapotado, lluvia,
+         * relámpagos, nieve y ventanas encendidas, en [0,1]; y el color de la
+         * lluvia y de la nieve a esta hora (sale del cielo).
+         */
+        arc: { overcast: 0, rain: 0, lightning: 0, snow: 0, windows: 0, rainColor: f3(), snowColor: f3() },
         _p: createPaletteSample(),
     };
 }
@@ -223,8 +230,98 @@ export function skyStateAt(hour, scene, out) {
     out.mountains.rimAmt = p.rimAmt * moonlit;
     out.ground.set(p.ground);
 
+    // El arco del ambiente: el cielo encapotado va antes que el mar, que lo refleja.
+    arcAt(scene, hour, out.arc);
+    if (out.arc.overcast > 0 && scene.overcast) overcastStateAt(out, scene.overcast, out.arc.overcast);
+    weatherColorsAt(out);
     if (scene.sea) seaStateAt(out, scene.sea);
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Cielo encapotado (T02.3)
+
+const tintCache = new Map();
+const labC = [0, 0, 0];
+const horizonRgb = [0, 0, 0];
+
+/** OKLab de un hex, una vez por color. */
+function labOf(hex) {
+    let lab = tintCache.get(hex);
+    if (!lab) {
+        lab = rgbToOklab(hexToRgb(hex));
+        tintCache.set(hex, lab);
+    }
+    return lab;
+}
+
+/** Lleva un color hacia el del cielo cubierto (`mix`) y lo oscurece (`dark`), en OKLab. */
+function veil(rgb, tint, mix, dark) {
+    rgbToOklab(rgb, labC);
+    labC[0] = (labC[0] + (tint[0] - labC[0]) * mix) * (1 - dark);
+    labC[1] += (tint[1] - labC[1]) * mix;
+    labC[2] += (tint[2] - labC[2]) * mix;
+    oklabToRgb(labC, rgb);
+}
+
+/**
+ * Un cielo cubierto de nubes: el cielo y lo lejano toman el color de las nubes
+ * (`tint`) y se oscurecen; el sol y la luna se velan (sus colores se funden con
+ * el cielo y pierden el halo); las estrellas y el lucero desaparecen; las nubes
+ * lo cubren todo. Cuánto, lo dice el arco (`amount`, [0,1]).
+ *
+ * @param {ReturnType<typeof createSkyState>} out
+ * @param {{ tint: string, mix: number, dark: number }} cfg
+ * @param {number} amount
+ */
+function overcastStateAt(out, cfg, amount) {
+    const tint = labOf(cfg.tint);
+    const mix = cfg.mix * amount;
+    const dark = cfg.dark * amount;
+    veil(out.sky.top, tint, mix, dark);
+    veil(out.sky.mid, tint, mix, dark);
+    veil(out.sky.horizon, tint, mix, dark);
+    out.sky.haze[3] *= 1 - 0.6 * amount;
+    out.vignette += 0.08 * amount;
+
+    // El sol, velado: su disco se funde con el cielo y pierde el resplandor.
+    for (let i = 0; i < 3; i++) {
+        out.sun.core[i] += (out.sky.mid[i] - out.sun.core[i]) * 0.65 * amount;
+        out.sun.edge[i] += (out.sky.mid[i] - out.sun.edge[i]) * 0.65 * amount;
+        out.sun.glow[i] *= 1 - 0.75 * amount;
+    }
+    out.sun.halo *= 1 - 0.75 * amount;
+    out.moon.color[3] *= 1 - 0.8 * amount;
+    out.moon.light *= 1 - 0.7 * amount;
+    out.stars.vis *= 1 - amount;
+    out.lucero[2] *= 1 - amount;
+
+    // Nubes por todo el cielo, del color del cielo cubierto y sin filos de luz.
+    out.clouds.cover = Math.max(out.clouds.cover, 0.55 + 0.45 * amount);
+    out.clouds.alpha = Math.max(out.clouds.alpha, 0.9);
+    veil(out.clouds.body, tint, 0.7 * amount, 0.45 * amount);
+    out.clouds.rimTopAmt *= 1 - 0.7 * amount;
+    out.clouds.rimBottomAmt *= 1 - 0.7 * amount;
+
+    // Lo lejano, en la misma bruma.
+    veil(out.mountains.far, tint, 0.25 * mix, 0);
+    veil(out.mountains.near, tint, 0.2 * mix, 0);
+    out.mountains.rimAmt *= 1 - 0.5 * amount;
+    veil(out.ground, tint, 0.2 * amount, 0);
+}
+
+/**
+ * Color de la lluvia y de la nieve a esta hora: el del cielo a ras del horizonte,
+ * aclarado (la lluvia algo, la nieve casi blanca). Así se tiñen con la hora.
+ *
+ * @param {ReturnType<typeof createSkyState>} out
+ */
+function weatherColorsAt(out) {
+    skyColorAt(out, 0.85, horizonRgb);
+    for (let i = 0; i < 3; i++) {
+        out.arc.rainColor[i] = horizonRgb[i] + (1 - horizonRgb[i]) * 0.5;
+        out.arc.snowColor[i] = horizonRgb[i] + (1 - horizonRgb[i]) * 0.78;
+    }
 }
 
 // ---------------------------------------------------------------------------

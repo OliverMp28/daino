@@ -48,6 +48,9 @@ export function setVolume(v, audioEngine) {
     }
 }
 
+/** Evento en window cuando cambia "Reducir efectos visuales": `detail: { enabled }`. */
+export const REDUCE_EFFECTS_EVENT = 'daino:reduceeffectschange';
+
 /** Toggle "Reducir efectos visuales". Default false. */
 export function getReduceEffects() {
     return localStorage.getItem(KEY_REDUCE_EFFECTS) === 'true';
@@ -59,6 +62,8 @@ export function setReduceEffects(enabled) {
     } else {
         localStorage.removeItem(KEY_REDUCE_EFFECTS);
     }
+    // T02.3: por ahora apaga los relámpagos del escenario (AppController → engine).
+    window.dispatchEvent(new CustomEvent(REDUCE_EFFECTS_EVENT, { detail: { enabled: Boolean(enabled) } }));
 }
 
 /**

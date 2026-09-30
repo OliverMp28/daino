@@ -7,7 +7,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { SKY_HOURS, SKY_RULES, planSky } from '../../resources/js/game/scenes/skyClock.js';
+import { NOCTURNE_RULES, SKY_CYCLES, SKY_HOURS, SKY_RULES, planSky } from '../../resources/js/game/scenes/skyClock.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BAKED = path.join(ROOT, 'database/seeds/official/baked');
@@ -164,6 +164,62 @@ test('epílogo tras superar el nivel: termina de ponerse el sol, o sale', () => 
     const dawn = planSky(official('whats-up-danger'));
     const e3 = dawn.epilogue(dawn.hourAt(dawn.durationSec));
     assert.ok(e3.to > SKY_HOURS.sunrise && e3.to - e3.from < 1, 'con el sol saliendo, sube un poco más');
+});
+
+test('la noche de la ciudad (nocturne): hora azul, noche cerrada pronto, medianoche en el clímax y alba al final', () => {
+    // [slug, noche cerrada, medianoche (= inicio del clímax), alba | null]
+    const cases = [
+        ['whats-up-danger', 20.747, 157.171, 202.652],
+        ['dawn-of-faith', 22.433, 120.689, 177.946],
+        ['time', 14.235, 105.664, 146.114],
+        // El clímax dura hasta el final: medianoche en su drop y acaba de madrugada.
+        ['running-with-the-wolves', 12.046, 146.649, null],
+    ];
+    for (const [slug, nightfall, midnight, dawn] of cases) {
+        const input = official(slug);
+        const plan = planSky(input, SKY_CYCLES.nocturne);
+        assert.equal(plan.hourAt(0), NOCTURNE_RULES.startHour, slug);
+        near(plan.events.nightfall, nightfall);
+        near(plan.hourAt(midnight), NOCTURNE_RULES.climaxHour, 1e-9);
+        assert.equal(plan.events.eveningStart, null, 'no hay tarde: la canción es la noche');
+        if (dawn === null) {
+            assert.equal(plan.events.dawnStart, null, slug);
+            const end = plan.hourAt(input.durationSec);
+            assert.ok(end > NOCTURNE_RULES.climaxHour && end < SKY_HOURS.firstLight, `${slug}: ${end}`);
+        } else {
+            near(plan.events.dawnStart, dawn);
+            near(plan.hourAt(input.durationSec), SKY_HOURS.sunrise, 1e-9);
+        }
+    }
+    // Los clips de 40 s acaban de noche: el clímax no es el alba.
+    for (const slug of ['sugar-red', 'last-christmas']) {
+        const plan = planSky(official(slug), SKY_CYCLES.nocturne);
+        assert.equal(plan.events.dawnStart, null, slug);
+        assert.ok(plan.hourAt(plan.durationSec) < SKY_HOURS.firstLight, slug);
+    }
+});
+
+test('invariantes de la noche de la ciudad en 500 estructuras: de la hora azul hacia delante, sin saltos', () => {
+    for (let seed = 1; seed <= 500; seed++) {
+        const input = syntheticSong(seed * 7919);
+        const plan = planSky(input, SKY_CYCLES.nocturne);
+        const D = input.durationSec;
+        let prev = -Infinity;
+        for (let t = -1; t <= D + 1; t += 0.25) {
+            const h = plan.hourAt(t);
+            assert.ok(Number.isFinite(h), `seed ${seed}: hora no finita en ${t}`);
+            assert.ok(h >= prev - 1e-9, `seed ${seed}: la hora retrocede en ${t}`);
+            if (prev !== -Infinity) assert.ok(h - prev <= 0.2, `seed ${seed}: salto de ${h - prev} h en ${t}`);
+            prev = h;
+        }
+        assert.equal(plan.hourAt(0), NOCTURNE_RULES.startHour);
+        assert.ok(plan.hourAt(D) <= SKY_HOURS.sunrise + 1e-9, `seed ${seed}: acaba a las ${plan.hourAt(D)}`);
+        const ev = plan.events;
+        if (ev.dawnStart !== null) {
+            const dawnS = D - ev.dawnStart;
+            assert.ok(dawnS >= SKY_RULES.dawnMinS - 1e-9 && dawnS <= SKY_RULES.dawnMaxS + 1e-9, `seed ${seed}: alba de ${dawnS} s`);
+        }
+    }
 });
 
 test('ciclo fijo: el cielo no se mueve', () => {

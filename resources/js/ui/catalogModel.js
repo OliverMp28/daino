@@ -160,8 +160,9 @@ const swatches = new Map();
 
 /**
  * Colores de la muestra de un ambiente en el selector: su cielo a la hora del
- * menú (el ocaso) y, abajo, lo que tiene delante del horizonte (el mar o las
- * montañas). Sale del mismo modelo que pinta el juego.
+ * menú (el ocaso, la noche en la ciudad) y, abajo, lo que tiene delante del
+ * horizonte (el mar, la nieve o las montañas y los edificios). Sale del mismo
+ * modelo que pinta el juego, con su cielo encapotado si lo tiene.
  *
  * @param {import('../game/scenes/registry.js').SceneDef} scene
  * @returns {{ top: string, mid: string, horizon: string, land: string }}
@@ -170,7 +171,9 @@ export function sceneSwatch(scene) {
     let swatch = swatches.get(scene.id);
     if (swatch) return swatch;
     const state = skyStateAt(scene.menuHour, scene, createSkyState());
-    const land = scene.sea ? seaColorAt(state, 0.35) : state.mountains.far;
+    let land = state.mountains.far;
+    if (scene.sea) land = seaColorAt(state, 0.35);
+    else if (scene.arc?.snow) land = state.arc.snowColor;
     swatch = Object.freeze({
         top: rgbToHex(state.sky.top),
         mid: rgbToHex(skyColorAt(state, 0.55)),

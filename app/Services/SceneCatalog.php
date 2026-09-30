@@ -18,7 +18,7 @@ namespace App\Services;
 final class SceneCatalog
 {
     /** Ambientes elegibles para un nivel, en el orden del selector. */
-    public const SELECTABLE = ['mountains', 'coast'];
+    public const SELECTABLE = ['mountains', 'coast', 'rain', 'storm', 'snow', 'city'];
 
     /** Forma de un id de escena (misma que el CHECK de `levels.scene`). */
     public const ID_PATTERN = '/^[a-z][a-z0-9-]{1,31}$/';

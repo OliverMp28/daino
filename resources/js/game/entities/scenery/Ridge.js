@@ -20,29 +20,38 @@ import { rgbToNumber } from '../../scenes/color.js';
 import { ridgeHeights, ridgePoints } from './ridgeShape.js';
 
 /**
- * @param {{ id: string, color: 'far' | 'near', rim?: number, params: { anchor?: 'ground' | 'horizon', baseRise: number, jag: number, step: number, seed: number, parallax: number, gaps?: number, gapRun?: number } }} def
+ * @param {{ id: string, color: 'far' | 'near', rim?: number, snowRim?: number, params: { anchor?: 'ground' | 'horizon', baseRise: number, jag: number, step: number, seed: number, parallax: number, gaps?: number, gapRun?: number } }} def
+ *   `snowRim` (T02.3, la Nieve): la cresta nevada, un filo de nieve de una celda
+ *   con esa fuerza a cualquier hora (color: `state.arc.snowColor`). Es una línea,
+ *   como el filo de luz: la montaña sigue siendo oscura detrás del juego.
  * @param {{ width: number, height: number, groundY: number, horizonRise?: number }} view
  */
 export function createRidgeLayer(def, view) {
     const { step, parallax } = def.params;
     const lift = def.params.anchor === 'horizon' ? (view.horizonRise ?? 0) : 0;
     const rimFactor = def.rim ?? 0;
+    const snowAmt = def.snowRim ?? 0;
     const container = new Container({ label: def.id });
     const body = new Graphics();
+    const snow = new Graphics();
+    snow.visible = snowAmt > 0;
+    snow.alpha = snowAmt;
     const rim = new Graphics();
     rim.alpha = 0;
     rim.visible = false;
-    container.addChild(body, rim);
+    container.addChild(body, snow, rim);
 
     let period = 0;
     let rimOn = true;
     let lastBody = -1;
     let lastRim = -1;
     let lastRimAlpha = -1;
+    let lastSnow = -1;
 
     function build(width, groundY) {
         body.clear();
         rim.clear();
+        snow.clear();
         // Periodo múltiplo del paso: la cresta cierra exactamente donde empieza la
         // copia siguiente.
         const n = ridgePoints(width, step);
@@ -56,9 +65,16 @@ export function createRidgeLayer(def, view) {
             body.closePath();
             rim.moveTo(x0, -heights[0]);
             for (let i = 1; i <= n; i++) rim.lineTo(x0 + i * step, -heights[i % n]);
+            if (snowAmt > 0) {
+                snow.moveTo(x0, -heights[0]);
+                for (let i = 1; i <= n; i++) snow.lineTo(x0 + i * step, -heights[i % n]);
+            }
         }
         body.fill(0xffffff);
         rim.stroke({ width: 3, color: 0xffffff });
+        // La nieve, dos celdas de grueso: asoma a los dos lados de la cresta y se
+        // lee como nieve, no como un contorno.
+        if (snowAmt > 0) snow.stroke({ width: 8, color: 0xffffff });
         // +4: la falda queda bajo su línea de apoyo (el suelo o el mar la tapan).
         container.y = groundY - lift + 4;
         // El scroll se conserva dentro del periodo nuevo: redimensionar no hace saltar el paisaje.
@@ -94,12 +110,21 @@ export function createRidgeLayer(def, view) {
                 rim.visible = ra > 0;
                 lastRimAlpha = ra;
             }
+            if (snowAmt > 0) {
+                const sc = rgbToNumber(state.arc.snowColor);
+                if (sc !== lastSnow) {
+                    snow.tint = sc;
+                    lastSnow = sc;
+                }
+            }
         },
         setVisible(id, on) {
             if (id === def.id) container.visible = on;
             else if (id === 'ridgeRim') {
                 rimOn = on;
                 lastRimAlpha = -1;
+            } else if (id === 'ridgeSnow' && snowAmt > 0) {
+                snow.visible = on;
             }
         },
         dispose() {

@@ -29,6 +29,14 @@ export const PALETTE = Object.freeze({
     A: '#ffd9a0', // línea de la orilla
     a: '#221a2c', // arena mojada
     b: '#5c4a5e', // conchas y guijarros
+    // Suelo nevado (T02.3): la capa de nieve encima y la tierra helada debajo.
+    S: '#eef3ff', // nieve
+    j: '#171c30', // tierra helada
+    J: '#5a6a92', // escarcha
+    // Calle de la ciudad (T02.4): el bordillo y el asfalto.
+    c: '#9aa3c7', // bordillo
+    d: '#14141e', // asfalto
+    e: '#3a3e5a', // marcas y gravilla
     // Nube (T01): en claros, porque la hora la tiñe (Sprite.tint). El cuerpo
     // es blanco y su sombra un gris azulado: de día queda blanca con volumen, al
     // atardecer toma el color del cielo y de noche es una silueta.

@@ -80,13 +80,37 @@ export const SKY_RULES = Object.freeze({
 });
 
 /**
+ * La noche de una ciudad (T02.4, ciclo `nocturne`): la canción empieza en la hora
+ * azul, cuando la ciudad enciende sus ventanas, y la noche es la canción entera.
+ *
+ *   startHour         Hora azul del principio (el sol acaba de ponerse).
+ *   nightfallTargetS  La noche se cierra en el límite de sección más cercano a
+ *   nightfallMinS/MaxS   estos segundos, entre el mínimo y el máximo.
+ *   nightfallFraction Canción corta: la noche se cierra a esta fracción.
+ *   climaxHour        El clímax empieza a medianoche: la hora más viva de la ciudad.
+ *   climaxMinAfterS   …si llega al menos tantos segundos después de cerrarse la noche.
+ *   shortEndHour      Una canción sin alba termina, como mucho, a esta hora.
+ */
+export const NOCTURNE_RULES = Object.freeze({
+    startHour: 19,
+    nightfallTargetS: 20,
+    nightfallMinS: 10,
+    nightfallMaxS: 32,
+    nightfallFraction: 0.35,
+    climaxHour: 24,
+    climaxMinAfterS: 20,
+    shortEndHour: 23,
+});
+
+/**
  * Ciclos: cómo corre el cielo en una escena. `journey` es el viaje de la tarde
- * al amanecer anclado a la canción; `fixed` deja el cielo quieto a una hora (una
- * escena de noche perpetua, un atardecer eterno…). Añadir un ciclo es una
- * entrada aquí y su planificador en `planSky`.
+ * al amanecer anclado a la canción; `nocturne`, una noche entera de la hora azul
+ * al alba (T02.4, la ciudad); `fixed` deja el cielo quieto a una hora. Añadir un
+ * ciclo es una entrada aquí y su planificador en `planSky`.
  */
 export const SKY_CYCLES = Object.freeze({
     journey: Object.freeze({ kind: 'journey', rules: SKY_RULES, hours: SKY_HOURS }),
+    nocturne: Object.freeze({ kind: 'nocturne', rules: SKY_RULES, hours: SKY_HOURS, night: NOCTURNE_RULES }),
 });
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -119,6 +143,7 @@ export function planSky({ sections = [], durationSec }, cycle = SKY_CYCLES.journ
     const bounds = secs.map((s) => s.t).filter((t) => t > 0.5 && t < D - 0.5);
     const ci = secs.findIndex((s) => s.climax === true);
     const climax = ci >= 0 ? { start: secs[ci].t, end: ci + 1 < secs.length ? secs[ci + 1].t : D } : null;
+    if (cycle.kind === 'nocturne') return planNocturne(D, bounds, climax, R, H, cycle.night);
     const dayRate = (H.golden - 14.5) / R.dayNominalS;
     const dayStartFor = (eveningStart) => clamp(H.golden - eveningStart * dayRate, H.dayStartMin, H.golden - 0.25);
 
@@ -174,6 +199,53 @@ export function planSky({ sections = [], durationSec }, cycle = SKY_CYCLES.journ
         anchors.push({ t: D, hour: Math.min(H.firstLight - 0.5, endHour) });
     }
     return buildPlan(D, anchors, { eveningStart, nightfall, dawnStart }, { R, H });
+}
+
+/**
+ * La noche de una ciudad (`nocturne`): hora azul al empezar, la noche cerrada en
+ * el primer límite de sección cercano a los 20 s, medianoche en el drop del
+ * clímax y el alba con las mismas reglas del viaje (la última sección, si deja
+ * 8-26 s; si no, los últimos 20 s; si tampoco, acaba de noche).
+ *
+ * @param {number} D
+ * @param {number[]} bounds
+ * @param {{ start: number, end: number } | null} climax
+ * @param {typeof SKY_RULES} R
+ * @param {typeof SKY_HOURS} H
+ * @param {typeof NOCTURNE_RULES} N
+ */
+function planNocturne(D, bounds, climax, R, H, N) {
+    const near = bounds.filter((b) => b >= N.nightfallMinS && b <= Math.min(N.nightfallMaxS, D * 0.5));
+    const nightfall = nearest(near, N.nightfallTargetS) ?? Math.min(N.nightfallTargetS, D * N.nightfallFraction);
+    const anchors = [{ t: 0, hour: N.startHour }, { t: nightfall, hour: H.nightfall }];
+
+    // Canción corta: no cabe el alba; la noche avanza hasta la hora de las cortas.
+    if (nightfall + R.nightMinS > D) {
+        anchors.push({ t: D, hour: Math.max(H.nightfall + 0.5, Math.min(N.shortEndHour, H.nightfall + (D - nightfall) / R.nightNominalS * 3)) });
+        return buildPlan(D, anchors, { nightfall }, { R, H });
+    }
+
+    const midnight = climax !== null && climax.start - nightfall >= N.climaxMinAfterS ? climax.start : null;
+    // El alba nunca llega antes de que acabe el clímax, aunque caiga tan pronto que
+    // no le dé tiempo a ser medianoche: el clímax es lo más hondo de la noche.
+    const afterPeak = climax !== null && climax.end > nightfall ? climax.end : nightfall;
+    const dawnCandidates = bounds.filter((b) => b >= afterPeak
+        && b - (midnight ?? nightfall) >= R.nightMinS
+        && D - b >= R.dawnMinS
+        && D - b <= R.dawnMaxS);
+    let dawnStart = dawnCandidates.length > 0 ? dawnCandidates[dawnCandidates.length - 1] : null;
+    if (dawnStart === null && D - R.dawnFallbackS - (midnight ?? nightfall) >= R.nightMinS) dawnStart = D - R.dawnFallbackS;
+
+    if (midnight !== null) anchors.push({ t: midnight, hour: N.climaxHour });
+    if (dawnStart !== null) {
+        anchors.push({ t: dawnStart, hour: H.firstLight }, { t: D, hour: H.sunrise });
+    } else {
+        // Acaba de noche: la madrugada sigue a su ritmo, sin llegar a la primera luz.
+        const from = anchors[anchors.length - 1];
+        const endHour = from.hour + (D - from.t) * (H.firstLight - H.nightfall) / R.nightNominalS;
+        anchors.push({ t: D, hour: Math.min(H.firstLight - 0.5, Math.max(from.hour + 0.25, endHour)) });
+    }
+    return buildPlan(D, anchors, { nightfall, dawnStart }, { R, H });
 }
 
 /**
