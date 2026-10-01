@@ -20,6 +20,7 @@ import { ANALYZER_KEY, isChartableAnalysis } from '../../resources/js/game/level
 import { difficultyCeiling } from '../../resources/js/game/levels/difficultyCeiling.js';
 import { CHARTER_NAME, CHARTER_VERSION, normalizeChart, seedFromSha256 } from '../../resources/js/game/levels/chartFormat.js';
 import { toAudioBufferShape } from '../../scripts/lib/ffmpegDecode.mjs';
+import { storyQuiet } from '../../scripts/lib/chartFromAnalysis.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -251,7 +252,10 @@ test('los oficiales horneados del repo están al día con el analizador, el char
 
         const sha = baked.audio.sha256;
         const requested = entry.difficulty ?? 'auto';
-        const { chart: rebuilt, report } = buildChart(a, { sha256: sha, seed: seedFromSha256(sha), difficulty: requested });
+        const plain = buildChart(a, { sha256: sha, seed: seedFromSha256(sha), difficulty: requested });
+        // Un oficial con historia de autor respeta sus respiros (sin obstáculo en el destello).
+        const quiet = entry.scene ? storyQuiet(plain.chart, entry.scene) : [];
+        const { chart: rebuilt, report } = quiet.length > 0 ? buildChart(a, { sha256: sha, seed: seedFromSha256(sha), difficulty: requested, quiet }) : plain;
         assert.deepEqual(rebuilt, baked.chart, `${entry.slug}: el chart se reproduce desde su análisis y su dificultad`);
         assert.equal(normalizeChart(baked.chart).warnings.length, 0, `${entry.slug}: chart limpio`);
         // Ola 5: la dificultad guardada es la del charter (la del manifiesto

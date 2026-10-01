@@ -53,12 +53,16 @@ function crestPattern(depth, seed, shift) {
 }
 
 /**
- * @param {{ id: string, params: { bands: number, crestRows: number, parallax: [number, number] } }} def
+ * @param {{ id: string, params: { bands: number, crestRows: number, parallax: [number, number], drift?: number } }} def
+ *   `parallax`: cuánto corren las crestas con el mundo (lejos, cerca). `drift`: su
+ *   avance propio hacia la izquierda, en unidades por segundo en la orilla (las
+ *   olas van a alguna parte aunque el mundo no corra).
  * @param {{ width: number, height: number, groundY: number, horizonRise?: number, still?: boolean }} view
  *   `still` (reduced motion): sin sol ni luna en el cielo, tampoco su reflejo.
  */
 export function createSeaLayer(def, view) {
     const { bands: bandCount, crestRows, parallax } = def.params;
+    const drift = def.params.drift ?? 0;
     const rise = view.horizonRise ?? 0;
     const container = new Container({ label: def.id });
 
@@ -87,7 +91,7 @@ export function createSeaLayer(def, view) {
         const s = new TilingSprite({ texture: textures[0], width: view.width, height: PIXEL_SCALE });
         s.tileScale.set(PIXEL_SCALE);
         s.tilePosition.x = -Math.floor(hash01(j, 77) * CREST_TILE_CELLS) * PIXEL_SCALE;
-        crests.push({ s, depth, parallax: parallax[0] + (parallax[1] - parallax[0]) * Math.pow(depth, 1.2), textures });
+        crests.push({ s, depth, parallax: parallax[0] + (parallax[1] - parallax[0]) * Math.pow(depth, 1.2), drift: drift * (0.25 + 0.75 * depth), textures });
         crestsBox.addChild(s);
     }
 
@@ -204,7 +208,7 @@ export function createSeaLayer(def, view) {
         container,
         tick(dt, worldSpeed) {
             for (const c of crests) {
-                c.s.tilePosition.x -= worldSpeed * c.parallax * dt;
+                c.s.tilePosition.x -= (worldSpeed * c.parallax + c.drift) * dt;
                 if (c.s.tilePosition.x < -CREST_TILE_CELLS * PIXEL_SCALE) c.s.tilePosition.x += CREST_TILE_CELLS * PIXEL_SCALE;
             }
             crestT += dt;

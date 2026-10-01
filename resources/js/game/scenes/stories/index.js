@@ -89,6 +89,7 @@ export function bindStory(def, scene) {
         moments: def.moments.map((m) => ({ id: m.id, label: m.label, hour: hours[m.id], at: m.at })),
         holds: def.holds ?? [],
         captions: def.captions ?? [],
+        breaths: def.breaths ?? [],
         tracks,
         epilogueHour: hourOf(def.epilogueHour),
     });
@@ -240,7 +241,15 @@ export function placeStory(story, outline) {
         })
         .sort((a, b) => a.t - b.t);
 
-    return { moments, anchors, captions, holds };
+    // Respiros: ventanas sin obstáculos alrededor de un momento que hay que poder
+    // mirar. Las lee el horneado del oficial (scripts/lib/chartFromAnalysis.mjs).
+    const breaths = (story.breaths ?? []).map((b) => {
+        const m = moments.find((x) => x.id === b.at);
+        if (m === undefined) throw new Error(`historia ${story.id}: respiro en un momento desconocido "${b.at}"`);
+        return Object.freeze({ id: m.id, t0: Math.max(0, m.t - b.beforeS), t1: Math.min(D, m.t + b.afterS) });
+    });
+
+    return { moments, anchors, captions, holds, breaths };
 }
 
 function deepFreeze(o) {

@@ -53,7 +53,7 @@ export const ONE_DAY_STORY = Object.freeze({
         },
         { id: 'farewell', label: 'La despedida', hour: { limb: 'set' }, at: farewellAt },
         {
-            // Primera luz, y el rótulo "Diez años después…".
+            // Primera luz: han pasado diez años (el hijo, la isla cambiada).
             id: 'dawn', label: 'Diez años después', hour: 29,
             at: (o, m) => m('return') - 11,
         },
@@ -75,9 +75,16 @@ export const ONE_DAY_STORY = Object.freeze({
         { at: 'farewell', beforeS: 2.5, afterS: 3, dhBefore: 0.03, dhAfter: 0.06 },
         { at: 'return', beforeS: 2, afterS: 3.5, dhBefore: 0.03, dhAfter: 0.05 },
     ]),
+    // El primer destello hay que poder mirarlo: sin obstáculo justo en él (caía un
+    // cactus en el drop, y había que elegir entre el cactus y el destello). Solo
+    // esa acción: las de antes y después siguen.
+    breaths: Object.freeze([
+        { at: 'farewell', beforeS: 1, afterS: 2 },
+    ]),
     captions: Object.freeze([
-        { at: 'day', afterS: 5, holdS: 5.5, text: 'Un día en tierra cada diez años.' },
-        { at: 'dawn', afterS: 0, holdS: 5, text: 'Diez años después…' },
+        { at: 'day', afterS: 5, holdS: 5.5, text: 'Un día en tierra, diez años en el mar.' },
+        // La despedida: cuando el sol toca el mar, antes del destello.
+        { at: 'touch', afterS: 0, holdS: 5, text: 'No pierdas de vista el horizonte.' },
     ]),
     tracks: Object.freeze({
         /**
@@ -100,7 +107,10 @@ export const ONE_DAY_STORY = Object.freeze({
          * La isla, con ella en el borde del cabo mirando al mar.
          *   x        el borde del cabo (la pared del mar), en fracción del ancho.
          *            Se aleja muy despacio: la tierra sigue hasta fuera de pantalla.
-         *   child    el hijo, a su lado desde "Diez años después".
+         *   child    el hijo, a su lado desde el alba de diez años después.
+         *   years    0 la isla de la despedida, 1 la de diez años después (árboles
+         *            crecidos, hiedra, un columpio, otro bote). Cambia en lo más
+         *            oscuro de la noche, cuando todo es silueta.
          *   lantern  el farol encendido de la espera (de noche).
          *   flare    el farol se aviva cuando ve el barco.
          *   lights   las ventanas de la casa, el humo y el faro: del ocaso a la mañana.
@@ -109,6 +119,7 @@ export const ONE_DAY_STORY = Object.freeze({
             x: [['day', 0.47], ['farewell', 0.455], ['dawn', 0.445], ['end', 0.425], [32.1, 0.42]],
             lights: [[{ limb: 'set', dh: -0.35 }, 0], [{ limb: 'set', dh: 0.1 }, 1], [{ limb: 'rise', dh: 0.25 }, 1], [{ limb: 'rise', dh: 0.7 }, 0]],
             child: [['dawn', 0], ['dawn', 1]],
+            years: [[24, 0], [24, 1]],
             lantern: [[{ limb: 'set', dh: 0.3 }, 0], [{ limb: 'set', dh: 0.9 }, 1], [{ limb: 'rise', dh: 0.25 }, 1], [{ limb: 'rise', dh: 0.6 }, 0]],
             flare: [['return', 0], [{ moment: 'return', dh: 0.06 }, 1], [{ moment: 'return', dh: 0.3 }, 0]],
         },

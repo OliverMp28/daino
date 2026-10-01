@@ -153,7 +153,10 @@ export function gameplayTempo(bpm) {
 
 /**
  * @param {import('./analyze.js').Analysis} analysis  Formato 1 o 2.
- * @param {{ seed?: number, sha256?: string | null, difficulty?: 'auto' | number }} [opts]
+ * @param {{ seed?: number, sha256?: string | null, difficulty?: 'auto' | number, quiet?: Array<{ t0: number, t1: number }> }} [opts]
+ *        `quiet`: ventanas sin acciones (el respiro de una historia de autor en un
+ *        oficial: su horneado las saca de la estructura de la canción). No cuentan
+ *        como silencio de juego.
  *        Sin `seed`, se deriva del hash del audio (mismo archivo ⇒ mismo nivel).
  *        `difficulty`: la que pide quien sube la canción; 'auto' por defecto.
  * @returns {{ chart: import('./chartFormat.js').Chart, report: ChartReport }}
@@ -190,7 +193,7 @@ export function buildChart(analysis, opts = {}) {
     for (const span of plan) {
         if (span.mode === 'fly') span.margin = flightMargin(profile.toleranceS, minSpeedIn(speed, span.tIn, span.tOut), profile.fly?.comfortPx ?? 0);
     }
-    const modes = createModeGuide(plan, model.beatPeriodS);
+    const modes = withQuiet(createModeGuide(plan, model.beatPeriodS), opts.quiet ?? []);
     const structure = [...structureEvents(model, arc), ...modeEvents(plan)];
     const simModes = toSimModes(structure);
 
@@ -272,6 +275,17 @@ export function buildChart(analysis, opts = {}) {
             rings: actions.filter((a) => a.type === 'ring').length,
             accents,
         },
+    };
+}
+
+/** La guía de modos con ventanas sin acciones: ni se colocan ni se rellenan. */
+function withQuiet(modes, quiet) {
+    const spans = quiet.filter((q) => Number.isFinite(q.t0) && q.t1 > q.t0).map((q) => ({ tIn: q.t0, tOut: q.t1 }));
+    if (spans.length === 0) return modes;
+    return {
+        ...modes,
+        freeSpans: [...modes.freeSpans, ...spans].sort((a, b) => a.tIn - b.tIn),
+        allows: (t) => modes.allows(t) && !spans.some((q) => t >= q.tIn && t < q.tOut),
     };
 }
 

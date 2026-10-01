@@ -346,6 +346,35 @@ export function boatRows() {
     ]);
 }
 
+/** El bote pequeño (el del hijo), diez años después. */
+export function skiffRows() {
+    return Object.freeze([
+        'T.......T',
+        'tTTTTTTTt',
+        '.uuuuuuu.',
+    ]);
+}
+
+/** Un columpio colgado de una rama: dos cuerdas y la tabla. */
+export function swingRows() {
+    const s = sheet(4, 11);
+    for (let up = 1; up <= 10; up++) s.put(0, up, 'u').put(3, up, 'u');
+    s.box(0, 0, 3, 0, 'T');
+    return s.rows();
+}
+
+/** Un plantón recién puesto, con su tutor. */
+export function saplingRows() {
+    return Object.freeze([
+        '.pP.',
+        'pPPp',
+        '.pp.',
+        '.t.T',
+        '.t.T',
+        '.t.T',
+    ]);
+}
+
 /** Un tramo de cerca rústica: postes y dos travesaños. */
 export function fenceRows(length) {
     const s = sheet(length, 5);

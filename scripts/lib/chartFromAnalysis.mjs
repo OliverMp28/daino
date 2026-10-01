@@ -23,11 +23,31 @@ import { chartStats, difficultyFromStats, difficultyScore } from '../../resource
 import { difficultyCeiling } from '../../resources/js/game/levels/difficultyCeiling.js';
 import { DIFFICULTY_AUTO, difficultyOptions, normalizeRequestedDifficulty } from '../../resources/js/game/levels/difficulty.js';
 import { castScene } from '../../resources/js/game/scenes/sceneCasting.js';
+import { SCENES } from '../../resources/js/game/scenes/registry.js';
+import { placeStory, songOutline } from '../../resources/js/game/scenes/stories/index.js';
+
+/**
+ * Ventanas sin acciones que pide la historia de autor de una escena (sus
+ * `breaths`), en la canción de este chart. Salen de la estructura (secciones y
+ * efectos), que no depende de los obstáculos.
+ */
+export function storyQuiet(chart, sceneId) {
+    const story = SCENES[sceneId]?.story;
+    if (!story || story.breaths.length === 0) return [];
+    const outline = songOutline({
+        durationSec: chart.audio.durationSec,
+        sections: chart.events.filter((e) => e.type === 'section'),
+        fx: chart.events.filter((e) => e.type === 'fx'),
+    });
+    return placeStory(story, outline).breaths.map((b) => ({ t0: b.t0, t1: b.t1 }));
+}
 
 /**
  * @param {object} analysis
  * @param {string} sha256
- * @param {{ difficulty?: 'auto' | number | string | null, variants?: boolean }} [opts]
+ * @param {{ difficulty?: 'auto' | number | string | null, variants?: boolean, scene?: string | null }} [opts]
+ *        `scene`: el escenario de un oficial; si es una historia con respiros, el
+ *        chart los respeta.
  */
 export function chartFromAnalysis(analysis, sha256, opts = {}) {
     if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) {
@@ -36,7 +56,9 @@ export function chartFromAnalysis(analysis, sha256, opts = {}) {
     const requested = normalizeRequestedDifficulty(opts.difficulty ?? DIFFICULTY_AUTO);
     const seed = seedFromSha256(sha256);
     const charted = (difficulty) => {
-        const { chart, report } = buildChart(analysis, { sha256, seed, difficulty });
+        let { chart, report } = buildChart(analysis, { sha256, seed, difficulty });
+        const quiet = opts.scene ? storyQuiet(chart, opts.scene) : [];
+        if (quiet.length > 0) ({ chart, report } = buildChart(analysis, { sha256, seed, difficulty, quiet }));
         const { warnings } = normalizeChart(chart);
         if (warnings.length > 0) throw new Error(`el charter produjo un chart con avisos: ${warnings.join('; ')}`);
         return { chart, report };

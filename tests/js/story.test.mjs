@@ -14,7 +14,7 @@ import {
     CHILD_ROWS, SHIP_ROWS, SHIP_WATERLINE, STORY_CELL, STORY_SOLID_MATERIALS, WOMAN_ROWS,
     createStoryColors, storyColors,
 } from '../../resources/js/game/entities/scenery/storyArt.js';
-import { ISLAND_GROUPS, ISLAND_LIFT, islandArt, islandLandAt, islandMaterialSpans, islandSurfRows, islandVisibleHeight } from '../../resources/js/game/entities/scenery/storyIsland.js';
+import { ISLAND_GROUPS, ISLAND_LIFT, ISLAND_YEARS, islandArt, islandLandAt, islandMaterialSpans, islandSurfRows, islandVisibleHeight } from '../../resources/js/game/entities/scenery/storyIsland.js';
 import { ISLAND_INKS, ISLAND_MATERIAL_MAPS } from '../../resources/js/game/entities/scenery/storyIslandParts.js';
 import { rgbToNumber } from '../../resources/js/game/scenes/color.js';
 import { SCENES, sceneCycle } from '../../resources/js/game/scenes/registry.js';
@@ -78,9 +78,15 @@ test('One Day: el relato cae en su canción (la despedida en el drop, el regreso
     near(at.end, input.durationSec, 0.001, 'el final');
     assert.equal(plan.story.id, 'one-day');
     // Los rótulos, con su momento.
-    assert.deepEqual(plan.story.captions.map((c) => c.text), ['Un día en tierra cada diez años.', 'Diez años después…']);
+    assert.deepEqual(plan.story.captions.map((c) => c.text), ['Un día en tierra, diez años en el mar.', 'No pierdas de vista el horizonte.']);
     near(plan.story.captions[0].t, 5, 0.001);
-    near(plan.story.captions[1].t, at.dawn, 0.001);
+    // El primer destello se puede mirar: ningún obstáculo en su respiro, y los vecinos siguen.
+    const acts = JSON.parse(readFileSync(path.join(BAKED, 'one-day.json'), 'utf8')).chart.events.filter((e) => e.type === 'obstacle').map((e) => e.t);
+    assert.equal(acts.filter((t) => t >= at.farewell - 1 && t < at.farewell + 2).length, 0, 'un obstáculo en el destello');
+    assert.ok(acts.some((t) => t >= at.farewell - 3 && t < at.farewell - 1) && acts.some((t) => t >= at.farewell + 2 && t < at.farewell + 4), 'los de antes y después siguen');
+    // "No pierdas de vista el horizonte": con el sol tocando el mar, y se ha ido antes del destello.
+    near(plan.story.captions[1].t, at.touch, 0.001);
+    assert.ok(plan.story.captions[1].t + plan.story.captions[1].holdS <= plan.story.holds[0].t0 + 1e-9, 'el rótulo no pisa el destello');
 });
 
 test('One Day: el cielo nunca retrocede y pasa por cada momento a su hora', () => {
@@ -293,6 +299,11 @@ test('la isla: una costa cercana, verde y habitada, con las figuras en el borde 
     const homeCols = art.groups.home.flatMap((r) => [...r].map((c, x) => (c !== '.' ? x : -1)).filter((x) => x >= 0));
     const homeLeft = Math.min(...homeCols);
     for (const p of art.palms) assert.ok(p.x + art.palmFrames[p.kind][0][0].length < homeLeft - 40, 'una palmera junto a la casa');
+    // Diez años: plantones antes; después, árboles crecidos, hiedra, columpio y otro bote.
+    for (const id of ISLAND_YEARS.early) assert.ok(count(art.groups[id], 'leaf') > 0, id);
+    assert.ok(count(art.groups.backLate, 'leaf') > 300 && count(art.groups.frontLate, 'leaf') > 60 && count(art.groups.frontLate, 'wood') > 20, 'la isla de diez años después');
+    assert.equal(trackAt(STORY.tracks.cliff.years, STORY.moments.find((m) => m.id === 'farewell').hour), 0);
+    assert.equal(trackAt(STORY.tracks.cliff.years, STORY.moments.find((m) => m.id === 'dawn').hour), 1);
     // Cada material tiene con qué pintarse.
     for (const material of STORY_SOLID_MATERIALS) assert.ok(ISLAND_MATERIAL_MAPS[material] !== undefined, material);
 

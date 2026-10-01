@@ -120,7 +120,7 @@ function usableAnalysis(baked, entry) {
 function bake(entry, sha, bytes, analysis) {
     // Ola 5: cada oficial se chartea con la dificultad elegida en el manifiesto
     // (nunca por encima de su techo).
-    const out = chartFromAnalysis(analysis, sha, { difficulty: entry.difficulty ?? 'auto' });
+    const out = chartFromAnalysis(analysis, sha, { difficulty: entry.difficulty ?? 'auto', scene: entry.scene ?? null });
     return {
         formatVersion: BAKED_FORMAT_VERSION,
         slug: entry.slug,

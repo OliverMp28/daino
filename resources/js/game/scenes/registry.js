@@ -133,6 +133,11 @@ const SEA = { type: 'sea', id: 'sea', label: 'Mar',
         { id: 'seaGlint', label: 'Reflejo del sol y la luna' },
     ],
     params: { bands: 7, crestRows: 6, parallax: [0.03, 0.42] } };
+// El mar de una historia con una costa cercana y quieta (One Day): las crestas
+// no corren con el mundo (la isla no se mueve: el mar corriendo a su lado hacía
+// pensar que la vista avanzaba y la isla no). Son olas que van hacia la isla y
+// rompen en su pared (StoryCliff.js).
+const STORY_SEA = { ...SEA, params: { ...SEA.params, parallax: [0, 0], drift: 26 } };
 const SAND = { type: 'ground', id: 'ground', label: 'Arena', params: { sprite: 'groundSand' } };
 
 // El clima (T02.3): capas que caen delante del paisaje y detrás del juego. La
@@ -329,7 +334,7 @@ export const SCENES = deepFreeze({
             { type: 'storyShip', id: 'storyShip', label: 'El barco',
                 parts: [{ id: 'storySpray', label: 'Agua y estela' }, { id: 'storyShipLamp', label: 'Luces de popa' }],
                 params: { tracks: ONE_DAY.tracks.ship } },
-            SEA,
+            STORY_SEA,
             { type: 'storyCliff', id: 'storyCliff', label: 'La isla',
                 parts: [
                     { id: 'storyFigures', label: 'Ella y el hijo' },

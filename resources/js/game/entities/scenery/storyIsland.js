@@ -22,7 +22,7 @@
 import { CHILD_ROWS, STORY_CELL, STORY_SOLID_MATERIALS, WOMAN_LAMP, WOMAN_ROWS } from './storyArt.js';
 import {
     ISLAND_INKS, PALM_KINDS,
-    boatRows, bushRows, cottageRows, fenceRows, hash, hash2, lighthouseRows, noise2, palmRows, sm, smooth, treeRows,
+    boatRows, bushRows, cottageRows, fenceRows, hash, hash2, lighthouseRows, noise2, palmRows, saplingRows, skiffRows, sm, smooth, swingRows, treeRows,
 } from './storyIslandParts.js';
 
 /** Altura (unidades de mundo) de la línea del agua de la isla sobre el suelo. */
@@ -59,13 +59,37 @@ export const ISLAND_SHAPE = Object.freeze({
 export const ISLAND_LAYOUT = Object.freeze({
     lighthouse: 322,
     cottage: 347,
-    /** Árboles detrás de lo construido: arropan la casa por los dos lados. */
+    /** Árboles detrás de lo construido: arropan la casa. */
     trees: Object.freeze([
         Object.freeze({ x: 298, size: 'mid' }),
         Object.freeze({ x: 336, size: 'big' }),
-        Object.freeze({ x: 384, size: 'mid' }),
-        Object.freeze({ x: 284, size: 'small' }),
     ]),
+    /**
+     * Diez años (la noche de la espera): lo que solo está antes (`early`) y lo
+     * que solo está después (`late`). Los plantones del día de la despedida son
+     * árboles; la hiedra ha trepado por el faro y el cobertizo; del árbol grande
+     * cuelga un columpio; hay más arbustos y, junto al bote, uno pequeño. Pocos
+     * detalles y de silueta: que se note el tiempo sin rehacer la isla.
+     */
+    years: Object.freeze({
+        saplings: Object.freeze([390, 288]),
+        trees: Object.freeze([
+            Object.freeze({ x: 379, size: 'big' }),
+            Object.freeze({ x: 281, size: 'small' }),
+        ]),
+        bushes: Object.freeze([
+            Object.freeze({ x: 318, kind: 1, depth: -1 }),
+            Object.freeze({ x: 236, kind: 0, depth: 22 }),
+            Object.freeze({ x: 286, kind: 2, depth: 30 }),
+        ]),
+        /** Hiedra sobre lo construido: [grupo, de qué columna a cuál, hasta qué alto]. */
+        ivy: Object.freeze([
+            Object.freeze({ on: 'lighthouse', x0: 324, x1: 333, rise: 19 }),
+            Object.freeze({ on: 'home', x0: 353, x1: 362, rise: 9 }),
+        ]),
+        swing: 342,
+        skiff: 238,
+    }),
     /** Arbustos: en la cresta, al pie de la casa y por la cara de la ladera. */
     bushes: Object.freeze([
         Object.freeze({ x: 341, kind: 0, depth: -1 }),
@@ -95,7 +119,10 @@ export const ISLAND_LAYOUT = Object.freeze({
 });
 
 /** Los grupos del dibujo, en el orden en que se pintan. */
-export const ISLAND_GROUPS = Object.freeze(['land', 'back', 'lighthouse', 'home', 'front']);
+export const ISLAND_GROUPS = Object.freeze(['land', 'back', 'backEarly', 'backLate', 'lighthouse', 'home', 'front', 'frontLate']);
+
+/** Grupos que solo se ven antes o después de los diez años (pista `years`). */
+export const ISLAND_YEARS = Object.freeze({ early: Object.freeze(['backEarly']), late: Object.freeze(['backLate', 'frontLate']) });
 
 /** Alto de la tierra sobre el agua (píxeles) en cada columna. */
 function terrain() {
@@ -328,6 +355,32 @@ export function islandArt() {
         stamp(groups.front, fence.map((r) => r[i]), x, top[x]);
     }
     stamp(groups.front, boatRows(), L.boat, WL - 2);
+
+    // Diez años: plantones antes; después, árboles, más arbustos, hiedra, el
+    // columpio y el bote pequeño.
+    const Y = L.years;
+    for (const x of Y.saplings) stamp(groups.backEarly, saplingRows(), x, groundAt(x, 4) + 1);
+    for (const t of Y.trees) {
+        const tr = treeRows(t.size);
+        highest = Math.min(highest, stamp(groups.backLate, tr, t.x, groundAt(t.x + (tr[0].length >> 1) - 2, 4) + 1));
+    }
+    for (const b of Y.bushes) {
+        const br = bushRows(b.kind);
+        stamp(groups.frontLate, br, b.x, groundAt(b.x + 2, br[0].length - 4) + b.depth, b.depth > 0 ? 'Ggh' : null);
+    }
+    for (const ivy of Y.ivy) {
+        for (let x = ivy.x0; x <= ivy.x1; x++) {
+            const edge = Math.sin(((x - ivy.x0 + 0.5) / (ivy.x1 - ivy.x0 + 1)) * Math.PI);
+            const n = Math.round(ivy.rise * (0.35 + 0.65 * edge) * (0.6 + 0.4 * hash(x, 61)));
+            let y = H - 1;
+            while (y > 0 && groups[ivy.on][y][x] === '.') y--;
+            for (let k = 0; k < n && y - k >= 0 && groups[ivy.on][y - k][x] !== '.'; k++) {
+                groups.frontLate[y - k][x] = hash2(x, k, 62) < 0.3 ? 'P' : k === n - 1 ? 'j' : 'p';
+            }
+        }
+    }
+    stamp(groups.frontLate, swingRows(), Y.swing, groundAt(Y.swing, 4) - 2);
+    stamp(groups.frontLate, skiffRows(), Y.skiff, WL - 2);
 
     // Las palmeras (se mecen: van aparte, con sus dos fotogramas).
     const palmFrames = {};

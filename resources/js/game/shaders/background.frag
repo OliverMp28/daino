@@ -322,8 +322,12 @@ void main(void) {
         vec2 toSun = (uv - sunPos) * uFrame / sunUnit;
         float d = length(toSun);
         float breathe = 0.5 + 0.5 * sin(uTime * 0.6);
-        // (efecto) late con el beat; en el menú respira despacio.
-        float sunR = uSunRadius + pulse * (0.013 + 0.013 * intensity) + (1.0 - reactive) * breathe * 0.0055;
+        // (efecto) late con el beat; en el menú respira despacio. Solo mientras
+        // está entero sobre el horizonte: un sol que se pone no se hincha (al
+        // latir, su filo volvía a asomar cuando ya se había ocultado, justo en el
+        // destello verde).
+        float sunClear = clamp((uHorizon - sunPos.y) * uFrame.y / (uSunRadius * sunUnit), 0.0, 1.0);
+        float sunR = uSunRadius + sunClear * (pulse * (0.013 + 0.013 * intensity) + (1.0 - reactive) * breathe * 0.0055);
         float sunRy = sunR * sunUnit / uFrame.y;   // radio en uv verticales (rendijas y degradado)
         // Primero el halo cercano y el resplandor ancho (escenario; uSunGlow ya
         // viene a 0 con el sol bajo el horizonte) y lo que late (efecto: graves,

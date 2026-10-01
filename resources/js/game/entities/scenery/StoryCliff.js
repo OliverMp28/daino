@@ -24,7 +24,7 @@ import {
     CHILD_ROWS, STORY_CELL, WOMAN_ROWS,
     createStoryColors, materialRows, rimRows, storyColors,
 } from './storyArt.js';
-import { ISLAND_GROUPS, ISLAND_LIFT, islandArt, islandSurfRows } from './storyIsland.js';
+import { ISLAND_GROUPS, ISLAND_LIFT, ISLAND_YEARS, islandArt, islandSurfRows } from './storyIsland.js';
 import { ISLAND_MATERIAL_MAPS } from './storyIslandParts.js';
 import { createStoryLamp } from './storyLamp.js';
 
@@ -49,6 +49,16 @@ const WINDOWS = Object.freeze({ color: 0xffc870, alpha: 0.95 });
 const BEACON = Object.freeze({ periodS: 7, aura: 80, beamLen: 150, beamH: 10, beamAlpha: 0.2, color: 0xffe2a8 });
 /** El humo de la chimenea: bocanadas que suben y se van hacia tierra con el viento. */
 const SMOKE = Object.freeze({ count: 7, everyS: 0.9, lifeS: 6, risePxS: 9, driftPxS: -6, alpha: 0.32 });
+
+/**
+ * Las olas que rompen en la pared del cabo: vienen del mar (de la derecha, como
+ * las crestas del mar de la historia), corren hasta la pared y saltan en
+ * espuma. Le dan rumbo al mar y un sitio a la isla: está quieta, y el mar llega.
+ *   everyS, runS   cada cuánto llega una y cuánto tarda en llegar.
+ *   from           de qué distancia de la pared viene (unidades de mundo).
+ *   drops          gotas de la rompiente; `jump` y `spread`, su salto; `lifeS`, su vida.
+ */
+const BREAKERS = Object.freeze({ everyS: 2.9, runS: 1.5, from: 120, width: 26, drops: 9, jump: 78, spread: 44, gravity: 190, lifeS: 0.95 });
 
 /** Ancho (píxeles del arte) de cada trozo en que se parte la isla para pintarla. */
 const STRIP = 32;
@@ -144,8 +154,9 @@ export function createStoryCliffLayer(def, view) {
     }
     // El filo de luz: entero en lo que mira al mar, más tenue en lo alto (un solo
     // material: el de arriba va en el gris oscuro del arte).
+    const steady = ISLAND_GROUPS.filter((id) => !ISLAND_YEARS.early.includes(id) && !ISLAND_YEARS.late.includes(id));
     const solid = art.groups.land.map((r, y) => [...r].map((c, x) => (
-        ISLAND_GROUPS.some((id) => art.groups[id][y][x] !== '.') ? 'Q' : '.'
+        steady.some((id) => art.groups[id][y][x] !== '.') ? 'Q' : '.'
     )).join(''));
     const side = rimRows(solid, 1);
     const both = rimRows(solid, 1, { top: true });
@@ -237,7 +248,28 @@ export function createStoryCliffLayer(def, view) {
     }
     const rimBox = new Container({ label: 'storyRim' });
     rimBox.addChild(...rim);
-    container.addChild(groupBox.land, groupBox.back, lighthouse, home, groupBox.front, palmsBox, rimBox, surf, reflection, figures, lantern.container);
+
+    // La ola que llega y su rompiente.
+    const breakers = new Container({ label: 'storyBreakers' });
+    const swell = new Sprite(Texture.WHITE);
+    swell.height = S;
+    swell.visible = false;
+    const drops = [];
+    for (let i = 0; i < BREAKERS.drops; i++) {
+        const sp = new Sprite(Texture.WHITE);
+        sp.width = sp.height = S;
+        sp.visible = false;
+        drops.push({ sp, vx: 0, vy: 0, age: -1 });
+        breakers.addChild(sp);
+    }
+    breakers.addChild(swell);
+    const wallX = (art.wall + 10) * S;
+    const waterY = art.waterline * S;
+
+    container.addChild(
+        groupBox.land, groupBox.back, groupBox.backEarly, groupBox.backLate, lighthouse, home,
+        groupBox.front, groupBox.frontLate, palmsBox, rimBox, surf, breakers, reflection, figures, lantern.container,
+    );
 
     let W = view.width;
     let groundY = view.groundY;
@@ -245,6 +277,10 @@ export function createStoryCliffLayer(def, view) {
     let lamp = 0;
     let flare = 0;
     let lights = 0;
+    let plantsOn = true;
+    let late = null;
+    let breakT = 0;
+    let breakN = 0;
     let lanternOn = true;
     let houseOn = true;
     let lighthouseOn = true;
@@ -266,6 +302,57 @@ export function createStoryCliffLayer(def, view) {
         container.y = Math.round(groundY - ISLAND_LIFT - art.height * S);
         const withChild = trackAt(tracks.child, hour) >= 0.5;
         child.body.visible = child.rim.visible = withChild;
+        applyYears();
+    }
+
+    /** La isla de la despedida o la de diez años después. */
+    function applyYears() {
+        const now = trackAt(tracks.years ?? [], hour ?? 0) >= 0.5;
+        if (now === late) return;
+        late = now;
+        for (const id of ISLAND_YEARS.early) groupBox[id].visible = plantsOn && !late;
+        for (const id of ISLAND_YEARS.late) groupBox[id].visible = plantsOn && late;
+    }
+
+    /** Una ola llega a la pared y rompe: la raya de espuma corre y saltan gotas. */
+    function tickBreakers(dt) {
+        breakT += dt;
+        if (breakT >= BREAKERS.everyS) {
+            breakT -= BREAKERS.everyS;
+            breakN++;
+        }
+        const k = breakT / BREAKERS.runS;
+        swell.visible = k < 1;
+        if (swell.visible) {
+            const w = Math.round((BREAKERS.width * (0.5 + 0.5 * k)) / S) * S;
+            swell.width = w;
+            swell.x = Math.round((wallX + BREAKERS.from * (1 - k) * (1 - k)) / S) * S;
+            swell.y = waterY + S;
+            swell.alpha = 0.25 + 0.55 * k;
+        } else if (drops[0].age < 0 && breakT - dt < BREAKERS.runS) {
+            for (let i = 0; i < drops.length; i++) {
+                const d = drops[i];
+                const h = hash01(i + breakN * 13, 81);
+                d.age = 0;
+                d.vx = (hash01(i + breakN * 7, 82) - 0.35) * BREAKERS.spread;
+                d.vy = -BREAKERS.jump * (0.45 + 0.55 * h);
+                d.sp.position.set(wallX + (hash01(i, 83) - 0.5) * 10, waterY);
+                d.sp.visible = true;
+            }
+        }
+        for (const d of drops) {
+            if (d.age < 0) continue;
+            d.age += dt;
+            if (d.age >= BREAKERS.lifeS) {
+                d.age = -1;
+                d.sp.visible = false;
+                continue;
+            }
+            d.vy += BREAKERS.gravity * dt;
+            d.sp.x += d.vx * dt;
+            d.sp.y += d.vy * dt;
+            d.sp.alpha = 0.85 * (1 - d.age / BREAKERS.lifeS);
+        }
     }
 
     /** El reflejo del farol: guiones bajo él, más anchos cuanto más cerca. */
@@ -369,7 +456,7 @@ export function createStoryCliffLayer(def, view) {
 
     const materials = Object.entries(byMaterial);
     const smokeSprites = smoke.map((p) => p.sp);
-    const surfSprites = [surf];
+    const surfSprites = [surf, swell, ...drops.map((d) => d.sp)];
     const figRimSprites = [woman.rim, child.rim];
 
     return {
@@ -402,6 +489,7 @@ export function createStoryCliffLayer(def, view) {
                     reflectFrame = (reflectFrame + 1) % 997;
                     placeReflection();
                 }
+                tickBreakers(dt);
             }
             lantern.tick(dt);
             tickBeacon(dt);
@@ -443,7 +531,12 @@ export function createStoryCliffLayer(def, view) {
         setVisible(id, on) {
             if (id === def.id) container.renderable = on;
             else if (id === 'storyFigures') figures.visible = on;
-            else if (id === 'storyPalms') palmsBox.visible = groupBox.back.visible = groupBox.front.visible = on;
+            else if (id === 'storyPalms') {
+                plantsOn = on;
+                palmsBox.visible = groupBox.back.visible = groupBox.front.visible = on;
+                late = null;
+                applyYears();
+            }
             else if (id === 'storyHouse') {
                 houseOn = on;
                 home.visible = on;
