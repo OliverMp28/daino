@@ -1,16 +1,16 @@
-// Arte de la primera historia de autor, One Day (T02.6): el barco, el cabo y las
-// dos figuras. Aparte de las capas (StoryShip.js, StoryCliff.js) para que el
-// guardián de legibilidad (scenes/backdrops.js) sepa sus tamaños y sus colores
-// sin Pixi.
+// Arte de la primera historia de autor, One Day (T02.6): el barco, las figuras y
+// los materiales con que la hora lo tiñe todo. La isla (tierra, faro, casa y
+// palmeras) se dibuja con código en storyIsland.js. Aparte de las capas
+// (StoryShip.js, StoryCliff.js) para que el guardián de legibilidad
+// (scenes/backdrops.js) sepa tamaños y colores sin Pixi.
 //
-// A MEDIA celda del arte (como la luna, la lluvia y la nieve): son cosas lejanas y
-// finas, y con la celda entera un galeón no tiene jarcia ni una figura, pelo.
-// Evoca sin copiar: un galeón cualquiera y dos siluetas, sin logos ni caras.
+// A MEDIA celda del arte (como la luna, la lluvia y la nieve): con la celda entera
+// un galeón no tiene jarcia ni una figura, pelo. Evoca sin copiar: un galeón
+// cualquiera y siluetas sin caras ni logos.
 //
 // Cada carácter es un MATERIAL que la capa tiñe con la luz de la hora
-// (`storyColors`): el casco y la jarcia, las velas, la roca y la hierba; las
-// figuras son siluetas (K). El filo de luz del sol bajo o de la luna lo pone una
-// capa aparte (`rimRows`), como en las crestas.
+// (`storyColors`); las figuras son siluetas (K). El filo de luz del sol bajo o de
+// la luna lo pone una capa aparte (`rimRows`), como en las crestas.
 
 import { PIXEL_SCALE } from '../../config.js';
 import { hexToRgb } from '../../scenes/color.js';
@@ -78,302 +78,193 @@ export const SHIP_WATERLINE = 36;
 export const SHIP_LAMP = Object.freeze([2.5, 23.5]);
 
 /**
- * El cabo: una cumbre redondeada con hierba, la pared vertical hacia el mar (a la
- * derecha) con un saliente y un entrante, rocas al pie y la ladera hacia tierra.
- * 104 × 46 → 208 × 92 de mundo. La última fila es la del agua.
- *   o O q   roca, vetas más claras y grietas
- */
-export const CLIFF_ROWS = Object.freeze([
-    '........................................................................................................',
-    '........................................................................................................',
-    '................................................................................ooooooo.................',
-    '.............................................................................oooooooooooooo.............',
-    '..........................................................................oooooooooooooooooo............',
-    '......................................................................oooooooooooooooooooooo............',
-    '.................................................................oooooooooooooooooooqoooooo.............',
-    '............................................................oooooooooooooooooooooooqooooooo.............',
-    '..........................................................oooooooooooooooooooooooooqoooooo..............',
-    '.......................................................ooooooooooooooooooooooooooooqoooooo..............',
-    '.....................................................oooooooooooooooooooooooooooooooqoooooo.............',
-    '...................................................ooooooooooooooooooooooooooooooooooqooooo.............',
-    '..................................................ooooooooOOooooooooooooooooooooooooqoooooo.............',
-    '................................................oOoOoOOooooooooooooooooooooooooooooqooooooo.............',
-    '...............................................Oooooooooooooooooooooooooooooooooooooooooooo.............',
-    '..............................................ooooooooooooooooooooooooooooooqooooooooooqqq..............',
-    '.............................................ooooooooooooOoOOOOOOoooooooooooqooooooooooqqq..............',
-    '............................................oooooooOOOoOOoooooooooooooooooooqooooooooooqqq..............',
-    '..........................................ooooOOOOOoooooooooooooooooooooooooqooooooooooqqq..............',
-    '.........................................oooooooooooooooooooooooooooooooooooqoooooooooqqq...............',
-    '........................................oooooooooooooooooooooooooOoOOOOOooooqoooooooooqqq...............',
-    '.......................................oooooooooooooooooooooOOOOOoqooooooooqooooooooooqqq...............',
-    '......................................ooooooooOoOoOOOOOOOoOOooooooqooooooooooooooooooooqqq..............',
-    '......................................oOOOOOOOoooooooooooooooooooooqoooooooooooooooooooqqq..............',
-    '.....................................oOooooooooooooooooooooooooooooqooooooooooooooooooooooo.............',
-    '....................................ooooooooooooooooooooooooooooooqoooooooooooooooooooooooo.............',
-    '...................................oooooooOOooooooooooooooooooooooqoooooooooooooooooooooooo.............',
-    '.................................oooOoOOoOooooooooooooooqoooooooooqoooooooooooooqoooooooooo.............',
-    '................................OOOOooooooooooooooooooooqoooooooooqoooooooooooooqoooooooooo.............',
-    '..............................ooooooooooooooooooooooooooqooooooooqooooooooooooooqoooooooooo.............',
-    '.............................oooooooooooooOOOOOoooooooooqoooooooooooooooooooooooqoooooooooo.............',
-    '.............................ooooooooooOOOooooooooooooooqoooooooooooooooooooooooqoooooooooo.............',
-    '............................OOOOOOOOOOOoooooooooooooooooqoooooooooooooooooooooooqoooooooooo.............',
-    '..........................oOoooooooooooooooooooOOOoOoooooooooooooooooooooooooooqooooooooooo.............',
-    '........................oooooooooooooOooooooOOqoooooOoOOooooooooooooooqooooooooqooooooooqoo.............',
-    '.......................oooooooOOOooOOoOOOOOOoqoooooooooooOOOoOOOooooooqooooooooooooooooqoooo............',
-    '.....................ooooOOOOOoooooooooooooooqooooooOOOOooooooooooooooqooooooooooooooooqoooo............',
-    '....................oooOOooooooooooooooooOOOoOqoooOOooooooooooooooooooqooooooooooooooooqooooo...........',
-    '...................oooooooooooooooooooooooooooqOOOooooooooooooooooooooqooooooooooooooooqooooo...........',
-    '..................ooooooooooooooooooooooooooooooooooooooooooooooooooooqooooooooooooooooqooooo...........',
-    '................oooooooooooooooooooooooooooooooooooooooooOoOOOOooooooooooooooooooooooooqoooooo..........',
-    '........oooooooooooooooooooooooooooooooooOOOOOOOOooOOOOOOoooooooooooooooooooooooooooooooooooooo.........',
-    '......ooooooooooooooooooooooooooooooooOOOooooooooooooooooooooooooooooooooooooooooooooooooooooooo...o....',
-    '....oooooooooooooooooooooooooooooooooOoooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo..',
-    '..oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooOoooooooooooooooooooooooooooooooo.o',
-    'ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooOOOOOooooooooooooooooooooooooooooooooooo',
-]);
-
-/** La hierba de la cima (G), aparte para teñirla con su propio color. */
-export const CLIFF_GRASS_ROWS = Object.freeze([
-    '...........................................................................................G............',
-    '................................................................................G..GG......G............',
-    '................................................................................GGGGGGGG..GG............',
-    '..........................................................................G.GGGGGG.GG.GGGGGG............',
-    '.........................................................................GGGGGGG........GGGG............',
-    '............................................................G..G..G...GGGGG.G..............G............',
-    '............................................................G.GG.GGGGGG.GG................G.............',
-    '..........................................................G.GGGGGG......................................',
-    '..........................................................GG.GGGG.......................................',
-    '.....................................................G.GGGGG............................................',
-    '...................................................G.GGGGG..............................................',
-    '..................................................GGG...................................................',
-    '...............................................GG.GGG...................................................',
-    '...............................................GGGG.....................................................',
-    '..............................................GGGG......................................................',
-    '............................................G.GG........................................................',
-    '.............................................GG.........................................................',
-    '............................................GG..........................................................',
-    '..........................................GGG...........................................................',
-    '........................................GGGG............................................................',
-    '........................................GG..............................................................',
-    '.......................................GG...............................................................',
-    '......................................GG................................................................',
-    '........................................................................................................',
-    '...................................G.G..................................................................',
-    '....................................GG..................................................................',
-    '.................................GGGG...................................................................',
-    '...............................G.GGG....................................................................',
-    '................................G.G.....................................................................',
-    '..............................GGG.......................................................................',
-    '.............................GG.........................................................................',
-    '...........................GG...........................................................................',
-    '............................G...........................................................................',
-    '........................GGGG............................................................................',
-    '.......................GGG.G............................................................................',
-    '.....................GGGGG..............................................................................',
-    '....................GGG.................................................................................',
-    '....................GG..................................................................................',
-    '..................GGG...................................................................................',
-    '.................GGG....................................................................................',
-    '................GGG.....................................................................................',
-    '.................G......................................................................................',
-    '........................................................................................................',
-    '........................................................................................................',
-    '........................................................................................................',
-    '........................................................................................................',
-]);
-
-/** Fila de la línea del agua del cabo (la última). */
-export const CLIFF_WATERLINE = 45;
-
-/** El cabo está un poco más cerca que el horizonte: su pie, estas unidades por debajo. */
-export const CLIFF_SINK = 8;
-
-/**
- * Ella, mirando al mar con el viento que sube del agua (el pelo y la falda se van
- * hacia tierra) y el farol en la mano. Tres fotogramas del viento.
+ * Ella, mirando al mar desde el borde del cabo, con el viento que sube del agua
+ * (el pelo y la falda se van hacia tierra) y el farol colgando de la mano
+ * adelantada. 14 × 24 (48 de mundo: la isla está más cerca que el barco). Tres
+ * fotogramas del viento.
  */
 export const WOMAN_ROWS = Object.freeze([
     Object.freeze([
-        '....KKKK....',
-        '...KKKKKK...',
-        '..KKKKKKKK..',
-        '.KKKKKKKK...',
-        'KK.KKKKK....',
-        'K....KKK....',
-        '.....KKKK...',
-        '....KKKKKK..',
-        '....KKKKK.K.',
-        '....KKKKK..K',
-        '.....KKKK...',
-        '.....KKKK...',
-        '....KKKKK...',
-        '...KKKKKK...',
-        '..KKKKKKKK..',
-        '.KKKKKKKKK..',
-        'KKKKKKKKKK..',
-        '.KKKKKKKKKK.',
-        '..KKKKKKKKK.',
-        '..KKKKKKKKKK',
-        '...KKKKKKKKK',
-        '...KKKKKKKKK',
+        '.......KKK....',
+        '......KKKKK...',
+        '.....KKKKKKK..',
+        '....KKKKKKKK..',
+        '..KKKKKKKKK...',
+        '.KKK..KKKK....',
+        'KK.....KK.....',
+        '......KKKK....',
+        '.....KKKKKK...',
+        '.....KKKKKKK..',
+        '.....KKKKK.KK.',
+        '.....KKKKK..KK',
+        '......KKKK....',
+        '.....KKKKKK...',
+        '....KKKKKKK...',
+        '...KKKKKKKK...',
+        '.KKKKKKKKKKK..',
+        'KKKKKKKKKKKK..',
+        '.KKKKKKKKKKKK.',
+        '..KKKKKKKKKKK.',
+        '..KKKKKKKKKKKK',
+        '...KKKKKKKKKKK',
+        '...KKKKKKKKKKK',
+        '....KKKKKKKKK.',
     ]),
     Object.freeze([
-        '....KKKK....',
-        '...KKKKKK...',
-        '.KKKKKKKKK..',
-        'KKKKKKKKK...',
-        'K...KKKK....',
-        '.....KKK....',
-        '.....KKKK...',
-        '....KKKKKK..',
-        '....KKKKK.K.',
-        '....KKKKK..K',
-        '.....KKKK...',
-        '.....KKKK...',
-        '....KKKKK...',
-        '...KKKKKK...',
-        '..KKKKKKK...',
-        '.KKKKKKKKK..',
-        '.KKKKKKKKKK.',
-        'KKKKKKKKKKK.',
-        '.KKKKKKKKKK.',
-        '..KKKKKKKKKK',
-        '...KKKKKKKKK',
-        '...KKKKKKKKK',
+        '.......KKK....',
+        '......KKKKK...',
+        '.....KKKKKKK..',
+        '...KKKKKKKKK..',
+        '.KKKKKKKKKK...',
+        'KKK...KKKK....',
+        'K......KK.....',
+        '......KKKK....',
+        '.....KKKKKK...',
+        '.....KKKKKKK..',
+        '.....KKKKK.KK.',
+        '.....KKKKK..KK',
+        '......KKKK....',
+        '.....KKKKKK...',
+        '....KKKKKKK...',
+        '...KKKKKKKK...',
+        '..KKKKKKKKKK..',
+        '.KKKKKKKKKKKK.',
+        'KKKKKKKKKKKKK.',
+        '.KKKKKKKKKKKK.',
+        '..KKKKKKKKKKKK',
+        '..KKKKKKKKKKKK',
+        '...KKKKKKKKKKK',
+        '....KKKKKKKKK.',
     ]),
     Object.freeze([
-        '....KKKK....',
-        '...KKKKKK...',
-        '..KKKKKKKK..',
-        'KKKKKKKKK...',
-        '...KKKKK....',
-        '.....KKK....',
-        '.....KKKK...',
-        '....KKKKKK..',
-        '....KKKKK.K.',
-        '....KKKKK..K',
-        '.....KKKK...',
-        '.....KKKK...',
-        '....KKKKK...',
-        '...KKKKKKK..',
-        '..KKKKKKKK..',
-        'KKKKKKKKKK..',
-        '.KKKKKKKKKK.',
-        '..KKKKKKKKK.',
-        '..KKKKKKKKKK',
-        '..KKKKKKKKKK',
-        '...KKKKKKKKK',
-        '...KKKKKKKKK',
+        '.......KKK....',
+        '......KKKKK...',
+        '.....KKKKKKK..',
+        '....KKKKKKKK..',
+        '.KKKKKKKKKK...',
+        'KK....KKKK....',
+        '.K.....KK.....',
+        '......KKKK....',
+        '.....KKKKKK...',
+        '.....KKKKKKK..',
+        '.....KKKKK.KK.',
+        '.....KKKKK..KK',
+        '......KKKK....',
+        '.....KKKKKK...',
+        '....KKKKKKK...',
+        '...KKKKKKKK...',
+        'KKKKKKKKKKKK..',
+        '.KKKKKKKKKKK..',
+        '..KKKKKKKKKKK.',
+        '.KKKKKKKKKKKK.',
+        '..KKKKKKKKKKKK',
+        '..KKKKKKKKKKKK',
+        '...KKKKKKKKKKK',
+        '....KKKKKKKKK.',
     ]),
 ]);
 
-/** El hijo, a su lado desde "Diez años después". Dos fotogramas del viento. */
+/** Donde cuelga el farol de su mano (centro, en píxeles de su arte). */
+export const WOMAN_LAMP = Object.freeze([13.5, 12.5]);
+
+/** El hijo (unos nueve años), a su lado desde "Diez años después". Dos fotogramas. */
 export const CHILD_ROWS = Object.freeze([
     Object.freeze([
-        '...KKK..',
-        '..KKKKK.',
-        '.KKKKKK.',
-        'K..KKK..',
-        '..KKKK..',
-        '.KKKKKK.',
-        '.KKKKKK.',
-        '.K.KK.K.',
-        '...KK...',
-        '..KKKK..',
-        '..KK.K..',
-        '..KK.K..',
-        '..K..K..',
-        '..K..K..',
-        '.KK..KK.',
+        '....KKK...',
+        '...KKKKK..',
+        '..KKKKKK..',
+        '.KK.KKKK..',
+        '.....KK...',
+        '....KKKK..',
+        '...KKKKKK.',
+        '..K.KKKK.K',
+        '..K.KKKK.K',
+        '....KKKK..',
+        '....KKKK..',
+        '....KK.KK.',
+        '....KK.KK.',
+        '....K...K.',
+        '....K...K.',
+        '...KK..KK.',
     ]),
     Object.freeze([
-        '...KKK..',
-        '..KKKKK.',
-        'KKKKKKK.',
-        '...KKK..',
-        '..KKKK..',
-        '.KKKKKK.',
-        '.KKKKKK.',
-        '.K.KK.K.',
-        '...KK...',
-        '..KKKK..',
-        '..KK.K..',
-        '..KK.K..',
-        '..K..K..',
-        '..K..K..',
-        '.KK..KK.',
+        '....KKK...',
+        '...KKKKK..',
+        '.KKKKKKK..',
+        'KK..KKKK..',
+        '.....KK...',
+        '....KKKK..',
+        '...KKKKKK.',
+        '..K.KKKK.K',
+        '..K.KKKK.K',
+        '....KKKK..',
+        '....KKKK..',
+        '....KK.KK.',
+        '....KK.KK.',
+        '....K...K.',
+        '....K...K.',
+        '...KK..KK.',
     ]),
 ]);
-
-/**
- * Dónde está cada cosa sobre el cabo, en píxeles de su arte: la esquina de arriba
- * a la izquierda de cada figura (con los pies en la cumbre) y el farol, colgado de
- * la mano de ella.
- */
-export const CLIFF_SPOTS = Object.freeze({
-    woman: Object.freeze([76, -19]),
-    child: Object.freeze([67, -8]),
-    lamp: Object.freeze([87.5, -8.5]),
-});
-
-/**
- * La espuma al pie del cabo (tres filas: las dos últimas de la roca y el agua de
- * debajo). Rompe más contra las rocas de la pared y apenas a lo largo de la
- * ladera. El fotograma (0 o 1) mueve los huecos: las olas.
- *
- * @param {0 | 1} frame
- */
-export function surfRows(frame) {
-    const w = CLIFF_ROWS[0].length;
-    const rows = [[], [], []];
-    const hash = (i, s) => {
-        let x = (i * 374761393 + s * 668265263) | 0;
-        x = Math.imul(x ^ (x >>> 13), 1274126177);
-        return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
-    };
-    for (let x = 0; x < w; x++) {
-        const base = CLIFF_ROWS[CLIFF_WATERLINE][x] !== '.';
-        const wall = x >= w - 20;
-        const k = hash(x + frame * 7, 3);
-        rows[0].push(wall && base && k < 0.35 ? 'Q' : '.');
-        rows[1].push(base && (wall ? k < 0.7 : k < 0.12) ? 'Q' : '.');
-        rows[2].push(base && (wall ? k < 0.85 : k < 0.45) ? 'Q' : '.');
-    }
-    return Object.freeze(rows.map((r) => r.join('')));
-}
 
 /** Resplandor de un farol, en blanco (se tiñe de luz cálida). */
 export const LAMP_GLOW_ROWS = Object.freeze(['..QQ..', '.QQQQ.', 'QQQQQQ', 'QQQQQQ', '.QQQQ.', '..QQ..']);
 
 /**
- * Los materiales a cada hora: de qué color salen de la luz del cielo.
- *   hullShade         El casco: lo lejano, oscurecido (madera en sombra).
+ * Los materiales a cada hora: de qué color salen de la luz del cielo. Cada uno
+ * tiene su color a pleno sol y cuánto conserva de él (`…Mix`); con el sol bajo se
+ * funde con lo cercano de la hora, que lo vuelve silueta.
+ *   hull              El casco del barco: lo lejano, oscurecido.
  *   sailCanvas/Shade/Haze  Las velas: lona con la luz de las nubes (el mismo
  *                     blanco que el sol tiñe), en sombra y con la bruma de lo lejano.
- *   rockDay/grassDay  La roca y la hierba a pleno sol; con el sol bajo se funden
- *                     con lo cercano de la hora, que las vuelve silueta.
- * El guardián mide los colores que salen de aquí (backdrops.js).
+ *   rock, grass       La isla.
+ *   wall, roof        La casa (piedra encalada y teja).
+ *   tower, band       El faro (blanco y franjas rojas). Gris claro y no blanco: el
+ *                     Dino es blanco y pasa por delante (lo mide el guardián).
+ *   palm, trunk       Las palmeras.
+ *   dark              Puertas, ventanas apagadas y la linterna del faro: lo
+ *                     cercano, muy oscuro.
  */
 export const STORY_MATERIALS = Object.freeze({
     hullShade: 0.5,
     sailCanvas: '#f0d29e',
     sailShade: 0.42,
     sailHaze: 0.18,
-    rockDay: '#4a3c34',
-    rockDayMix: 0.5,
-    grassDay: '#3e5a2c',
-    grassDayMix: 0.75,
+    rockDay: '#58483c', rockDayMix: 0.8,
+    grassDay: '#406030', grassDayMix: 0.85,
+    wallDay: '#6e6458', wallDayMix: 0.6,
+    roofDay: '#7a3428', roofDayMix: 0.6,
+    towerDay: '#84847f', towerDayMix: 0.45,
+    bandDay: '#86302a', bandDayMix: 0.6,
+    palmDay: '#34602c', palmDayMix: 0.8,
+    trunkDay: '#4a3a2a', trunkDayMix: 0.55,
+    darkShade: 0.55,
     /** Elevación del sol (grados) a la que la luz es ya de pleno día. */
     daylightElev: 10,
 });
 
-const SAIL_CANVAS = hexToRgb(STORY_MATERIALS.sailCanvas);
-const ROCK_DAY = hexToRgb(STORY_MATERIALS.rockDay);
-const GRASS_DAY = hexToRgb(STORY_MATERIALS.grassDay);
+const M = STORY_MATERIALS;
+const SAIL_CANVAS = hexToRgb(M.sailCanvas);
+/** [clave de salida, color de día, cuánto conserva]: lo que la isla tiñe igual. */
+const LAND = Object.freeze([
+    ['rock', hexToRgb(M.rockDay), M.rockDayMix],
+    ['grass', hexToRgb(M.grassDay), M.grassDayMix],
+    ['wall', hexToRgb(M.wallDay), M.wallDayMix],
+    ['roof', hexToRgb(M.roofDay), M.roofDayMix],
+    ['tower', hexToRgb(M.towerDay), M.towerDayMix],
+    ['band', hexToRgb(M.bandDay), M.bandDayMix],
+    ['palm', hexToRgb(M.palmDay), M.palmDayMix],
+    ['trunk', hexToRgb(M.trunkDay), M.trunkDayMix],
+]);
+
+/** Materiales que se ven delante del cielo (el guardián mide el más claro). */
+export const STORY_SOLID_MATERIALS = Object.freeze(['rock', 'grass', 'wall', 'roof', 'tower', 'band', 'palm', 'trunk']);
 
 /** Contenedor reutilizable de los colores de la historia. */
 export function createStoryColors() {
-    return { hull: [0, 0, 0], sail: [0, 0, 0], rock: [0, 0, 0], grass: [0, 0, 0] };
+    const out = { hull: [0, 0, 0], sail: [0, 0, 0], dark: [0, 0, 0] };
+    for (const [k] of LAND) out[k] = [0, 0, 0];
+    return out;
 }
 
 /**
@@ -383,7 +274,6 @@ export function createStoryColors() {
  * @param {ReturnType<typeof createStoryColors>} out
  */
 export function storyColors(state, out) {
-    const M = STORY_MATERIALS;
     const day = Math.max(0, Math.min(1, state.elev / M.daylightElev));
     const { far, near } = state.mountains;
     const cloud = state.clouds.body;
@@ -391,8 +281,12 @@ export function storyColors(state, out) {
         out.hull[i] = far[i] * M.hullShade;
         const canvas = cloud[i] * SAIL_CANVAS[i] * M.sailShade;
         out.sail[i] = canvas + (far[i] - canvas) * M.sailHaze;
-        out.rock[i] = near[i] + (ROCK_DAY[i] - near[i]) * M.rockDayMix * day;
-        out.grass[i] = near[i] + (GRASS_DAY[i] - near[i]) * M.grassDayMix * day;
+        out.dark[i] = near[i] * M.darkShade;
+    }
+    for (let k = 0; k < LAND.length; k++) {
+        const [key, rgb, mix] = LAND[k];
+        const o = out[key];
+        for (let i = 0; i < 3; i++) o[i] = near[i] + (rgb[i] - near[i]) * mix * day;
     }
     return out;
 }
@@ -430,9 +324,4 @@ export function rimRows(rows, side, opts = {}) {
 /** Alto sobre el horizonte de lo que asoma del barco a flote, en unidades de mundo. */
 export function shipVisibleHeight() {
     return SHIP_WATERLINE * STORY_CELL;
-}
-
-/** Alto sobre la línea de su agua del cabo con ella encima, en unidades de mundo. */
-export function cliffVisibleHeight() {
-    return (CLIFF_WATERLINE - CLIFF_SPOTS.woman[1]) * STORY_CELL;
 }

@@ -9,10 +9,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DROP_FX } from '../../resources/js/game/config.js';
+import { WORLD_VIEW } from '../../resources/js/game/config.js';
 import {
-    CHILD_ROWS, CLIFF_GRASS_ROWS, CLIFF_ROWS, CLIFF_SPOTS, CLIFF_WATERLINE, SHIP_ROWS, SHIP_WATERLINE, WOMAN_ROWS,
-    createStoryColors, storyColors, surfRows,
+    CHILD_ROWS, SHIP_ROWS, SHIP_WATERLINE, STORY_CELL, STORY_SOLID_MATERIALS, WOMAN_ROWS,
+    createStoryColors, storyColors,
 } from '../../resources/js/game/entities/scenery/storyArt.js';
+import { ISLAND_LIFT, islandArt, islandMaterialSpans, islandSurfRows, islandVisibleHeight } from '../../resources/js/game/entities/scenery/storyIsland.js';
 import { rgbToNumber } from '../../resources/js/game/scenes/color.js';
 import { SCENES, sceneCycle } from '../../resources/js/game/scenes/registry.js';
 import { planSky } from '../../resources/js/game/scenes/skyClock.js';
@@ -163,7 +165,7 @@ test('el barco: se va con el sol, no se ve en los diez años y vuelve emergiendo
     assert.equal(trackAt(ship.lamp, hour('end')), 0);
 });
 
-test('el cabo: el farol arde de noche y se aviva al ver el barco; el hijo está desde "Diez años después"', () => {
+test('la isla: el farol arde de noche y se aviva al ver el barco; el hijo está desde "Diez años después"', () => {
     const cliff = STORY.tracks.cliff;
     const hour = (id) => STORY.moments.find((m) => m.id === id).hour;
     assert.equal(trackAt(cliff.lantern, hour('day')), 0);
@@ -174,8 +176,13 @@ test('el cabo: el farol arde de noche y se aviva al ver el barco; el hijo está 
     assert.equal(trackAt(cliff.child, 23), 0);
     assert.equal(trackAt(cliff.child, hour('dawn') + 0.01), 1);
     assert.equal(trackAt(cliff.flare, hour('dawn')), 0);
+    // Las ventanas, el humo y el faro: apagados de día, encendidos del ocaso a la mañana.
+    assert.equal(trackAt(cliff.lights, hour('day')), 0);
+    assert.equal(trackAt(cliff.lights, hour('farewell') + 0.2), 1);
+    assert.equal(trackAt(cliff.lights, 24), 1);
+    assert.equal(trackAt(cliff.lights, hour('home')), 0);
     assert.ok(trackAt(cliff.flare, hour('return') + 0.06) > 0.99);
-    // El cabo se aleja despacio (está lejos), nunca hacia el sol.
+    // El borde del cabo se aleja despacio, nunca hacia el sol.
     assert.ok(trackAt(cliff.x, hour('end')) < trackAt(cliff.x, hour('day')));
 });
 
@@ -226,38 +233,60 @@ test('la historia se coloca sin romperse en cualquier canción (los demás ofici
     }
 });
 
-test('el arte de la historia: filas parejas, las figuras pisan la cumbre y el farol cuelga de su mano', () => {
+test('la isla: una costa cercana y habitada, con las figuras en el borde y el farol en su mano', () => {
+    const art = islandArt();
     const sameWidth = (rows) => rows.every((r) => r.length === rows[0].length);
     assert.ok(sameWidth(SHIP_ROWS));
     assert.ok(SHIP_WATERLINE > 0 && SHIP_WATERLINE < SHIP_ROWS.length);
-    assert.ok(sameWidth(CLIFF_ROWS) && sameWidth(CLIFF_GRASS_ROWS));
-    assert.equal(CLIFF_GRASS_ROWS.length, CLIFF_ROWS.length);
-    assert.equal(CLIFF_WATERLINE, CLIFF_ROWS.length - 1);
+    for (const grid of [art.rock, art.grass, art.house, art.houseLight, art.tower, art.towerLight]) {
+        assert.equal(grid.length, art.height);
+        assert.ok(grid.every((r) => r.length === art.width));
+    }
+    assert.equal(islandArt(), art, 'el dibujo es siempre el mismo (se calcula una vez)');
     for (const frames of [WOMAN_ROWS, CHILD_ROWS]) {
-        for (const f of frames) {
-            assert.ok(sameWidth(f));
-            assert.equal(f.length, frames[0].length);
-            assert.equal(f[0].length, frames[0][0].length);
+        for (const fr of frames) {
+            assert.ok(sameWidth(fr));
+            assert.equal(fr.length, frames[0].length);
+            assert.equal(fr[0].length, frames[0][0].length);
         }
     }
-    // Pies en la roca o la hierba: bajo la última fila de cada figura hay cabo.
-    const solid = (x, y) => (CLIFF_ROWS[y]?.[x] ?? '.') !== '.' || (CLIFF_GRASS_ROWS[y]?.[x] ?? '.') !== '.';
-    for (const [rows, [x0, y0]] of [[WOMAN_ROWS[0], CLIFF_SPOTS.woman], [CHILD_ROWS[0], CLIFF_SPOTS.child]]) {
+    // Pies en la tierra: bajo la última fila de cada figura hay roca o hierba.
+    const solid = (x, y) => (art.rock[y]?.[x] ?? '.') !== '.' || (art.grass[y]?.[x] ?? '.') !== '.';
+    for (const [rows, [x0, y0]] of [[WOMAN_ROWS[0], art.spots.woman], [CHILD_ROWS[0], art.spots.child]]) {
         const bottom = y0 + rows.length - 1;
         const feet = [...rows.at(-1)].map((c, i) => (c !== '.' ? x0 + i : null)).filter((x) => x !== null);
         assert.ok(feet.some((x) => solid(x, bottom) || solid(x, bottom + 1)), `pies en el aire en la fila ${bottom}`);
     }
-    // El farol, junto a la mano de ella (a una celda de su silueta).
-    const [lx, ly] = CLIFF_SPOTS.lamp;
-    const [wx, wy] = CLIFF_SPOTS.woman;
+    // El farol, junto a la mano de ella; ella, en el borde del cabo.
+    const [lx, ly] = art.spots.lamp;
+    const [wx, wy] = art.spots.woman;
     const touches = WOMAN_ROWS[0].some((r, y) => [...r].some((c, x) => c !== '.' && Math.abs(wx + x + 0.5 - lx) <= 1.5 && Math.abs(wy + y + 0.5 - ly) <= 1.5));
     assert.ok(touches, 'el farol no está en su mano');
-    // La espuma del pie, del ancho del cabo.
-    for (const f of [0, 1]) {
-        const rows = surfRows(f);
+    assert.ok(art.wall - (wx + WOMAN_ROWS[0][0].length) < 12, 'ella está en el borde');
+    // No es una roca: tiene faro, casa con ventanas y palmeras, y es mucho más ancha que alta.
+    assert.ok(art.tower.some((r) => r.includes('t')) && art.towerLight.some((r) => r.includes('L')));
+    assert.ok(art.house.some((r) => r.includes('w')) && art.houseLight.some((r) => r.includes('L')));
+    assert.ok(art.palms.length >= 3);
+    // Las proporciones: el faro es más alto que la casa, la casa que ella y ella que el niño.
+    const spans = islandMaterialSpans();
+    const towerH = spans.tower[1] - spans.tower[0];
+    const houseH = spans.roof[1] - spans.wall[0];
+    const womanH = WOMAN_ROWS[0].length * STORY_CELL;
+    assert.ok(towerH > houseH && houseH > womanH && womanH > CHILD_ROWS[0].length * STORY_CELL, `faro ${towerH}, casa ${houseH}, ella ${womanH}`);
+    // La perspectiva: la isla está cerca (su pie, junto a la orilla, muy por debajo
+    // del horizonte de la escena), así que ella puede ser casi tan alta como el barco lejano.
+    assert.ok(ISLAND_LIFT < SCENE.horizonRise / 2);
+    assert.ok(ISLAND_LIFT + islandVisibleHeight() > SCENE.horizonRise + 100, 'la isla sube bien por encima del horizonte');
+    // La tierra llega al borde izquierdo de cualquier pantalla, con el cabo donde más a la derecha esté.
+    const maxX = Math.max(...STORY.tracks.cliff.x.map(([, v]) => v));
+    assert.ok(art.wall * STORY_CELL >= maxX * WORLD_VIEW.maxWidth, 'la isla se acaba antes del borde izquierdo en una pantalla ancha');
+    // La espuma del pie, del ancho de la isla.
+    for (const fr of [0, 1]) {
+        const rows = islandSurfRows(fr);
         assert.equal(rows.length, 3);
-        assert.ok(rows.every((r) => r.length === CLIFF_ROWS[0].length));
+        assert.ok(rows.every((r) => r.length === art.width));
     }
+    assert.deepEqual(Object.keys(spans).sort(), [...STORY_SOLID_MATERIALS].sort());
 });
 
 test('los materiales de la historia salen de la luz de cada hora y no se salen de [0, 1]', () => {
@@ -265,7 +294,7 @@ test('los materiales de la historia salen de la luz de cada hora y no se salen d
     const c = createStoryColors();
     for (let h = 12; h <= 36; h += 0.25) {
         storyColors(skyStateAt(h, SCENE, s), c);
-        for (const k of ['hull', 'sail', 'rock', 'grass']) {
+        for (const k of ['hull', 'sail', 'dark', ...STORY_SOLID_MATERIALS]) {
             assert.ok(c[k].every((v) => v >= 0 && v <= 1), `${k} a las ${h}`);
         }
     }

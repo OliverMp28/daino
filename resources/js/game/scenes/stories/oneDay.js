@@ -4,8 +4,8 @@
 // La historia de Will y Elizabeth, contada con el cielo de la Costa, sin
 // personajes ni logos: un barco, un cabo, una figura y el destello verde.
 //
-//   EL DÍA          Una tarde dorada. El barco, fondeado cerca de la costa; en lo
-//                   alto del cabo, ella.
+//   EL DÍA          Una tarde dorada. El barco, fondeado frente al cabo de una
+//                   isla con su faro, su casa y sus palmeras; en el borde, ella.
 //   LA PARTIDA      Con la primera subida de la música, el barco leva anclas y
 //                   navega hacia el sol, que baja.
 //   LA DESPEDIDA    El sol toca el mar y el barco se hunde en el horizonte con él.
@@ -90,21 +90,24 @@ export const ONE_DAY_STORY = Object.freeze({
          */
         ship: {
             x: [['day', 0.6], ['departure', 0.6], ['touch', 0.79], ['farewell', 0.818],
-                [{ moment: 'farewell', dh: 0.01 }, 0.64], ['return', 0.64], ['home', 0.53], ['end', 0.48], [32.1, 0.45]],
+                [{ moment: 'farewell', dh: 0.01 }, 0.66], ['return', 0.66], ['home', 0.59], ['end', 0.545], [32.1, 0.52]],
             sink: [['touch', 0], ['farewell', 1], ['return', 1], [{ moment: 'return', dh: 0.12 }, 0]],
             dir: [['day', 1], [{ moment: 'farewell', dh: 0.01 }, 1], [{ moment: 'farewell', dh: 0.01 }, -1]],
             spray: [['return', 0], [{ moment: 'return', dh: 0.02 }, 1], [{ moment: 'return', dh: 0.12 }, 0.7], [{ moment: 'return', dh: 0.3 }, 0]],
             lamp: [[{ moment: 'return', dh: 0.04 }, 0], [{ moment: 'return', dh: 0.12 }, 1], [{ moment: 'return', dh: 0.5 }, 1], [{ moment: 'return', dh: 0.85 }, 0]],
         },
         /**
-         * El cabo, con ella en lo alto mirando al mar.
-         *   x        centro del cabo, en fracción del ancho (se aleja despacio).
+         * La isla, con ella en el borde del cabo mirando al mar.
+         *   x        el borde del cabo (la pared del mar), en fracción del ancho.
+         *            Se aleja muy despacio: la tierra sigue hasta fuera de pantalla.
          *   child    el hijo, a su lado desde "Diez años después".
          *   lantern  el farol encendido de la espera (de noche).
          *   flare    el farol se aviva cuando ve el barco.
+         *   lights   las ventanas de la casa, el humo y el faro: del ocaso a la mañana.
          */
         cliff: {
-            x: [['day', 0.47], ['farewell', 0.38], ['dawn', 0.34], ['end', 0.27], [32.1, 0.26]],
+            x: [['day', 0.47], ['farewell', 0.455], ['dawn', 0.445], ['end', 0.425], [32.1, 0.42]],
+            lights: [[{ limb: 'set', dh: -0.35 }, 0], [{ limb: 'set', dh: 0.1 }, 1], [{ limb: 'rise', dh: 0.25 }, 1], [{ limb: 'rise', dh: 0.7 }, 0]],
             child: [['dawn', 0], ['dawn', 1]],
             lantern: [[{ limb: 'set', dh: 0.3 }, 0], [{ limb: 'set', dh: 0.9 }, 1], [{ limb: 'rise', dh: 0.25 }, 1], [{ limb: 'rise', dh: 0.6 }, 0]],
             flare: [['return', 0], [{ moment: 'return', dh: 0.06 }, 1], [{ moment: 'return', dh: 0.3 }, 0]],

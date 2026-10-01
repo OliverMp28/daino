@@ -305,10 +305,11 @@ export const SCENES = deepFreeze({
         ],
     },
     // One Day (T02.6), historia de autor de UN oficial: la de Will y Elizabeth.
-    // La Costa con el horizonte abierto (sin islas ni faro: las islas pasan y
+    // La Costa con el horizonte abierto (sin las islas ni el faro que pasan:
     // podrían tapar justo el punto donde el sol se pone o sale, y los dos
     // destellos no pueden depender del azar), un barco que se va con el sol y
-    // vuelve con él, el destello verde y el cabo donde ella espera con su farol.
+    // vuelve con él, el destello verde y la isla donde ella espera con su farol:
+    // una costa cercana con su cabo, su faro, su casa y sus palmeras.
     // Solo llega por el manifiesto del catálogo oficial: nunca se puede elegir.
     'one-day': {
         ...ONE_DAY_SKY,
@@ -322,15 +323,21 @@ export const SCENES = deepFreeze({
         // Sin partida (panel dev): la despedida, con el barco en el sol.
         menuHour: 18.7,
         sea: { deep: '#03222b' },
-        // El barco va detrás del mar (se hunde tras el horizonte); el cabo, delante:
-        // está más cerca, con el pie en el agua.
+        // El barco va detrás del mar (se hunde tras el horizonte); la isla, delante:
+        // está cerca, con el pie en el agua junto a la orilla.
         layers: [
             { type: 'storyShip', id: 'storyShip', label: 'El barco',
                 parts: [{ id: 'storySpray', label: 'Agua y estela' }, { id: 'storyShipLamp', label: 'Luces de popa' }],
                 params: { tracks: ONE_DAY.tracks.ship } },
             SEA,
-            { type: 'storyCliff', id: 'storyCliff', label: 'El cabo',
-                parts: [{ id: 'storyFigures', label: 'Ella y el hijo' }, { id: 'storyLantern', label: 'El farol' }],
+            { type: 'storyCliff', id: 'storyCliff', label: 'La isla',
+                parts: [
+                    { id: 'storyFigures', label: 'Ella y el hijo' },
+                    { id: 'storyLantern', label: 'El farol' },
+                    { id: 'storyHouse', label: 'La casa' },
+                    { id: 'storyLighthouse', label: 'El faro' },
+                    { id: 'storyPalms', label: 'Palmeras' },
+                ],
                 params: { tracks: ONE_DAY.tracks.cliff } },
             CLOUDS,
             SAND,

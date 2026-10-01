@@ -17,7 +17,8 @@ import { PIXEL_SCALE, WORLD_VIEW } from '../config.js';
 import { lighthouseVisibleRows } from '../entities/scenery/lighthouseArt.js';
 import { ridgeHeights, ridgePoints } from '../entities/scenery/ridgeShape.js';
 import { skylineBuildings, skylineCells, skylineGapless } from '../entities/scenery/skylineShape.js';
-import { CLIFF_SINK, cliffVisibleHeight, createStoryColors, shipVisibleHeight, storyColors } from '../entities/scenery/storyArt.js';
+import { STORY_SOLID_MATERIALS, createStoryColors, shipVisibleHeight, storyColors } from '../entities/scenery/storyArt.js';
+import { ISLAND_LIFT, islandMaterialSpans, islandVisibleHeight } from '../entities/scenery/storyIsland.js';
 import { relativeLuminance } from './color.js';
 import { seaColorAt } from './skyModel.js';
 
@@ -86,10 +87,11 @@ export const LAYER_BACKDROPS = Object.freeze({
     /**
      * Historias de autor (T02.6), con los colores de sus materiales a la hora
      * (storyArt.js): el barco, en el horizonte, con el de sus velas (el casco es
-     * más oscuro); el cabo, un poco más cerca (su pie en el agua), con el más
-     * claro de su roca y su hierba, hasta la cabeza de ella. Las figuras son
-     * siluetas más oscuras, y los faroles, la espuma y el agua que cae, luces
-     * locales como el faro.
+     * más oscuro); la isla, cerca (su pie en el agua junto a la orilla), con el
+     * más claro de los materiales que llegan a cada altura (la roca y la hierba
+     * abajo; la casa, las palmeras y el faro arriba), hasta el remate del faro. Las figuras son siluetas más
+     * oscuras, y los faroles, las ventanas, el haz del faro, la espuma y el agua
+     * que cae, luces locales como el faro de la Costa.
      */
     storyShip: (def, scene) => ({
         from: scene.horizonRise,
@@ -97,13 +99,25 @@ export const LAYER_BACKDROPS = Object.freeze({
         solid: -Infinity,
         colorAt: (state) => storyColors(state, storyTmp).sail,
     }),
-    storyCliff: (def, scene) => ({
-        from: scene.horizonRise - CLIFF_SINK,
-        to: scene.horizonRise - CLIFF_SINK + cliffVisibleHeight(),
+    storyCliff: () => ({
+        from: ISLAND_LIFT,
+        to: ISLAND_LIFT + islandVisibleHeight(),
         solid: -Infinity,
-        colorAt: (state) => {
+        colorAt: (state, h) => {
             const c = storyColors(state, storyTmp);
-            return relativeLuminance(c.rock) >= relativeLuminance(c.grass) ? c.rock : c.grass;
+            const spans = islandMaterialSpans();
+            let best = c.rock;
+            let bestL = -1;
+            for (const key of STORY_SOLID_MATERIALS) {
+                const [from, to] = spans[key];
+                if (h - ISLAND_LIFT < from - 8 || h - ISLAND_LIFT > to + 8) continue;
+                const l = relativeLuminance(c[key]);
+                if (l > bestL) {
+                    bestL = l;
+                    best = c[key];
+                }
+            }
+            return best;
         },
     }),
     /** Siempre por encima de lo que se juega (`clearancePx`, con su propio test). */
