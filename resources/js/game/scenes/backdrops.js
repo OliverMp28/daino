@@ -17,7 +17,11 @@ import { PIXEL_SCALE, WORLD_VIEW } from '../config.js';
 import { lighthouseVisibleRows } from '../entities/scenery/lighthouseArt.js';
 import { ridgeHeights, ridgePoints } from '../entities/scenery/ridgeShape.js';
 import { skylineBuildings, skylineCells, skylineGapless } from '../entities/scenery/skylineShape.js';
+import { CLIFF_SINK, cliffVisibleHeight, createStoryColors, shipVisibleHeight, storyColors } from '../entities/scenery/storyArt.js';
+import { relativeLuminance } from './color.js';
 import { seaColorAt } from './skyModel.js';
+
+const storyTmp = createStoryColors();
 
 /** Base de una capa: la línea del suelo o la del horizonte del cielo. */
 function anchorBase(def, scene) {
@@ -79,6 +83,29 @@ export const LAYER_BACKDROPS = Object.freeze({
             colorAt: (state) => state.mountains[def.color],
         };
     },
+    /**
+     * Historias de autor (T02.6), con los colores de sus materiales a la hora
+     * (storyArt.js): el barco, en el horizonte, con el de sus velas (el casco es
+     * más oscuro); el cabo, un poco más cerca (su pie en el agua), con el más
+     * claro de su roca y su hierba, hasta la cabeza de ella. Las figuras son
+     * siluetas más oscuras, y los faroles, la espuma y el agua que cae, luces
+     * locales como el faro.
+     */
+    storyShip: (def, scene) => ({
+        from: scene.horizonRise,
+        to: scene.horizonRise + shipVisibleHeight(),
+        solid: -Infinity,
+        colorAt: (state) => storyColors(state, storyTmp).sail,
+    }),
+    storyCliff: (def, scene) => ({
+        from: scene.horizonRise - CLIFF_SINK,
+        to: scene.horizonRise - CLIFF_SINK + cliffVisibleHeight(),
+        solid: -Infinity,
+        colorAt: (state) => {
+            const c = storyColors(state, storyTmp);
+            return relativeLuminance(c.rock) >= relativeLuminance(c.grass) ? c.rock : c.grass;
+        },
+    }),
     /** Siempre por encima de lo que se juega (`clearancePx`, con su propio test). */
     clouds: () => null,
     /** Bajo la línea del suelo. */

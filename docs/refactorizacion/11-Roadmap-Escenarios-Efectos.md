@@ -11,7 +11,7 @@
 >
 > **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
 >
-> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche) y T02.5 (Automático por el carácter de la canción) ✅; faltan las historias (T02.6+). T03 sin empezar.
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche), T02.5 (Automático por el carácter de la canción) y T02.6 (historias de autor y One Day) ✅; quedan las historias siguientes (T02.7+). T03 sin empezar.
 
 ---
 
@@ -167,7 +167,7 @@ A eventos de la canción (`planSky(...).events`, el clímax, los drops, el final
   - [x] T02.3 — Clima como capa: lluvia/tormenta y nieve, y ambientes compuestos (Sep 2026).
   - [x] T02.4 — Ciudad de noche (Sep 2026).
   - [x] T02.5 — Automático por el carácter de la canción (Sep 2026).
-  - [ ] T02.6 — Historias de autor, empezando por One Day.
+  - [x] T02.6 — Historias de autor, empezando por One Day (Sep 2026).
   - [ ] T02.7+ — Una ola por cada historia nueva.
 - [ ] **T03 — Efectos al ritmo de la música**: lo que reacciona a lo que suena.
   - [ ] T03.1 — Registro de efectos con nombre, panel "Efectos" y ecualizador fuera de las montañas.
@@ -491,10 +491,66 @@ Lo pedido (§3, decisiones del user): Automático propone un ambiente por cómo 
 - **Una canción local sin publicar se juega en la Cordillera**: el análisis del navegador no sirve para esto, como para la dificultad.
 - **La ficha no enseña el porqué** ("intensa, sombría…"), solo el ambiente. El porqué está en el horneado y en el informe.
 
-#### ⬜ T02.6 — Historias de autor, empezando por One Day
+#### ✅ T02.6 — Historias de autor, empezando por One Day (Sep 2026)
 
-- Sistema de historias: `kind: 'story'` sobre un ambiente, **cues** anclados a eventos de la canción (`planSky(...).events`, clímax, drops, final) → props o momentos; un ciclo propio si la historia lo pide (la puesta del sol en el clímax); panel dev "Historia" (saltar a cada momento, apagar cada prop). Todo cue tiene que resolverse en su canción (test).
-- **One Day** (Piratas del Caribe: En el fin del mundo): la escena post-créditos. La Costa, un acantilado a un lado; el sol se pone en el mar y en su último instante, el **destello verde** (el "rayo verde" real); tras él, **el barco emerge del mar** en el horizonte. Barco genérico en pixel art que evoca sin copiar (sin logos ni personajes). A afinar con la estructura real de la canción: se prueba con otra y se hornea y se siembra como oficial cuando llegue el MP3 (`scene` en el manifiesto).
+Lo pedido: el sistema de historias de autor y la primera, **One Day** (Piratas del Caribe: En el fin del mundo, Hans Zimmer), con el MP3 ya en `storage/official/`: "que se sienta la historia de Will y Elizabeth". Tras la primera versión, el user pidió **mejorar mucho el diseño** de la escena **sin que pese ni dé tirones**.
+
+**Cómo es una historia** (`scenes/stories/`, puro y sin Pixi):
+- **Momentos** en orden. Cada uno se ancla a la estructura de su canción (`at`: una función del esquema `songOutline` —límites de sección, drops, subidas, clímax— y de los demás momentos, nunca segundos a mano) y ocurre a una **hora del cielo**: un número, otro momento, o `{ limb: 'set' | 'rise', dh }` = el último instante del sol al ponerse (o el primero al salir) en el horizonte de SU escena, calculado con el modelo del cielo (`sunLimbHour`).
+- **Cámara lenta** (`holds`): alrededor de un momento la hora casi se para; el destello verde dura segundos de canción.
+- **Rótulos** (`captions`): unos pocos, con su momento.
+- **Pistas** (`tracks`): la coreografía de cada objeto (el barco, el cabo) en claves por hora del cielo. El escenario depende de la hora, nunca del audio (§2.4): el panel dev enseña cualquier instante moviendo la hora, y el epílogo tras superar el nivel sigue la historia sin código aparte.
+- `bindStory` la liga a su escena al cargar el registro (las horas del filo del sol en SU horizonte); `placeStory` la coloca en una canción (orden y aire entre momentos; si no caben, en proporción: una historia nunca rompe un nivel). El ciclo `story` de `planSky` va de momento en momento, y el plan lleva `story` (momentos, rótulos y ventanas de cámara lenta en segundos de canción).
+- Una escena de historia: `kind: 'story'`, nunca elegible, con su `story` y, si la pide, `greenFlash`. Llega por el manifiesto del catálogo oficial (`scene`).
+
+**One Day, momento a momento** (chart horneado, charter 12; la canción dura 2:27):
+
+| Momento | Ancla | Canción | Cielo | Qué pasa |
+|---|---|---|---|---|
+| El día | el principio | 0:00 | 16:54 | Tarde dorada. El galeón fondeado junto al cabo; en lo alto, ella. Rótulo: "Un día en tierra cada diez años." |
+| La partida | la primera subida (último límite 18-36 s antes de la despedida) | 0:35 | 17:27 | Leva anclas y navega hacia el sol, que baja; deja estela. |
+| El sol toca el mar | la subida hacia el drop | 0:55 | 18:18 | El barco, en silueta dentro del disco del sol. Empieza a hundirse con él. |
+| La despedida | el drop de la primera mitad (inicio del clímax) | 1:03 | 18:55, último filo | El barco se ha ido tras el horizonte; **destello verde**, con cámara lenta. |
+| Diez años después | 11 s antes del regreso | 1:28 | 05:00 | Una noche que son diez años: la luna cruza, las estrellas giran, en el cabo arde un farol. Rótulo: "Diez años después…"; a su lado, el hijo. |
+| El regreso | la última gran subida de la orquesta (primer límite con canción por delante) | 1:39 | 05:51, primer filo | **Destello verde** al salir el sol y el barco **emerge** del mar con el agua cayendo de sus velas y las luces de popa encendidas; el farol se aviva. |
+| Rumbo a casa | la coda (re mayor) | 2:12 | 07:00 | Navega hacia el cabo con la luz de la mañana. |
+| Fin | el final | 2:27 | 07:36 | Tras superar el nivel, el epílogo lo acerca al cabo (08:06). |
+
+**El diseño** (segunda versión, tras pedir el user mejorarlo mucho):
+- **La luz de una película de piratas**: paleta propia `golden` (`palettes.js`): teal y oro en vez de neón. Día azul marino algo verdoso, ocaso ámbar y óxido con un **sol de oro sin rendijas** (las rendijas son synthwave), noche azul petróleo, alba rosa y oro; el mar en azul petróleo (`deep #03222b`). Pasa el guardián a la primera: la franja jugable sigue oscura y el oro lo ponen el disco, su halo, las nubes y el reflejo del mar.
+- **El destello verde** (shader + `skyModel`): el filo del sol se vuelve verde, sube un rayo de celdas, el cielo a ras del agua se tiñe de esmeralda, la línea del horizonte se enciende a los dos lados y el reflejo del mar se vuelve verde. El verde se **mezcla**, no se suma: sumado al óxido del ocaso salía amarillo y sobre el rosa, blanco.
+- **El galeón** (`storyArt.js`, a media celda, 104 × 72 de mundo sobre el agua): tres palos con velas cuadradas hinchadas, latina, foques, bauprés, bandera y gallardetes. En materiales que tiñe la hora (`storyColors`): casco oscuro, velas de lona (la luz de las nubes, en sombra), filo de luz en el costado del sol y ventanas de popa que se encienden con su farol. Navegando deja **estela**; al emerger, **agua que cae** de las velas (gotas que cogen la luz) y espuma.
+- **El cabo**: cumbre redondeada con hierba (verde de día, silueta al ocaso), pared vertical al mar con un saliente y un entrante, rocas al pie y **espuma de olas**. Está un poco más cerca que el horizonte (su pie, 8 unidades por debajo, delante del mar). Encima, **ella** (tres fotogramas: el pelo y la falda al viento del mar) con el **farol en la mano**; de noche su **aura cálida** le enciende la silueta y se **refleja en el agua**. Desde el alba, el hijo a su lado.
+- **El cielo de la historia**: la luna cruza la noche de la espera y se pone antes del alba (el regreso es del sol); sin islas ni faro (podrían tapar el punto del destello).
+- **Rótulos de película**: serif cursiva de sistema (sin fuentes que descargar), entre dos filetes, con un velo oscuro suave detrás (caen en la franja de las nubes).
+- **El cielo es de la historia en sus instantes clave**: en las ventanas de cámara lenta y mientras se lee un rótulo, las líneas de velocidad se apartan (`GameSession._storyHushAt`), y **el drop que cae en el destello destella en verde** (`DROP_FX.greenFlashColor`, el mismo verde del shader).
+
+**Rendimiento** (lo pidió el user; medido con la GPU real, Intel UHD Graphics 620 a 1920 × 1080):
+- One Day cuesta lo mismo que la Costa y la Cordillera: 60 FPS (p95 17 ms) en el barco con el sol, el destello, la noche con el farol y la emergencia.
+- **Hallazgo: los tirones no eran de la escena sino del HUD.** Justo en el drop de la despedida había fotogramas de 100-170 ms con el hilo principal libre: la GPU no daba abasto componiendo el HUD DOM sobre el lienzo. El `backdrop-filter` del botón de pausa (un blur que se recalcula cada fotograma porque el lienzo cambia), los `drop-shadow` de los chevrones de marcha, el `brightness` del golpe de marcha y del latido del clímax se sumaban en el momento más intenso. Con el HUD oculto, cero tirones.
+- Arreglado **para todos los niveles**: los efectos del HUD solo animan opacidad, transformaciones o color (el latido del clímax es la opacidad de un velo, el aviso de modo también, la marcha destella por color), el botón de pausa no desenfoca, el marcador se reescribe como mucho a 20 Hz (subía en cada fotograma) y la barra de progreso avanza a pasos de 0.1 % sin transición de ancho. Resultado: **cero tirones > 40 ms** en toda la partida y el hilo principal **un 35-40 % más libre** (420-460 → 250-350 ms de tareas por segundo).
+- La historia no añade trabajo por fotograma: tintes cuantizados que solo se aplican si cambian, faroles que no tocan nada si están quietos, sin asignaciones en `light()`.
+
+**Decisiones (vinculantes):**
+- **Una historia son momentos anclados a la estructura de su canción y pistas por hora del cielo.** Nada del audio en vivo, nada de segundos a mano: sobrevive a un re-charteo.
+- **El regreso es al alba, no al ocaso como en la película**: el reloj del cielo nunca retrocede, y la noche de la espera son los diez años.
+- **Evocar sin copiar**: un galeón cualquiera y siluetas sin caras ni logos.
+- **El horizonte es del destello**: en los instantes clave de una historia los efectos se apartan o toman su color.
+- **Una historia puede traer su propia luz** (paleta), siempre que pase el guardián.
+- **El HUD en partida no usa filtros CSS** (`filter`, `backdrop-filter`): solo opacidad, transformaciones y color.
+
+**Verificación:**
+- **Tests JS**: `tests/js/story.test.mjs` (12): el relato en su canción (instantes del chart horneado), el cielo que nunca retrocede y pasa por cada momento, dos destellos de segundos con su pico en su momento y dentro de su ventana, el destello solo en las escenas que lo piden (y el verde del drop igual al del shader), las horas del filo del sol, las pistas del barco y del cabo, `trackAt` y `bindStory`, la historia colocada en los demás oficiales y en estructuras raras, el arte (filas parejas, pies en la cumbre, el farol en su mano) y los materiales. El guardián recorre la escena a 620 horas sin un fallo (`sky-model.test.mjs`). Los tests que contaban 8 oficiales leen ahora el manifiesto.
+- **Totales**: 338 JS, 81 PHP y 112 Python. `bake:official --check`: los 9 horneados iguales.
+- **E2E** (Chrome con la GPU real, por CDP): One Day entero a ~60 FPS, rótulos a los 5 s y a los 88 s, destellos con pico 0.99 (1:03) y 0.97 (1:39), resultados con el epílogo, sin errores; con reduced motion el escenario cuenta la historia sin shader (barco, farol, hijo).
+- **Build de producción** en el navegador: al empezar el nivel llegan sus chunks (`StoryShip`, `StoryCliff`, el arte compartido y el mar), sin errores.
+- **Bundle**: chunk principal 85.1 KB gzip (los datos de la historia y la paleta van en él; +4.8), Pixi 140.7. El arte y las capas de la historia, aparte y bajo demanda: 2.75 + 2.06 + 1.85 KB gzip.
+
+**Limitaciones:**
+- Las figuras son siluetas pequeñas (unos 44 de alto): se leen como ella y el niño por la forma y el farol, no por el detalle.
+- Con reduced motion no hay sol ni destello (no hay shader); la historia la cuentan el barco, el farol y el hijo.
+- One Day es Relajado: sin modos ni anillos; la historia no los tiene en cuenta.
+- El galeón no es el Holandés Errante de la película, a propósito.
 
 #### ⬜ T02.7+ — Una historia más por ola
 
@@ -551,6 +607,7 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 | Cada escena nueva engorda el arranque | Sus capas van bajo demanda (`LAZY_LAYER_TYPES`) y traen su arte (`artTexture`). |
 | Los relámpagos provocan una crisis fotosensible | Como mucho 2 destellos por rayo y ≥ 1.4 s entre rayos: nunca más de 3 destellos en un segundo (WCAG 2.3.1; lo prueba un test sobre 30 minutos de tormenta a tope). Apagados con reduced motion y con "Reducir efectos visuales" (AJUSTES). El destello solo aclara el cielo detrás de las montañas (alfa 0.2), no la pantalla (T02.3). |
 | La lluvia o la nieve tapan el juego o cuestan FPS | Gotas de media celda y tenues, detrás del juego; cuántas caen lo multiplica el presupuesto de render (`setDetail`: el tier bajo y los modales, menos). Medido: 60 FPS con la tormenta a tope (T02.3). |
+| Una historia da tirones justo en su momento clave | Medido con la GPU real: los tirones del drop de One Day venían de los filtros CSS del HUD, no de la escena; el HUD en partida ya no usa `filter` ni `backdrop-filter` (T02.6). |
 | "Automático" pone un ambiente que no pega | Solo encajes claros (retratos de ≥ 2 condiciones, encaje y ventaja mínimos), medido con los oficiales y con 14 alteraciones de su análisis sin un solo fallo, y quien sube lo cambia (T02.5). |
 
 ---

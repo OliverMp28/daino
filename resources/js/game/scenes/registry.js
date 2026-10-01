@@ -25,8 +25,9 @@
 // Puro y sin Pixi: los tests validan el registro entero (paletas, ciclos, capas
 // y legibilidad de cada escena).
 
-import { SKY_CYCLES } from './skyClock.js';
+import { SKY_CYCLES, SKY_RULES } from './skyClock.js';
 import { SKY_PALETTES } from './palettes.js';
+import { STORY_DEFS, bindStory } from './stories/index.js';
 
 /** Forma de un id de escena: es lo que se guarda en `levels.scene` (migración 012). */
 export const SCENE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
@@ -39,7 +40,7 @@ export const SCENE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
  * @property {boolean} selectable   Se puede elegir para un nivel (solo ambientes).
  * @property {string} blurb         Una línea que describe el ambiente en el selector.
  * @property {keyof typeof SKY_PALETTES} palette
- * @property {keyof typeof SKY_CYCLES} cycle
+ * @property {keyof typeof SKY_CYCLES | 'story'} cycle  `story`: el ciclo de su historia (T02.6).
  * @property {number} menuHour      Hora del cielo en el menú (y de la muestra del selector).
  * @property {number} horizonRise   Altura del horizonte del cielo sobre el suelo, en
  *   unidades de mundo. 0: el horizonte es la línea del suelo (la cordillera lo tapa
@@ -61,6 +62,8 @@ export const SCENE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
  * @property {number} starRotPerHour  Giro del cielo estrellado (radianes por hora).
  * @property {Array<{ from: number, to: number, x0: number, x1: number, y0: number, y1: number, fadeIn: number, fadeOut: number, size: number }>} luceros
  *   Lucero de la tarde y del alba: horas (continuas), recorrido y fundidos.
+ * @property {object} [story]      Historia de autor ligada a la escena (stories/, T02.6).
+ * @property {boolean} [greenFlash] El destello verde al ponerse y al salir el sol (T02.6).
  * @property {Array<{ type: string, id: string, label: string, color?: string, rim?: number, snowRim?: number, parts?: Array<{ id: string, label: string }>, params?: object }>} layers
  *   Capas del escenario de atrás adelante; `type` elige la implementación
  *   (entities/scenery/index.js) y `parts` nombra lo que se puede apagar dentro
@@ -140,6 +143,21 @@ const RAIN = { type: 'rain', id: 'rain', label: 'Lluvia',
 const LIGHTNING = { type: 'lightning', id: 'lightning', label: 'Relámpagos', params: { seed: 23 } };
 const SNOW = { type: 'snow', id: 'snow', label: 'Nieve',
     params: { count: 150, fallPxS: [26, 64], swayPxS: 14, parallax: [0.12, 0.5], nearShare: 0.4 } };
+
+// One Day (T02.6): la primera historia de autor, sobre la Costa. Sus horas salen
+// del cielo de esta escena (el último instante del sol en SU horizonte), así que
+// se liga aquí, con el sol y el horizonte que va a tener.
+// La luz de una película de piratas (paleta `golden`: teal y oro), el mar del
+// Caribe en azul petróleo, y una luna que cruza la noche de la espera y se pone
+// antes del alba: el regreso es del sol.
+const ONE_DAY_SKY = {
+    id: 'one-day',
+    palette: 'golden',
+    horizonRise: COAST_HORIZON,
+    ...SKY,
+    moon: { ...MOON, rise: 19.6, set: 28.6 },
+};
+const ONE_DAY = bindStory(STORY_DEFS['one-day'], ONE_DAY_SKY);
 
 /** @type {Record<string, SceneDef>} */
 export const SCENES = deepFreeze({
@@ -286,6 +304,38 @@ export const SCENES = deepFreeze({
             { type: 'ground', id: 'ground', label: 'Calle', params: { sprite: 'groundCity' } },
         ],
     },
+    // One Day (T02.6), historia de autor de UN oficial: la de Will y Elizabeth.
+    // La Costa con el horizonte abierto (sin islas ni faro: las islas pasan y
+    // podrían tapar justo el punto donde el sol se pone o sale, y los dos
+    // destellos no pueden depender del azar), un barco que se va con el sol y
+    // vuelve con él, el destello verde y el cabo donde ella espera con su farol.
+    // Solo llega por el manifiesto del catálogo oficial: nunca se puede elegir.
+    'one-day': {
+        ...ONE_DAY_SKY,
+        label: 'El destello verde',
+        kind: 'story',
+        selectable: false,
+        blurb: 'One Day: la despedida en el mar, diez años de espera y el regreso con el destello verde.',
+        cycle: 'story',
+        story: ONE_DAY,
+        greenFlash: true,
+        // Sin partida (panel dev): la despedida, con el barco en el sol.
+        menuHour: 18.7,
+        sea: { deep: '#03222b' },
+        // El barco va detrás del mar (se hunde tras el horizonte); el cabo, delante:
+        // está más cerca, con el pie en el agua.
+        layers: [
+            { type: 'storyShip', id: 'storyShip', label: 'El barco',
+                parts: [{ id: 'storySpray', label: 'Agua y estela' }, { id: 'storyShipLamp', label: 'Luces de popa' }],
+                params: { tracks: ONE_DAY.tracks.ship } },
+            SEA,
+            { type: 'storyCliff', id: 'storyCliff', label: 'El cabo',
+                parts: [{ id: 'storyFigures', label: 'Ella y el hijo' }, { id: 'storyLantern', label: 'El farol' }],
+                params: { tracks: ONE_DAY.tracks.cliff } },
+            CLOUDS,
+            SAND,
+        ],
+    },
 });
 
 export const DEFAULT_SCENE = 'mountains';
@@ -308,6 +358,8 @@ export const SKY_ELEMENTS = Object.freeze([
     Object.freeze({ id: 'lucero', label: 'Lucero', slot: 4 }),
     Object.freeze({ id: 'meteors', label: 'Estrellas fugaces', slot: 5 }),
     Object.freeze({ id: 'haze', label: 'Neblina del horizonte', slot: 6 }),
+    // Solo en escenas con `greenFlash` (las historias que lo usan).
+    Object.freeze({ id: 'greenFlash', label: 'Destello verde', slot: 7 }),
 ]);
 
 /** El filo de luz de las crestas: un elemento propio dentro de las capas `ridge`. */
@@ -354,7 +406,7 @@ export function autoSceneId(level) {
  */
 export function sceneElements(scene) {
     const all = [
-        ...SKY_ELEMENTS.map(({ id, label }) => ({ id, label })),
+        ...SKY_ELEMENTS.filter((e) => e.id !== 'greenFlash' || scene.greenFlash === true).map(({ id, label }) => ({ id, label })),
         ...scene.layers.flatMap((l) => [{ id: l.id, label: l.label }, ...(l.parts ?? []).map(({ id, label }) => ({ id, label }))]),
         ...(scene.layers.some((l) => l.type === 'ridge') ? [RIDGE_RIM_ELEMENT] : []),
     ];
@@ -362,8 +414,9 @@ export function sceneElements(scene) {
     return all.filter((e) => (seen.has(e.id) ? false : seen.add(e.id)));
 }
 
-/** Ciclo de una escena (o el de siempre). */
+/** Ciclo de una escena (o el de siempre). Una historia trae el suyo (T02.6). */
 export function sceneCycle(scene) {
+    if (scene.cycle === 'story' && scene.story) return { kind: 'story', rules: SKY_RULES, story: scene.story };
     return SKY_CYCLES[scene.cycle] ?? SKY_CYCLES.journey;
 }
 

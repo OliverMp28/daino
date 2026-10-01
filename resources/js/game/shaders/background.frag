@@ -18,9 +18,10 @@
 //     uLucero              lucero de la tarde/alba (x, y, alpha, tamaño)
 //     uNight               [0,1] noche cerrada (estrellas fugaces)
 //     uVignette            oscurecimiento de las esquinas
+//     uSunFlash            [0,1] el destello verde (T02.6, historias con greenFlash)
 //     uShow0/uShow1        interruptores del panel dev (1 = se ve):
 //                          sol, halo del sol, luna, estrellas | lucero,
-//                          estrellas fugaces, neblina, (libre)
+//                          estrellas fugaces, neblina, destello verde
 //   Las posiciones del sol, la luna y el lucero llegan en FRACCIÓN DEL CIELO:
 //   y = 0 arriba, 1 en el horizonte (uHorizon las pasa a uv).
 //
@@ -72,6 +73,7 @@ uniform vec3  uSunEdge;
 uniform float uSunSlits;
 uniform vec4  uSunGlow;
 uniform float uSunHalo;
+uniform float uSunFlash;
 uniform vec2  uMoonPos;
 uniform float uMoonRadius;
 uniform vec4  uMoonColor;
@@ -338,16 +340,54 @@ void main(void) {
             vec3 sunCol = mix(uSunCore, uSunEdge, smoothstep(sunPos.y - sunRy, sunPos.y + sunRy, uv.y));
             col = mix(col, sunCol, disc * slit * 0.95);
         }
+
+        // ---------- Destello verde (T02.6: historias con greenFlash) ----------
+        // En el último instante del sol al ponerse en el mar (y en el primero al
+        // salir), lo que queda de él se vuelve verde, un rayo fino de celdas sube
+        // sobre él y el horizonte se enciende en verde. uSunFlash llega a 0 fuera
+        // de ese instante (scenes/skyModel.js), así que en el resto no cuesta nada.
+        // El verde se MEZCLA con el cielo, no se suma: sumado al rojo del ocaso
+        // salía amarillo (verde + rojo = amarillo) y sobre el rosa, blanco.
+        if (uSunFlash > 0.001 && uShow1.w > 0.5) {
+            const vec3 GREEN = vec3(0.30, 1.0, 0.55);       // FLASH_GREEN de skyModel.js
+            const vec3 GREEN_DEEP = vec3(0.10, 0.62, 0.34);
+            float f = uSunFlash;
+            float discG = (1.0 - smoothstep(sunR - 0.008, sunR, d)) * aboveHorizon;
+            col = mix(col, mix(GREEN, vec3(0.85, 1.0, 0.9), 0.25), discG * f * 0.95);
+            vec2 base = vec2(sunPos.x, uHorizon) * uFrame;
+            // El cielo a ras del agua se vuelve verde alrededor del punto.
+            vec2 gq = (px - base) / vec2(uFrame.y * 0.16, uFrame.y * 0.05);
+            float glow = exp(-dot(gq, gq)) * aboveHorizon;
+            col = mix(col, GREEN_DEEP, glow * f * 0.7);
+            col += GREEN * glow * f * 0.18;
+            // La línea del horizonte se enciende en verde a los dos lados (una celda).
+            float hy = (base.y - px.y) / uCell;
+            if (hy >= 0.0 && hy < 1.0) {
+                float along = abs(px.x - base.x) / (uFrame.x * 0.22);
+                col = mix(col, GREEN, exp(-along * along * 3.0) * f * 0.85);
+            }
+            // El rayo: una columna de celdas del arte sobre el sol, tan alta como fuerte es el destello.
+            float cx = abs(floor((px.x - base.x) / uCell + 0.5));
+            float upCells = floor((base.y - px.y) / uCell);
+            float lenCells = floor(0.3 * uFrame.y / uCell * f);
+            if (upCells >= 0.0 && upCells < lenCells && cx <= 1.0) {
+                float fade = 1.0 - upCells / max(lenCells, 1.0);
+                float core = cx < 0.5 ? 1.0 : 0.35;
+                col = mix(col, GREEN, core * fade * fade * f);
+            }
+        }
     }
 
     // ================== EFECTOS ==================
 
     // ---------- Glow del horizonte ----------
     // Solo lo que late: la base del horizonte ya la pone la neblina de la paleta.
+    // Mientras dura el destello verde (T02.6), el horizonte es suyo: en One Day
+    // cae con el drop y con la orquesta entera, y este brillo rosa lo borraba.
     float hd = abs(uv.y - uHorizon);
-    float horizonGlow = exp(-hd * (26.0 - 8.0 * intensity));
+    float horizonGlow = exp(-hd * (26.0 - 8.0 * intensity)) * (1.0 - 0.9 * uSunFlash * uShow1.w);
     col += beatCol * horizonGlow * (bass * 0.55 + pulse * (0.15 + 0.30 * intensity + 0.35 * build) + 0.45 * flash + 0.30 * build);
-    col += highCol * exp(-hd * 60.0) * (high * 0.35 + 0.25 * flash);
+    col += highCol * exp(-hd * 60.0) * (high * 0.35 + 0.25 * flash) * (1.0 - 0.9 * uSunFlash * uShow1.w);
 
     // ---------- Ecualizador pixel desde el suelo (solo partida) ----------
     // Barras DISCRETAS con hueco entre ellas, 3 taps promediados por barra, altura

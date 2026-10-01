@@ -145,11 +145,27 @@ export class GameSession {
             : createBeatClock(obstacleEvents(this.chart).map((e) => e.t), this.chart.music.beatPeriodS);
         this._director = createSongDirector(this.chart);
         // Hora del cielo de cada instante (T01): el plan se ancla a la
-        // estructura del chart, con el ciclo de la escena vigente.
+        // estructura del chart, con el ciclo de la escena vigente. Una historia
+        // de autor (T02.6) lee también sus efectos de estructura (los drops).
         this._sky = planSky(
-            { sections: this.chart.events.filter((e) => e.type === 'section'), durationSec: this._durationSec },
+            {
+                sections: this.chart.events.filter((e) => e.type === 'section'),
+                fx: this.chart.events.filter((e) => e.type === 'fx'),
+                durationSec: this._durationSec,
+            },
             sceneCycle(this.engine.getScene?.() ?? resolveScene()),
         );
+        /** Rótulos de la historia de autor (T02.6): instante de canción, texto y duración. */
+        this._captions = this._sky.story?.captions ?? [];
+        this._captionAt = -1;
+        /**
+         * Sus instantes clave (el destello verde) y sus rótulos: ahí las líneas
+         * de velocidad se apartan.
+         */
+        this._storyHolds = [
+            ...(this._sky.story?.holds ?? []),
+            ...this._captions.map((c) => ({ t0: c.t, t1: c.t + c.holdS })),
+        ];
         /** Epílogo del cielo tras superar el nivel (se pone el sol o sale). */
         this._skyEpilogue = null;
         /** Hora del cielo que se está viendo (de ella arranca el epílogo). */
@@ -497,6 +513,7 @@ export class GameSession {
         this._tunnel.setBeat(pulse);
         this._tickModeCue(shownTime);
 
+        this._tickCaptions(shownTime);
         const fired = this._director.update(shownTime, dt);
         for (let i = 0; i < fired.length; i++) {
             if (fired[i].fx === 'drop') this._triggerMoment(groundY, 1);
@@ -507,8 +524,9 @@ export class GameSession {
         // previa al primer tiempo); en ese primer tiempo, un momento discreto
         // si allí no cae ya un drop o un lift.
         const ups = this._speedCues.update(shownTime);
+        const hush = this._storyHushAt(shownTime);
         for (let i = 0; i < ups.length; i++) {
-            this.engine.setSpeedFx?.({ burst: true });
+            if (hush < 0.5) this.engine.setSpeedFx?.({ burst: true });
             this.hud.bumpGear?.();
             if (!this._momentTimes.some((t) => Math.abs(t - ups[i].at) < 0.05)) this._gearMomentAt = ups[i].at;
         }
@@ -520,8 +538,10 @@ export class GameSession {
         // quedan por encima de él: una raya a la altura del techo se leería
         // como un obstáculo.
         // En un break (Ola 6c) el mundo contiene la respiración: sin líneas de velocidad.
+        // Tampoco en los instantes clave de una historia de autor (T02.6): el
+        // cielo es suyo.
         this.engine.setSpeedFx?.({
-            level: this._speedCues.linesAt(shownTime) * (1 - this._director.calm),
+            level: this._speedCues.linesAt(shownTime) * (1 - this._director.calm) * (1 - hush),
             clearAbove: this._corridorNear(shownTime) ? MODE_FX.linesClearPx : 0,
         });
         this.hud.setGear?.(this._speedCues.gearAt(shownTime), { next: next?.gear ?? null, blink: ahead > 0 && phase < 0.5 });
@@ -649,6 +669,8 @@ export class GameSession {
      *   portal (Ola 6a): lo mismo, con el color del modo que empieza.
      */
     _triggerMoment(groundY, strength, color = DROP_FX.overlayColor) {
+        // Un drop que cae en el destello verde (T02.6) destella en verde.
+        if (color === DROP_FX.overlayColor && (this.engine.getSky?.().flash ?? 0) > DROP_FX.greenFlashMin) color = DROP_FX.greenFlashColor;
         this._dropT = 0;
         this._momentStrength = strength;
         this._momentColor = color;
@@ -989,6 +1011,8 @@ export class GameSession {
         this.engine.setSpeedFx?.({ level: 0, clearAbove: 0 });
         this.hud.setControls?.(false);
         this.hud.setMode?.({ state: '', label: '', hint: '' });
+        this.hud.setCaption?.('');
+        this._captionAt = -1;
         if (reason !== 'win') this.hud.setBanner?.('');
 
         // Bloque 7: persistir progreso fire-and-forget si hay levelId
@@ -1037,6 +1061,34 @@ export class GameSession {
         }));
 
         this.onGameOver({ reason, score: this._score });
+    }
+
+    /**
+     * Cuánto se apartan los efectos en un instante clave de la historia (T02.6):
+     * 1 dentro de su ventana (cámara lenta o rótulo), con medio segundo de rampa a
+     * cada lado.
+     */
+    _storyHushAt(t) {
+        let hush = 0;
+        for (let i = 0; i < this._storyHolds.length; i++) {
+            const h = this._storyHolds[i];
+            const k = Math.min((t - h.t0 + 0.5) / 0.5, (h.t1 + 0.5 - t) / 0.5);
+            if (k > hush) hush = Math.min(1, k);
+        }
+        return hush;
+    }
+
+    /** Rótulos de la historia (T02.6): cada uno a su instante de canción, unos segundos. */
+    _tickCaptions(t) {
+        if (this._captions.length === 0) return;
+        let active = -1;
+        for (let i = 0; i < this._captions.length; i++) {
+            const c = this._captions[i];
+            if (t >= c.t && t < c.t + c.holdS) active = i;
+        }
+        if (active === this._captionAt) return;
+        this._captionAt = active;
+        this.hud.setCaption?.(active >= 0 ? this._captions[active].text : '');
     }
 
     /** Epílogo del cielo bajo el panel de resultados, con arranque y llegada suaves. */

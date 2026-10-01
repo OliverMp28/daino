@@ -13,6 +13,7 @@
 // altura del cielo (0 arriba, 1 el horizonte). El engine las pasa a uv con la
 // línea del suelo de la vista, así que valen para cualquier pantalla.
 
+import { GROUND_OFFSET_PX, WORLD_VIEW } from '../config.js';
 import { hexToRgb, oklabToRgb, rgbToOklab } from './color.js';
 import { SKY_PALETTES, createPaletteSample, samplePalette } from './palettes.js';
 import { arcAt } from './weather.js';
@@ -35,6 +36,22 @@ export const SKY_PHASES = Object.freeze({
  *   hazeK   Caída de la neblina desde el horizonte (e^(−k·distancia)).
  */
 export const SKY_SHAPE = Object.freeze({ midAt: 0.5, hazeK: 14 });
+
+/**
+ * Bajo el horizonte el sol baja esta fracción del cielo por grado: con el disco
+ * grande del ocaso sigue asomando hasta unos −4° (en la Costa, sobre el mar).
+ */
+const SUN_BELOW_PER_DEG = 0.032;
+
+/**
+ * El destello verde (T02.6, historias con `greenFlash`): en el último instante
+ * del sol al ponerse en el mar, y en el primero al salir, su filo se vuelve
+ * verde y un rayo fino sube un momento. Grados de elevación a cada lado del
+ * instante en que el filo toca el horizonte: `sliver` con el filo aún a la vista
+ * (el sol se va o acaba de salir) y `ray` con el sol ya oculto (el rayo sigue un
+ * poco al ponerse; se anticipa un poco al salir).
+ */
+export const GREEN_FLASH = Object.freeze({ sliver: 0.35, ray: 0.28 });
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -96,7 +113,8 @@ export function createSkyState() {
         /** [0,1] cuánto es noche cerrada (0 con el sol a −8°, 1 a −14°). */
         night: 0,
         sky: { top: f3(), mid: f3(), horizon: f3(), haze: f4() },
-        sun: { pos: f2(), radius: 0, core: f3(), edge: f3(), slits: 0, glow: f4(), halo: 0 },
+        /** `flash`: el destello verde [0,1] (solo escenas con `greenFlash`, T02.6). */
+        sun: { pos: f2(), radius: 0, core: f3(), edge: f3(), slits: 0, glow: f4(), halo: 0, flash: 0 },
         moon: { pos: f2(), radius: 0, color: f4(), light: 0 },
         stars: { vis: 0, rot: 0 },
         /** Lucero: x, y (fracción del cielo), alpha, tamaño en celdas del arte. */
@@ -164,7 +182,7 @@ export function skyStateAt(hour, scene, out) {
     // franja donde se juega solo lo tiene detrás en la hora dorada.
     const dayT = (wrapHour(hour) - sun.rise) / (sun.set - sun.rise);
     out.sun.pos[0] = sun.riseX + (sun.setX - sun.riseX) * Math.max(-0.05, Math.min(1.05, dayT));
-    out.sun.pos[1] = elev >= 0 ? arcY(elev / sun.maxElev, sun.peak, sun.curve) : 1 + (-elev / 10) * 0.32;
+    out.sun.pos[1] = elev >= 0 ? arcY(elev / sun.maxElev, sun.peak, sun.curve) : 1 + -elev * SUN_BELOW_PER_DEG;
     out.sun.radius = p.sunSize;
     out.sun.core.set(p.sunCore);
     out.sun.edge.set(p.sunEdge);
@@ -176,6 +194,7 @@ export function skyStateAt(hour, scene, out) {
     out.sun.glow[2] = p.sunGlow[2] * presence;
     out.sun.glow[3] = p.sunGlowAmt;
     out.sun.halo = p.sunHalo;
+    out.sun.flash = scene.greenFlash ? greenFlashAt(elev, p.sunSize, scene) : 0;
 
     // ---------- Luna ----------
     // Sale tras el ocaso por la izquierda (fuera de la columna del Dino), cruza
@@ -236,6 +255,67 @@ export function skyStateAt(hour, scene, out) {
     weatherColorsAt(out);
     if (scene.sea) seaStateAt(out, scene.sea);
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// El filo del sol en el horizonte y el destello verde (T02.6)
+
+/**
+ * Horizonte del cielo de una escena en la vista de referencia, en fracción del
+ * alto de pantalla (el uHorizon del shader en un 16:9). El disco del sol se mide
+ * en altos de pantalla: con él se sabe cuándo su filo toca el horizonte.
+ */
+export function horizonScreenFrac(scene) {
+    const H = WORLD_VIEW.targetHeight;
+    return (H - GROUND_OFFSET_PX - (scene.horizonRise ?? 0)) / H;
+}
+
+/**
+ * Grados bajo el horizonte a los que el filo de arriba del sol toca la línea del
+ * horizonte (con el sol de radio `radius`, en altos de pantalla): por debajo ya
+ * no se ve nada de él.
+ */
+export function sunLimbDepth(scene, radius) {
+    return radius / (SUN_BELOW_PER_DEG * horizonScreenFrac(scene));
+}
+
+/** Destello verde [0,1] con el sol a `elev` grados y radio `radius`. */
+function greenFlashAt(elev, radius, scene) {
+    const v = -elev - sunLimbDepth(scene, radius);   // < 0: aún asoma un filo; > 0: oculto
+    const k = v < 0 ? 1 + v / GREEN_FLASH.sliver : 1 - v / GREEN_FLASH.ray;
+    if (k <= 0) return 0;
+    return k * k * (3 - 2 * k);
+}
+
+/**
+ * Hora (en [0, 24)) del último instante en que se ve el sol al ponerse
+ * (`'set'`) o del primero en que asoma al salir (`'rise'`), en el horizonte de
+ * la escena: la del destello verde. Por bisección sobre el modelo del cielo.
+ *
+ * @param {import('./registry.js').SceneDef} scene
+ * @param {'set' | 'rise'} which
+ */
+export function sunLimbHour(scene, which) {
+    const { sun } = scene;
+    const sample = createPaletteSample();
+    const palette = SKY_PALETTES[scene.palette];
+    // Positivo mientras se ve algo del sol.
+    const shows = (h) => {
+        const elev = sunElevation(h, sun);
+        const radius = samplePalette(palette, elev, sunRising(h, sun), sample).sunSize;
+        return sunLimbDepth(scene, radius) + elev;
+    };
+    // El sol se oculta entre la puesta y 2 h después; asoma entre 2 h antes de
+    // la salida y la salida.
+    let a = which === 'set' ? sun.set : sun.rise - 2;
+    let b = which === 'set' ? sun.set + 2 : sun.rise;
+    for (let i = 0; i < 40; i++) {
+        const m = (a + b) / 2;
+        const visible = shows(m) > 0;
+        if ((which === 'set') === visible) a = m;
+        else b = m;
+    }
+    return (a + b) / 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +407,9 @@ function weatherColorsAt(out) {
 // ---------------------------------------------------------------------------
 // El mar (T02.2)
 
+/** El verde del destello (el mismo que pinta el shader). */
+export const FLASH_GREEN = Object.freeze([0.3, 1, 0.55]);
+
 /**
  * Cuánto se parece el mar al cielo que refleja: casi todo en el horizonte (a
  * ras del agua refleja mucho) y poco en la orilla, donde se ve el agua de verdad.
@@ -394,6 +477,13 @@ function seaStateAt(out, sea) {
     const g = out.sea.sunGlint;
     for (let i = 0; i < 3; i++) g[i] = out.sun.core[i] + (out.sun.edge[i] - out.sun.core[i]) * 0.45;
     g[3] = sunIn * (0.3 + 0.62 * low);
+    // El destello verde también en el agua: la columna del reflejo se enciende en
+    // verde aunque el sol ya casi no se vea.
+    const flash = out.sun.flash;
+    if (flash > 0) {
+        for (let i = 0; i < 3; i++) g[i] += (FLASH_GREEN[i] - g[i]) * flash;
+        g[3] = Math.max(g[3], 0.75 * flash);
+    }
 
     // Reflejo de la luna: tanto como la luz que da.
     const m = out.sea.moonGlint;

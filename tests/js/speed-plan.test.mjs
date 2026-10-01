@@ -206,7 +206,7 @@ test('regresión del playtest: What\'s Up Danger (Extremo) no vuelve a la base d
     assert.ok(report.climax.t0 > dur * 0.6, 'el clímax llega en el tramo final');
 });
 
-test('los 8 oficiales × 5 dificultades: las canciones de más de 2:30 aceleran varias veces y el clímax acelera', async () => {
+test('los oficiales × 5 dificultades: las canciones de más de 2:30 aceleran varias veces y el clímax acelera', async () => {
     const dir = path.join(ROOT, 'database/seeds/official/baked');
     const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
     for (const file of files) {

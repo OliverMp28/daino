@@ -171,7 +171,7 @@ test('después del clímax nada iguala su nivel', () => {
     }
 });
 
-test('los 8 oficiales: un clímax por canción en la segunda mitad y los tramos cubren todos los compases', async () => {
+test('los oficiales: un clímax por canción en la segunda mitad y los tramos cubren todos los compases', async () => {
     const { readFile, readdir } = await import('node:fs/promises');
     const path = await import('node:path');
     const { fileURLToPath } = await import('node:url');

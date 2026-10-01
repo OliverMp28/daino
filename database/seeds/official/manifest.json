@@ -9,6 +9,7 @@
         { "slug": "time", "file": "Time.mp3", "title": "Time", "artist": null, "difficulty": 2 },
         { "slug": "mi-fiesta", "file": "Mi Fiesta.mp3", "title": "Mi Fiesta", "artist": null, "difficulty": 4 },
         { "slug": "dawn-of-faith", "file": "Dawn of Faith - Eternal Eclipse.mp3", "title": "Dawn of Faith", "artist": "Eternal Eclipse", "difficulty": 4 },
-        { "slug": "whats-up-danger", "file": "What`s Up Danger.mp3", "title": "What's Up Danger", "artist": null, "difficulty": 5 }
+        { "slug": "whats-up-danger", "file": "What`s Up Danger.mp3", "title": "What's Up Danger", "artist": null, "difficulty": 5 },
+        { "slug": "one-day", "file": "One Day (Hans Zimmer).mp3", "title": "One Day", "artist": "Hans Zimmer", "difficulty": 1, "scene": "one-day" }
     ]
 }

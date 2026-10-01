@@ -244,14 +244,197 @@ const LATE_MORNING = {
     top: '#3068d0', mid: '#2045b8', horizon: '#2a459c', haze: '#cfe0ff', hazeAmt: 0.035,
 };
 
+// ---------------------------------------------------------------------------
+// La paleta "dorada" de One Day (T02.6): la luz de una película de piratas.
+//
+// Teal y oro en vez de neón: el día es un azul marino algo verdoso, el ocaso es
+// ámbar y óxido con un sol de oro SIN rendijas (las rendijas son synthwave), la
+// noche es azul petróleo y el alba, rosa y oro. Las mismas restricciones que la
+// synthwave (el guardián las mide): la franja jugable del cielo se queda oscura
+// y la luz dorada la ponen el disco, su halo, las nubes y el reflejo del mar.
+// Por eso el horizonte del ocaso es óxido profundo y no naranja claro.
+
+/** Pleno día: azul marino con un punto verdoso, nubes de un blanco cálido. */
+const G_NOON = {
+    ...NOON,
+    top: '#2f6cc0', mid: '#1b4a9a', horizon: '#244c7e', haze: '#d9ecff', hazeAmt: 0.04,
+    sunCore: '#fffbf0', sunEdge: '#fff2c8', sunGlow: '#fff1d0',
+    cloudBody: '#f4f1ea', cloudRimBottom: '#b9b0a0', cloudCover: 0.6,
+    far: '#20406e', near: '#152c4c', rim: '#ffe9c0',
+};
+
+/** Tarde: el oro empieza en la neblina. */
+const G_AFTERNOON = {
+    ...G_NOON,
+    elev: 30,
+    top: '#2c66b8', mid: '#1b4794', horizon: '#2a4a78', haze: '#ffdcaa', hazeAmt: 0.06,
+    sunGlow: '#ffe6b8', sunSize: 0.052, sunGlowAmt: 0.24,
+    cloudRimBottom: '#e8c8a0', cloudRimBottomAmt: 0.45,
+    far: '#22406a', near: '#16304e', rim: '#ffe2b0', rimAmt: 0.05,
+};
+
+/** Media mañana: como la tarde, con la neblina aún fría. */
+const G_LATE_MORNING = {
+    ...G_AFTERNOON,
+    elev: 24,
+    haze: '#d9ecff', hazeAmt: 0.035, rimAmt: 0,
+};
+
+/** Última tarde: la luz se vuelve oro; nubes color crema con los bajos encendidos. */
+const G_LATE_AFTERNOON = {
+    ...G_AFTERNOON,
+    elev: 16,
+    top: '#2b5ca8', mid: '#23448a', horizon: '#3c4870', haze: '#ffc880', hazeAmt: 0.07,
+    sunCore: '#fff4d0', sunEdge: '#ffd27a', sunGlow: '#ffd88c', sunSize: 0.06, sunHalo: 0.5, sunGlowAmt: 0.32,
+    cloudBody: '#e8dcc8', cloudRimTop: '#fff4dc', cloudRimTopAmt: 0.8, cloudRimBottom: '#ffbf70', cloudRimBottomAmt: 0.55, cloudCover: 0.7,
+    far: '#2c3f66', near: '#1d2c48', rim: '#ffcf8a', rimAmt: 0.2,
+    ground: '#fff4e6',
+};
+
+/** Hora dorada: el sol crece y se vuelve oro viejo; el horizonte se calienta. */
+const G_GOLDEN = {
+    ...G_LATE_AFTERNOON,
+    elev: 9,
+    top: '#2a4c94', mid: '#3c3a78', horizon: '#5c3438', haze: '#ffa65a', hazeAmt: 0.07,
+    sunCore: '#ffefb0', sunEdge: '#ffb04a', sunGlow: '#ffb860', sunSize: 0.078, sunHalo: 0.55, sunGlowAmt: 0.36,
+    cloudBody: '#c9a690', cloudRimTop: '#ffe2b0', cloudRimTopAmt: 0.45, cloudRimBottom: '#ffa85a', cloudRimBottomAmt: 0.85, cloudCover: 0.8,
+    far: '#3b3354', near: '#272238', rim: '#ffae5a', rimAmt: 0.5,
+    ground: '#fff0e0',
+    vignette: 0.16,
+};
+
+/** Ocaso: un sol de oro enorme sobre el mar; el cielo, de índigo a óxido. */
+const G_SUNSET = {
+    ...G_GOLDEN,
+    elev: 4.5,
+    top: '#1a1a4a', mid: '#461c3e', horizon: '#702a1c', haze: '#ff8a3a', hazeAmt: 0.07,
+    sunCore: '#fff1b8', sunEdge: '#ff8a2e', sunGlow: '#ff9a40', sunSize: 0.105, sunHalo: 0.5, sunGlowAmt: 0.4,
+    stars: 0.04,
+    cloudBody: '#4a2a3e', cloudRimTop: '#ffb07a', cloudRimTopAmt: 0.15, cloudRimBottom: '#ffb050', cloudRimBottomAmt: 0.95, cloudCover: 0.85,
+    far: '#3a2030', near: '#241420', rim: '#ff9a4a', rimAmt: 0.7,
+    ground: '#ffe0cc',
+    vignette: 0.2,
+};
+
+/** El sol ya en el agua: queda el oro del resplandor. */
+const G_SUN_DOWN = {
+    ...G_SUNSET,
+    elev: 0,
+    top: '#171640', mid: '#3c1a3a', horizon: '#622418', haze: '#ff7030', hazeAmt: 0.07,
+    sunCore: '#ffe2a0', sunEdge: '#ff7a28', sunGlow: '#ff8a3a', sunSize: 0.108, sunHalo: 0.45, sunGlowAmt: 0.36,
+    stars: 0.1,
+    cloudBody: '#3a2034', cloudRimBottom: '#ff8a4a', cloudRimBottomAmt: 0.8, cloudRimTopAmt: 0.1, cloudCover: 0.8,
+    far: '#301a28', near: '#1f121c', rim: '#ff8040', rimAmt: 0.5,
+    ground: '#ffd8c8',
+};
+
+/** Brasas en el horizonte: aquí cae el destello verde, sobre su complementario. */
+const G_BLUE_HOUR = {
+    ...G_SUN_DOWN,
+    elev: -4,
+    top: '#10123a', mid: '#281838', horizon: '#4a1c1c', haze: '#d04a2a', hazeAmt: 0.09,
+    sunHalo: 0, sunGlowAmt: 0,
+    stars: 0.4,
+    cloudBody: '#28182e', cloudRimTop: '#8a7ab0', cloudRimTopAmt: 0.1, cloudRimBottom: '#d0603a', cloudRimBottomAmt: 0.45, cloudCover: 0.7,
+    far: '#24162a', near: '#170e1c', rim: '#d06040', rimAmt: 0.25,
+    ground: '#eadcff',
+    vignette: 0.24,
+};
+
+/** Noche cerrada: azul petróleo, la luz de la luna en los filos. */
+const G_NIGHT = {
+    ...NIGHT,
+    top: '#03060f', mid: '#06101e', horizon: '#0c1c2c', haze: '#14324a', hazeAmt: 0.25,
+    sunCore: '#ffd9a0', sunEdge: '#ff7a28', sunGlow: '#ff8a3a', sunSlits: 0,
+    cloudBody: '#101828', cloudRimTop: '#8fa8d0', cloudRimTopAmt: 0.35, cloudRimBottom: '#3a4a6a', cloudCover: 0.45,
+    far: '#0e1826', near: '#09101c', rim: '#8fb0d8', rimAmt: 0.25,
+};
+
+/** Crepúsculo: lo último del rojo, ya casi de noche. */
+const G_DUSK = {
+    ...G_NIGHT,
+    elev: -9,
+    top: '#08102a', mid: '#121a3a', horizon: '#2a1a2a', haze: '#6a2a3a', hazeAmt: 0.18,
+    stars: 0.8,
+    cloudBody: '#18182e', cloudRimTop: '#7a8ac0', cloudRimTopAmt: 0.2, cloudRimBottom: '#6a3a5a', cloudRimBottomAmt: 0.2, cloudCover: 0.55,
+    far: '#141a32', near: '#0d1124', rim: '#7a8ac0', rimAmt: 0.15,
+    ground: '#e4e8ff',
+};
+
+/** Primera luz: el horizonte se aclara en azul petróleo. */
+const G_FIRST_LIGHT = {
+    ...G_NIGHT,
+    elev: -12,
+    top: '#050c1e', mid: '#0a1a34', horizon: '#16304e', haze: '#2a5a7a', hazeAmt: 0.2,
+    stars: 0.7,
+    cloudBody: '#14203a', cloudRimTop: '#7a90c0', cloudRimTopAmt: 0.2, cloudRimBottom: '#4a6a9a', cloudRimBottomAmt: 0.2, cloudCover: 0.5,
+    far: '#121c34', near: '#0c1428', rim: '#6a8ac0', rimAmt: 0.15,
+    ground: '#e4eaff',
+};
+
+/** Alba que se vuelve rosa: aquí vuelve el destello verde. */
+const G_BLUE_DAWN = {
+    ...G_FIRST_LIGHT,
+    elev: -6,
+    top: '#0c1a40', mid: '#1c2a58', horizon: '#46304c', haze: '#ff9a8a', hazeAmt: 0.09,
+    stars: 0.3,
+    cloudBody: '#34345e', cloudRimTop: '#a8b4e0', cloudRimTopAmt: 0.2, cloudRimBottom: '#ffa898', cloudRimBottomAmt: 0.6, cloudCover: 0.6,
+    far: '#202650', near: '#151a3c', rim: '#ffa0a0', rimAmt: 0.3,
+    ground: '#f0e4ff',
+    vignette: 0.22,
+};
+
+/** Alba rosa y oro: el sol está a punto de salir. */
+const G_PINK_DAWN = {
+    ...G_BLUE_DAWN,
+    elev: -1.5,
+    top: '#16285e', mid: '#33306e', horizon: '#62303e', haze: '#ffb08a', hazeAmt: 0.09,
+    sunCore: '#ffeab0', sunEdge: '#ff9a6a', sunGlow: '#ffb890', sunSize: 0.1, sunSlits: 0, sunHalo: 0.3, sunGlowAmt: 0.26,
+    stars: 0.06,
+    cloudBody: '#6a5a8a', cloudRimTop: '#ffd8d0', cloudRimTopAmt: 0.3, cloudRimBottom: '#ffc090', cloudRimBottomAmt: 0.9, cloudCover: 0.7,
+    far: '#2c2a5a', near: '#1c1c42', rim: '#ffb08a', rimAmt: 0.55,
+    ground: '#ffe8ee',
+    vignette: 0.18,
+};
+
+/** Sale el sol: un disco de oro limpio. */
+const G_SUNRISE = {
+    ...G_PINK_DAWN,
+    elev: 3.5,
+    top: '#203c94', mid: '#38347e', horizon: '#643a40', haze: '#ffc080', hazeAmt: 0.09,
+    sunCore: '#fff0c0', sunEdge: '#ffa860', sunGlow: '#ffc080', sunSize: 0.098, sunHalo: 0.4, sunGlowAmt: 0.26,
+    stars: 0,
+    cloudBody: '#b0a0c0', cloudRimTop: '#fff2e0', cloudRimTopAmt: 0.4, cloudRimBottom: '#ffd0a0', cloudRimBottomAmt: 0.9, cloudCover: 0.75,
+    far: '#30366e', near: '#20264e', rim: '#ffc080', rimAmt: 0.6,
+    ground: '#fff0f0',
+    vignette: 0.16,
+};
+
+/** Primera mañana: luz blanca y dorada. */
+const G_MORNING = {
+    ...G_NOON,
+    elev: 14,
+    top: '#2a5cb4', mid: '#24449a', horizon: '#34467a', haze: '#ffd8a8', hazeAmt: 0.05,
+    sunCore: '#fff6dc', sunEdge: '#ffd48c', sunGlow: '#ffe4b8', sunSize: 0.07, sunHalo: 0.45, sunGlowAmt: 0.18,
+    cloudBody: '#e4e0f0', cloudRimTop: '#ffffff', cloudRimTopAmt: 0.6, cloudRimBottom: '#ffd8b8', cloudRimBottomAmt: 0.6, cloudCover: 0.65,
+    far: '#2a3c70', near: '#1c2c56', rim: '#ffd8b0', rimAmt: 0.25,
+    ground: '#fff6f6',
+    vignette: 0.14,
+};
+
 /**
- * La paleta synthwave de la escena "Cordillera": día azul intenso, ocaso
- * synthwave y noche de neón.
+ * Paletas por nombre (el `palette` de una escena).
+ *   synthwave  La de siempre: día azul intenso, ocaso synthwave y noche de neón.
+ *   golden     La de One Day (T02.6): teal y oro, sol sin rendijas.
  */
 export const SKY_PALETTES = Object.freeze({
     synthwave: compilePalette({
         evening: [NIGHT, DUSK, BLUE_HOUR, SUN_DOWN, SUNSET, GOLDEN, LATE_AFTERNOON, AFTERNOON, NOON],
         morning: [NIGHT, FIRST_LIGHT, BLUE_DAWN, PINK_DAWN, SUNRISE, MORNING, LATE_MORNING, AFTERNOON, NOON],
+    }),
+    golden: compilePalette({
+        evening: [G_NIGHT, G_DUSK, G_BLUE_HOUR, G_SUN_DOWN, G_SUNSET, G_GOLDEN, G_LATE_AFTERNOON, G_AFTERNOON, G_NOON],
+        morning: [G_NIGHT, G_FIRST_LIGHT, G_BLUE_DAWN, G_PINK_DAWN, G_SUNRISE, G_MORNING, G_LATE_MORNING, G_AFTERNOON, G_NOON],
     }),
 });
 

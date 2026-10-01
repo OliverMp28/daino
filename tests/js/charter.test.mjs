@@ -479,10 +479,11 @@ test('canciones extremas: vacía, muy corta o sin golpes no rompen', () => {
     assert.ok(v.ok);
 });
 
-test('los 8 oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos y con dinámica', async () => {
+test('los oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos y con dinámica', async () => {
     const dir = path.join(ROOT, 'database/seeds/official/baked');
     const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
-    assert.equal(files.length, 8);
+    const manifest = JSON.parse(await readFile(path.join(ROOT, 'database/seeds/official/manifest.json'), 'utf8'));
+    assert.equal(files.length, manifest.levels.length, 'un horneado por oficial del manifiesto');
     for (const file of files) {
         const baked = JSON.parse(await readFile(path.join(dir, file), 'utf8'));
         const analysis = baked.analysis;
@@ -503,7 +504,7 @@ test('los 8 oficiales reales × 5 dificultades: jugables, en rejilla, sin avisos
     }
 });
 
-test('música: fuera del pulso solo hay acción sobre un golpe que se oye (8 oficiales × 5 dificultades)', async () => {
+test('música: fuera del pulso solo hay acción sobre un golpe que se oye (oficiales × 5 dificultades)', async () => {
     // Segundo playtest de la dificultad: en la zona roja de What's Up Danger 17 de
     // 72 inversiones caían en contratiempos sin golpe ("no lo sentí acorde a la
     // canción"). Un pulso sin golpe sigue valiendo (el pulso se siente aunque el

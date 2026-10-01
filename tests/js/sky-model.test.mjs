@@ -138,7 +138,8 @@ test('registro de escenas: paletas, ciclos, capas y elementos con nombre', () =>
     const layerTypes = readFileSync(path.join(ROOT, 'resources/js/game/entities/scenery/index.js'), 'utf8');
     for (const sc of Object.values(SCENES)) {
         assert.ok(SKY_PALETTES[sc.palette], `${sc.id}: paleta ${sc.palette}`);
-        assert.ok(SKY_CYCLES[sc.cycle], `${sc.id}: ciclo ${sc.cycle}`);
+        // Una historia de autor (T02.6) trae su ciclo ligado a la escena.
+        assert.ok(sc.cycle === 'story' ? sc.story?.moments?.length > 0 : SKY_CYCLES[sc.cycle], `${sc.id}: ciclo ${sc.cycle}`);
         for (const l of sc.layers) {
             // En el bundle (`tipo: createX`) o bajo demanda (`tipo: () => import(...)`, T02.1).
             assert.match(layerTypes, new RegExp(`\\b${l.type}: (create|\\(\\) => import\\()`), `${sc.id}: sin implementación para la capa "${l.type}"`);

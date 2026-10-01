@@ -494,6 +494,12 @@ export const DROP_FX = Object.freeze({
     waveBursts: 6,
     /** Un "lift" (subir un nivel hacia el empuje): fondo al 50 %, sin destello ni golpe. */
     liftStrength: 0.5,
+    /**
+     * Un drop que cae en el destello verde de una historia (T02.6) destella en su
+     * verde (FLASH_GREEN de scenes/skyModel.js) si el destello va por encima de esto.
+     */
+    greenFlashMin: 0.15,
+    greenFlashColor: 0x4dff8c,
 });
 
 /**

@@ -489,7 +489,7 @@ test('determinismo con modos: mismo análisis, seed y dificultad ⇒ mismo chart
     }
 });
 
-test('los 8 oficiales × 5 dificultades: jugables, con momentos contados y distintos de una canción a otra', async () => {
+test('los oficiales × 5 dificultades: jugables, con momentos contados y distintos de una canción a otra', async () => {
     const dir = path.join(ROOT, 'database/seeds/official/baked');
     const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
     const signatures = new Set();

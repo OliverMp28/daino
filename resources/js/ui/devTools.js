@@ -16,6 +16,11 @@
 //   "la neblina del horizonte" es la misma cosa para quien juega y para quien
 //   programa).
 //
+//   Historia (T02.6) — con una escena de historia de autor: un botón por cada
+//   momento de su relato (pone el cielo a su hora: el barco, el cabo y el
+//   destello están donde toca) y "Recorrer la historia", que la cuenta entera en
+//   unos segundos al ritmo de su propio plan (con su cámara lenta).
+//
 // El panel no se engancha a la sesión ni a AppController: lee `window.__daino`
 // (engine y sesión) cuando lo necesita, así que funciona a mitad de partida y
 // sobrevive a un reintento o a cambiar de nivel.
@@ -23,13 +28,17 @@
 // Flotante en la esquina, colapsado por defecto (un botón redondo); z-index por
 // debajo de un `<dialog>` (top layer) pero por encima del HUD.
 
-import { SCENES, DEFAULT_SCENE, resolveScene, sceneElements } from '../game/scenes/registry.js';
+import { SCENES, DEFAULT_SCENE, resolveScene, sceneCycle, sceneElements } from '../game/scenes/registry.js';
 import { SKY_PHASES } from '../game/scenes/skyModel.js';
+import { planSky } from '../game/scenes/skyClock.js';
 
 const PANEL_ID = 'daino-devtools';
 
 /** Recorrido de "Recorrer el ciclo": de la tarde del nivel al sol ya alto. */
 const TOUR = Object.freeze({ from: 14.5, to: 31, seconds: 24 });
+
+/** "Recorrer la historia": su plan con una canción sin estructura de esta duración. */
+const STORY_TOUR_S = 48;
 
 /** 'HH:MM' de una hora continua (las 29 son las 05:00). */
 function clock(hour) {
@@ -206,6 +215,70 @@ export function mountDevTools() {
     renderElements(DEFAULT_SCENE);
     panel.appendChild(elementsBox);
 
+    // ---------- Historia (T02.6) ----------
+    const storyBox = el('div', 'daino-devtools__story');
+    let storyTourRaf = 0;
+    function stopStoryTour() {
+        if (storyTourRaf === 0) return;
+        cancelAnimationFrame(storyTourRaf);
+        storyTourRaf = 0;
+        if (!fix.checked) window.__daino.sky.hour = null;
+        renderStory(sceneSelect.value);
+    }
+    function jumpTo(hour) {
+        stopTour();
+        stopStoryTour();
+        fix.checked = true;
+        slider.value = String(((hour % 24) + 24) % 24);
+        // Hora continua: la historia distingue las 5:51 de su regreso de las de otro día.
+        window.__daino.sky.hour = hour;
+        sliderValue.textContent = clock(hour);
+    }
+    function renderStory(sceneId) {
+        storyBox.replaceChildren();
+        const scene = resolveScene(sceneId);
+        if (scene.kind !== 'story' || !scene.story) return;
+        storyBox.appendChild(el('p', 'daino-devtools__heading', `HISTORIA · ${scene.label}`));
+        const placed = window.__daino.session?._sky?.story?.id === scene.story.id ? window.__daino.session._sky.story.moments : null;
+        for (const m of scene.story.moments) {
+            const at = placed?.find((x) => x.id === m.id);
+            const b = el('button', 'daino-devtools__button', `${m.label} · ${clock(m.hour)}${at ? ` (${songClock(at.t)})` : ''}`);
+            b.type = 'button';
+            b.addEventListener('click', () => jumpTo(m.hour));
+            storyBox.appendChild(b);
+        }
+        const play = el('button', 'daino-devtools__button', storyTourRaf ? '■ Parar' : '▶ Recorrer la historia');
+        play.type = 'button';
+        play.addEventListener('click', () => {
+            if (storyTourRaf !== 0) {
+                stopStoryTour();
+                return;
+            }
+            stopTour();
+            const plan = planSky({ durationSec: STORY_TOUR_S, sections: [], fx: [] }, sceneCycle(scene));
+            const ep = plan.epilogue(plan.hourAt(STORY_TOUR_S));
+            const t0 = performance.now();
+            play.textContent = '■ Parar';
+            const step = (now) => {
+                const t = (now - t0) / 1000;
+                window.__daino.sky.hour = t <= STORY_TOUR_S
+                    ? plan.hourAt(t)
+                    : ep.from + (ep.to - ep.from) * Math.min(1, (t - STORY_TOUR_S) / Math.max(1, ep.durationS));
+                if (t >= STORY_TOUR_S + ep.durationS) {
+                    storyTourRaf = 0;
+                    if (!fix.checked) window.__daino.sky.hour = null;
+                    renderStory(sceneSelect.value);
+                    return;
+                }
+                storyTourRaf = requestAnimationFrame(step);
+            };
+            storyTourRaf = requestAnimationFrame(step);
+        });
+        storyBox.appendChild(play);
+    }
+    sceneSelect.addEventListener('change', () => renderStory(sceneSelect.value));
+    panel.appendChild(storyBox);
+
     // Lectura: hora y fase del cielo, y el plan del nivel en curso.
     let readTimer = 0;
     function refresh() {
@@ -222,9 +295,13 @@ export function mountDevTools() {
         if (sky?.sceneId && sky.sceneId !== sceneSelect.value && document.activeElement !== sceneSelect) {
             sceneSelect.value = sky.sceneId;
             renderElements(sky.sceneId);
+            renderStory(sky.sceneId);
         }
+        const story = window.__daino.session?._sky?.story;
         const ev = window.__daino.session?._sky?.events;
-        if (ev) {
+        if (story) {
+            planLine.textContent = story.moments.filter((m) => m.t > 0 && m.id !== 'end').map((m) => `${m.label} ${songClock(m.t)}`).join(' · ');
+        } else if (ev) {
             const parts = [['Atardecer', ev.eveningStart], ['Noche', ev.nightfall], ['Alba', ev.dawnStart]]
                 .filter(([, t]) => t !== null && t !== undefined)
                 .map(([name, t]) => `${name} ${songClock(t)}`);

@@ -578,8 +578,9 @@ dialog.daino-modal .modal-footer {
     padding: 0;
     border: 1px solid color-mix(in oklch, var(--color-daino-fg) 16%, transparent);
     border-radius: 0.7rem;
-    background: color-mix(in oklch, var(--color-daino-bg-deep) 55%, transparent);
-    backdrop-filter: blur(6px);
+    /* Sin backdrop-filter: sobre el lienzo, que cambia cada fotograma, el blur se
+       recalcula siempre y en una GPU integrada cuesta fotogramas (T02.6). */
+    background: color-mix(in oklch, var(--color-daino-bg-deep) 74%, transparent);
     color: var(--color-daino-fg);
     cursor: pointer;
     opacity: 0.8;
@@ -717,7 +718,6 @@ kbd,
     height: 100%;
     background: var(--color-daino-fg);
     border-radius: 999px;
-    transition: width 100ms linear;
 }
 
 .daino-hud__song {
@@ -734,13 +734,29 @@ kbd,
 /* Ola 5 — el HUD sigue la estructura de la canción.
  * Clímax: la barra de progreso se enciende y late; es el tramo final y se ve.
  * "¡Superado!": ya no quedan obstáculos y la canción termina de sonar. */
+/* El ancho avanza a pasos de 0.1 % sin transición: una transición de ancho que
+   se reinicia cada pocos fotogramas era maquetar y repintar sin parar (T02.6). */
 .daino-hud__progress-fg {
-    transition: width 100ms linear, background-color 400ms ease-out, box-shadow 400ms ease-out;
+    position: relative;
+    transition: background-color 400ms ease-out, box-shadow 400ms ease-out;
 }
 
+/* Los efectos del HUD en partida solo animan opacidad, transformaciones o color:
+   un filter (brightness, drop-shadow) o un backdrop-filter obliga a la GPU a otra
+   pasada por elemento y fotograma, y juntos daban tirones de 100-170 ms justo en
+   los drops en una GPU integrada (medido en la T02.6). */
 .daino-hud[data-phase="climax"] .daino-hud__progress-fg {
     background: linear-gradient(90deg, var(--color-daino-beat), var(--color-daino-high));
     box-shadow: 0 0 14px color-mix(in oklch, var(--color-daino-beat) 80%, transparent);
+}
+
+.daino-hud[data-phase="climax"] .daino-hud__progress-fg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: rgba(255, 255, 255, 0.4);
+    opacity: 0;
     animation: daino-climax-glow 0.9s ease-in-out infinite alternate;
 }
 
@@ -750,8 +766,8 @@ kbd,
 }
 
 @keyframes daino-climax-glow {
-    from { filter: brightness(1); }
-    to   { filter: brightness(1.45); }
+    from { opacity: 0; }
+    to   { opacity: 1; }
 }
 
 /* Afinado de velocidad — lo que viene se ve venir.
@@ -783,17 +799,15 @@ kbd,
     border-right: 0.1875rem solid currentColor;
     transform: rotate(45deg);
     color: color-mix(in oklch, var(--color-daino-fg) 18%, transparent);
-    transition: color 180ms ease-out, filter 180ms ease-out;
+    transition: color 180ms ease-out;
 }
 
 .daino-hud__chev[data-on="true"] {
     color: var(--color-daino-high);
-    filter: drop-shadow(0 0 4px color-mix(in oklch, var(--color-daino-high) 85%, transparent));
 }
 
 .daino-hud__gear[data-gear="4"] .daino-hud__chev[data-on="true"] {
     color: var(--color-daino-beat);
-    filter: drop-shadow(0 0 5px color-mix(in oklch, var(--color-daino-beat) 90%, transparent));
 }
 
 .daino-hud__chev[data-next="true"] {
@@ -805,9 +819,17 @@ kbd,
     animation: daino-gear-bump 480ms ease-out;
 }
 
+.daino-hud__gear[data-bump="true"] .daino-hud__chev[data-on="true"] {
+    animation: daino-chev-flash 480ms ease-out;
+}
+
 @keyframes daino-gear-bump {
-    0%   { transform: scale(1.6); filter: brightness(2.2); }
-    100% { transform: scale(1);   filter: brightness(1); }
+    0%   { transform: scale(1.6); }
+    100% { transform: scale(1); }
+}
+
+@keyframes daino-chev-flash {
+    from { color: #ffffff; }
 }
 
 .daino-hud__progress-bar {
@@ -900,14 +922,25 @@ kbd,
 }
 
 .daino-hud__mode[data-state="warn"] {
+    position: relative;
     opacity: 1;
     transform: none;
+}
+
+.daino-hud__mode[data-state="warn"]::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: 0 0 14px color-mix(in oklch, var(--daino-mode-color) 75%, transparent);
+    opacity: 0;
     animation: daino-mode-warn 0.55s ease-in-out infinite alternate;
+    pointer-events: none;
 }
 
 @keyframes daino-mode-warn {
-    from { box-shadow: 0 0 0 color-mix(in oklch, var(--daino-mode-color) 0%, transparent); }
-    to   { box-shadow: 0 0 14px color-mix(in oklch, var(--daino-mode-color) 75%, transparent); }
+    from { opacity: 0; }
+    to   { opacity: 1; }
 }
 
 .daino-hud__mode-hint {
@@ -949,19 +982,73 @@ body[data-app-state="PAUSED"] .daino-hud__banner {
     opacity: 0;
 }
 
+/*
+ * Rótulo de una historia de autor (T02.6, "Diez años después…"): como un
+ * subtítulo de película, en cursiva y sin mayúsculas, bajo el mapa de la canción.
+ * Aparece despacio y se va despacio; nunca tapa el centro de la escena.
+ */
+/* Rótulo de una historia de autor (T02.6): como el de una película, en serif
+   cursiva de sistema (sin fuentes que descargar), entre dos filetes finos. */
+.daino-hud__caption {
+    position: absolute;
+    top: 17%;
+    left: 50%;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.9em;
+    transform: translate(-50%, 0.35rem);
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: clamp(1.05rem, 2.3vw, 1.6rem);
+    font-style: italic;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    padding: 0.5em 1.6em;
+    color: #fff3dc;
+    text-shadow: 0 2px 22px rgba(0, 0, 0, 0.8), 0 0 3px rgba(0, 0, 0, 0.7);
+    /* Un velo oscuro muy suave detrás: el rótulo cae en la franja de las nubes,
+       que de día son blancas. */
+    background: radial-gradient(ellipse at center, rgba(5, 5, 12, 0.42), rgba(5, 5, 12, 0) 72%);
+    opacity: 0;
+    transition: opacity 1400ms ease-out, transform 1400ms ease-out;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.daino-hud__caption::before,
+.daino-hud__caption::after {
+    content: '';
+    width: 2.2em;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.45;
+}
+
+.daino-hud__caption[data-shown="true"] {
+    opacity: 0.92;
+    transform: translate(-50%, 0);
+}
+
+body[data-app-state="RESULTS"] .daino-hud__caption,
+body[data-app-state="PAUSED"] .daino-hud__caption {
+    opacity: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .daino-hud[data-phase="climax"] .daino-hud__progress-fg {
-        animation: none;
-    }
-    .daino-hud__banner {
+    .daino-hud__banner,
+    .daino-hud__caption {
         transition: none;
     }
     .daino-hud__gear[data-bump="true"] {
         animation: none;
     }
-    .daino-hud__mode[data-state="warn"] {
+    .daino-hud__mode[data-state="warn"]::after {
         animation: none;
-        box-shadow: 0 0 10px color-mix(in oklch, var(--daino-mode-color) 60%, transparent);
+        opacity: 0.8;
+    }
+    .daino-hud[data-phase="climax"] .daino-hud__progress-fg::after,
+    .daino-hud__gear[data-bump="true"] .daino-hud__chev[data-on="true"] {
+        animation: none;
     }
 }
 
@@ -3033,6 +3120,17 @@ dialog.daino-rotate p { margin: 0 0 1.2rem; line-height: 1.45; color: color-mix(
 }
 
 .daino-devtools__elements .daino-devtools__row { font-size: 0.76rem; }
+
+/* Historia de autor (T02.6): un botón por momento de su relato. */
+.daino-devtools__story {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+}
+
+.daino-devtools__story:empty { display: none; }
+
+.daino-devtools__story .daino-devtools__button { text-align: left; }
 
 @media (prefers-reduced-motion: reduce) {
     .daino-devtools__handle { transition: none; }

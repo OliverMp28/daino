@@ -98,6 +98,7 @@ export function createAudioFilter() {
                 uSunSlits:   { value: 0.0, type: 'f32' },
                 uSunGlow:    { value: new Float32Array(4), type: 'vec4<f32>' },
                 uSunHalo:    { value: 0.0, type: 'f32' },
+                uSunFlash:   { value: 0.0, type: 'f32' },
                 uMoonPos:    { value: new Float32Array([0.5, 1.2]), type: 'vec2<f32>' },
                 uMoonRadius: { value: 0.04, type: 'f32' },
                 uMoonColor:  { value: new Float32Array(4), type: 'vec4<f32>' },
@@ -199,6 +200,7 @@ export function createAudioFilter() {
         u.uSunSlits = s.sun.slits;
         u.uSunGlow.set(s.sun.glow);
         u.uSunHalo = s.sun.halo;
+        u.uSunFlash = s.sun.flash;
         u.uMoonPos.set(s.moon.pos);
         u.uMoonRadius = s.moon.radius;
         u.uMoonColor.set(s.moon.color);

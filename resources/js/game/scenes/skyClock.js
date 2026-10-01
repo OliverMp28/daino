@@ -12,6 +12,7 @@
 // anclas: nunca retrocede. Puro y sin Pixi.
 
 import { phaseOfHour } from './skyModel.js';
+import { placeStory, songOutline } from './stories/index.js';
 
 /**
  * Horas del viaje. Las del ocaso y el alba se miden con la cordillera delante:
@@ -107,6 +108,9 @@ export const NOCTURNE_RULES = Object.freeze({
  * al amanecer anclado a la canción; `nocturne`, una noche entera de la hora azul
  * al alba (T02.4, la ciudad); `fixed` deja el cielo quieto a una hora. Añadir un
  * ciclo es una entrada aquí y su planificador en `planSky`.
+ *
+ * Una historia de autor (T02.6) trae su propio ciclo: `{ kind: 'story', story }`
+ * (registry.sceneCycle), con las horas de sus momentos (stories/).
  */
 export const SKY_CYCLES = Object.freeze({
     journey: Object.freeze({ kind: 'journey', rules: SKY_RULES, hours: SKY_HOURS }),
@@ -127,14 +131,16 @@ function nearest(list, target) {
 /**
  * Plan del cielo de un nivel.
  *
- * @param {{ sections?: Array<{ t: number, level?: number, climax?: boolean }>, durationSec: number }} input
- * @param {{ kind: 'journey', rules: typeof SKY_RULES, hours: typeof SKY_HOURS } | { kind: 'fixed', hour: number }} [cycle]
+ * @param {{ sections?: Array<{ t: number, level?: number, climax?: boolean }>, fx?: Array<{ t: number, fx: string }>, durationSec: number }} input
+ *   Los eventos `section` y `fx` del chart (las historias leen también los drops).
+ * @param {{ kind: 'journey', rules: typeof SKY_RULES, hours: typeof SKY_HOURS } | { kind: 'fixed', hour: number } | { kind: 'story', story: object }} [cycle]
  */
-export function planSky({ sections = [], durationSec }, cycle = SKY_CYCLES.journey) {
+export function planSky({ sections = [], fx = [], durationSec }, cycle = SKY_CYCLES.journey) {
     const D = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 1;
     if (cycle.kind === 'fixed') {
         return buildPlan(D, [{ t: 0, hour: cycle.hour }, { t: D, hour: cycle.hour }], {}, null);
     }
+    if (cycle.kind === 'story') return planStory(D, { sections, fx, durationSec: D }, cycle.story);
     const R = cycle.rules;
     const H = cycle.hours;
     const secs = sections
@@ -249,12 +255,35 @@ function planNocturne(D, bounds, climax, R, H, N) {
 }
 
 /**
+ * El cielo de una historia de autor (T02.6): de momento en momento de su relato,
+ * a las horas que ella dice, con la cámara lenta de sus `holds`. Tras superar el
+ * nivel, el epílogo sigue hasta su `epilogueHour`.
+ *
+ * @param {number} D
+ * @param {{ sections: Array<object>, fx: Array<object>, durationSec: number }} input
+ * @param {ReturnType<typeof import('./stories/index.js').bindStory>} story
+ */
+function planStory(D, input, story) {
+    const placed = placeStory(story, songOutline(input));
+    const at = (id) => placed.moments.find((m) => m.id === id)?.t ?? null;
+    return buildPlan(
+        D,
+        placed.anchors,
+        { eveningStart: at('touch'), nightfall: at('farewell'), dawnStart: at('dawn') },
+        null,
+        { story: { id: story.id, moments: placed.moments, captions: placed.captions, holds: placed.holds }, epilogueTo: story.epilogueHour },
+    );
+}
+
+/**
  * @param {number} D
  * @param {Array<{ t: number, hour: number }>} anchors
  * @param {{ eveningStart?: number, nightfall?: number, dawnStart?: number | null }} marks
  * @param {{ R: typeof SKY_RULES, H: typeof SKY_HOURS } | null} journey
+ * @param {{ story?: object, epilogueTo?: number }} [extra]  Historias (T02.6): su
+ *   relato colocado en la canción y la hora a la que llega el epílogo.
  */
-function buildPlan(D, anchors, marks, journey) {
+function buildPlan(D, anchors, marks, journey, extra = {}) {
     const pts = Object.freeze(anchors.map((a) => Object.freeze({ t: a.t, hour: a.hour })));
 
     function hourAt(t) {
@@ -291,6 +320,8 @@ function buildPlan(D, anchors, marks, journey) {
         durationSec: D,
         anchors: pts,
         events,
+        /** La historia de autor colocada en la canción (momentos y rótulos), o null. */
+        story: extra.story ?? null,
         hourAt,
         timeAtHour,
         /** Fase del cielo (clave de SKY_PHASES) en el instante `t`. */
@@ -304,6 +335,12 @@ function buildPlan(D, anchors, marks, journey) {
          * @returns {{ from: number, to: number, durationS: number }}
          */
         epilogue(hour) {
+            if (Number.isFinite(extra.epilogueTo)) {
+                const R = SKY_RULES;
+                const dh = extra.epilogueTo - hour;
+                const durationS = dh > 0 ? clamp(dh * R.epilogueSPerHour, R.epilogueMinS, R.epilogueMaxS) : 0;
+                return { from: hour, to: Math.max(hour, extra.epilogueTo), durationS };
+            }
             if (journey === null) return { from: hour, to: hour, durationS: 0 };
             const { R, H } = journey;
             const to = hour < H.sunDown ? H.sunDown + 0.15 : Math.max(hour, H.sunrise + 0.4);

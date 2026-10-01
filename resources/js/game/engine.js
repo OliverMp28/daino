@@ -699,7 +699,7 @@ function getApi() {
         // panel dev para enseñarlo).
         getScene: () => scene,
         getSceneElements: () => sceneElements(scene),
-        getSky: () => ({ hour: appliedHour, phase: skyState.phase, elev: skyState.elev, sceneId: scene.id, fx: fxEnabled }),
+        getSky: () => ({ hour: appliedHour, phase: skyState.phase, elev: skyState.elev, flash: skyState.sun.flash, sceneId: scene.id, fx: fxEnabled }),
         getCanvas: () => app?.canvas ?? null,
         // Vista del mundo vigente (se sustituye, no se muta, al cambiar):
         // tamaño visible y suelo en unidades de mundo, escala y suelo en px.

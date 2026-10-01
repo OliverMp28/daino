@@ -39,6 +39,8 @@ export const LAZY_LAYER_TYPES = Object.freeze({
     snow: () => import('./Snow.js').then((m) => m.createSnowLayer),
     lightning: () => import('./Lightning.js').then((m) => m.createLightningLayer),
     skyline: () => import('./Skyline.js').then((m) => m.createSkylineLayer),
+    storyShip: () => import('./StoryShip.js').then((m) => m.createStoryShipLayer),
+    storyCliff: () => import('./StoryCliff.js').then((m) => m.createStoryCliffLayer),
 });
 
 /** Implementaciones disponibles ya (las del bundle y las que se han cargado). */

@@ -8,6 +8,7 @@
 //   createHud()                       → { update, setBanner, dispose, … }
 //   update(score, currentSec, total)  Llamado cada frame por GameSession.
 //   setBanner(text)                   Rótulo bajo la barra ("¡Superado!", "Intento 3").
+//   setCaption(text)                  Rótulo de una historia de autor (T02.6), '' para ocultar.
 //   setRoadmap / setGear / bumpGear   Mapa de la canción y marchas de velocidad.
 //   setControls(visible)              Cómo se juega, en las primeras partidas.
 //   dispose()                         Quita el HUD del DOM.
@@ -35,14 +36,25 @@ let modeLabelEl = null;
 let modeHintEl = null;
 let chevEls = [];
 let bannerEl = null;
+let captionEl = null;
 let controlsEl = null;
 let songEl = null;
 let lastPhase = '';
 let lastScore = -1;
+let lastScoreAt = -Infinity;
 let lastTimeKey = '';
 let lastRatio = -1;
 let lastGearKey = '';
 let lastModeKey = '';
+
+/**
+ * Cada cuánto se reescribe el marcador como mucho (s). Sube unos 100 puntos por
+ * segundo: a 60 Hz cambiaba en cada fotograma, y cada cambio repinta el texto
+ * con su sombra difuminada. A 20 Hz sigue corriendo igual a la vista (T02.6).
+ */
+const SCORE_MIN_INTERVAL_S = 0.05;
+/** Paso de la barra de progreso: 0.1 % (menos de un píxel en cualquier pantalla). */
+const PROGRESS_STEP = 1000;
 
 /** Marchas que caben en el indicador (speedCues.SPEED_CUES.gearThresholds). */
 const GEAR_SLOTS = 4;
@@ -171,11 +183,20 @@ export function createHud(_unused) {
     bannerEl.className = 'daino-hud__banner';
     bannerEl.setAttribute('role', 'status');
 
+    // Rótulo de una historia de autor (T02.6): una línea breve, en cursiva, bajo el
+    // mapa de la canción ("Diez años después…"). Como los subtítulos de una
+    // película: aparece, se lee y se va, sin tapar lo que se juega.
+    captionEl = document.createElement('p');
+    captionEl.className = 'daino-hud__caption';
+    captionEl.setAttribute('role', 'status');
+    captionEl.setAttribute('aria-live', 'polite');
+
     controlsEl = buildControls();
 
     rootEl.appendChild(topBar);
     rootEl.appendChild(pauseBtn);
     rootEl.appendChild(bannerEl);
+    rootEl.appendChild(captionEl);
     rootEl.appendChild(controlsEl);
     host.appendChild(rootEl);
 
@@ -214,6 +235,7 @@ function buildControls() {
 
 function resetState() {
     lastScore = -1;
+    lastScoreAt = -Infinity;
     lastTimeKey = '';
     lastRatio = -1;
     lastPhase = '';
@@ -239,6 +261,10 @@ function resetState() {
         bannerEl.textContent = '';
         bannerEl.dataset.shown = 'false';
     }
+    if (captionEl) {
+        captionEl.textContent = '';
+        captionEl.dataset.shown = 'false';
+    }
     if (rootEl) delete rootEl.dataset.phase;
 }
 
@@ -249,9 +275,10 @@ const api = {
      * @param {number} totalSec     Duración total.
      */
     update(score, currentSec, totalSec) {
-        if (score !== lastScore && scoreEl) {
+        if (score !== lastScore && scoreEl && (score < lastScore || currentSec - lastScoreAt >= SCORE_MIN_INTERVAL_S || currentSec < lastScoreAt)) {
             scoreEl.textContent = String(score).padStart(6, '0');
             lastScore = score;
+            lastScoreAt = currentSec;
         }
         const timeKey = `${fmtTime(currentSec)}|${fmtTime(totalSec)}`;
         if (timeKey !== lastTimeKey && timerEl) {
@@ -259,9 +286,9 @@ const api = {
             lastTimeKey = timeKey;
         }
         const ratio = totalSec > 0 ? Math.max(0, Math.min(1, currentSec / totalSec)) : 0;
-        // El progress bar puede ser fractional — solo repaint si cambió un pelín.
-        // Round a 4 decimales (~0.01% precisión) para evitar jitter.
-        const rounded = Math.round(ratio * 10000) / 10000;
+        // Solo se toca la barra cuando avanza un paso (0.1 %): redondeada a 0.01 %
+        // cambiaba de ancho en cada fotograma (maquetar y repintar, siempre).
+        const rounded = Math.round(ratio * PROGRESS_STEP) / PROGRESS_STEP;
         if (rounded !== lastRatio && progressFgEl) {
             progressFgEl.style.width = `${(rounded * 100).toFixed(2)}%`;
             lastRatio = rounded;
@@ -277,6 +304,12 @@ const api = {
         // Al ocultarlo el texto se queda: así se desvanece en vez de vaciarse de golpe.
         if (text) bannerEl.textContent = text;
         bannerEl.dataset.shown = text ? 'true' : 'false';
+    },
+    /** Rótulo de una historia de autor (T02.6). Pasar '' para que se desvanezca. */
+    setCaption(text) {
+        if (!captionEl) return;
+        if (text) captionEl.textContent = text;
+        captionEl.dataset.shown = text ? 'true' : 'false';
     },
     /** Controles de juego, en las primeras partidas. */
     setControls(visible) {
@@ -392,6 +425,7 @@ const api = {
             timerEl = null;
             progressFgEl = null;
             bannerEl = null;
+            captionEl = null;
             controlsEl = null;
             songEl = null;
         }

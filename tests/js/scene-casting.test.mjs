@@ -28,6 +28,7 @@ const ACCEPTABLE = {
     hope: ['coast', 'snow', 'rain', null],                  // tranquila, en mayor
     'last-christmas': ['snow', 'city', 'coast', null],      // pop con campanas
     'mi-fiesta': ['city', 'coast', null],                   // reguetón en menor
+    'one-day': ['snow', 'rain', 'coast', null],             // orquestal tranquila y sin percusión (juega su historia, T02.6)
     'running-with-the-wolves': ['storm', 'snow', null],     // épica con tambores
     'sugar-red': ['city', 'storm', null],                   // electrónica de club
     time: ['snow', 'rain', 'coast', null],                  // lenta y sostenida
@@ -39,6 +40,7 @@ const EXPECTED = {
     hope: ['coast', 'warm'],
     'last-christmas': ['snow', 'shimmer'],
     'mi-fiesta': ['city', 'urban'],
+    'one-day': [null, null],
     'running-with-the-wolves': [null, null],
     'sugar-red': ['city', 'urban'],
     time: ['snow', 'still'],
@@ -96,15 +98,18 @@ test('los errores típicos del analizador nunca llevan a un ambiente que no pega
     }
 });
 
-test('la tonalidad relativa (el error típico del modo) deja sin propuesta, nunca en otra', () => {
+test('la tonalidad relativa (el error típico del modo) nunca cambia una propuesta por otra', () => {
     // Relativa y paralela son los errores típicos de la tonalidad (CLAUDE.md): con
-    // el modo cambiado, la canción ya no suena "clara" a nada.
+    // el modo cambiado, una canción que tenía ambiente se queda con él o sin
+    // ninguno. Una que no tenía puede ganar uno (One Day en fa mayor suena quieta
+    // y luminosa: Nieve), pero solo de los que le pegan (test anterior).
     for (const slug of SLUGS) {
         const a = structuredClone(official(slug).analysis);
         const before = castScene(a).scene;
         a.tonal.key = relativeKey(a.tonal.key);
         const after = castScene(a).scene;
-        assert.ok(after === before || after === null, `${slug}: ${before} → ${after}`);
+        if (before !== null) assert.ok(after === before || after === null, `${slug}: ${before} → ${after}`);
+        else assert.ok(ACCEPTABLE[slug].includes(after), `${slug}: ${after}`);
     }
 });
 
