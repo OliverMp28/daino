@@ -3,11 +3,12 @@
 //
 // Una costa cercana (storyIsland.js): su pie está en el agua junto a la orilla,
 // muy por debajo del horizonte, así que queda delante del mar y todo en ella se
-// ve más grande que el barco, que está lejos. Tierra baja con palmeras, la subida
-// al cabo, el faro en su loma, la casa con su chimenea y, en el borde, su silueta
-// con el viento del mar en el pelo y la falda y el farol en la mano; desde "Diez
-// años después", el hijo a su lado. Al anochecer se encienden las ventanas, sale
-// humo de la chimenea, el faro gira y su farol arde (y se aviva al volver el barco).
+// ve más grande que el barco, que está lejos. Tierra baja con su palmeral, la
+// ladera verde con su sendero y su bote, el faro en su loma, la casa arropada por
+// árboles y, en el borde, su silueta con el viento del mar en el pelo y la falda y
+// el farol en la mano; desde "Diez años después", el hijo a su lado. Al anochecer
+// se encienden las ventanas y el farol del porche, sale humo de la chimenea, el
+// faro gira y su farol arde (y se aviva al volver el barco).
 //
 // Su pista en la historia (scenes/stories/) dice dónde está el borde del cabo (se
 // aleja muy despacio), cuándo aparece el hijo y cuánto arden las luces, por la
@@ -23,7 +24,8 @@ import {
     CHILD_ROWS, STORY_CELL, WOMAN_ROWS,
     createStoryColors, materialRows, rimRows, storyColors,
 } from './storyArt.js';
-import { ISLAND_LIFT, islandArt, islandSurfRows } from './storyIsland.js';
+import { ISLAND_GROUPS, ISLAND_LIFT, islandArt, islandSurfRows } from './storyIsland.js';
+import { ISLAND_MATERIAL_MAPS } from './storyIslandParts.js';
 import { createStoryLamp } from './storyLamp.js';
 
 const S = STORY_CELL;
@@ -119,25 +121,31 @@ export function createStoryCliffLayer(def, view) {
     const container = new Container({ label: def.id });
     const art = islandArt();
 
-    // La tierra y lo construido: sprites por material, recortados a lo que pintan.
-    const rock = materialSprites('rock', art.rock, { o: 'O', O: 'o', q: 'q' });
-    const grass = materialSprites('grass', art.grass, { G: 'O' });
-    const wall = materialSprites('wall', art.house, { w: 'o', W: 'O' });
-    const roof = materialSprites('roof', art.house, { r: 'O', R: 'o' });
-    const houseDark = materialSprites('houseDark', art.house, { d: 'O' });
-    const tower = materialSprites('tower', art.tower, { t: 'O' });
-    const band = materialSprites('band', art.tower, { b: 'O' });
-    const towerDark = materialSprites('towerDark', art.tower, { g: 'O' });
-    const windows = materialSprites('windows', art.houseLight, { L: 'Q' });
-    const lanternRoom = materialSprites('lanternRoom', art.towerLight, { L: 'Q' });
+    // Cada grupo del dibujo (la tierra, los árboles de detrás, el faro, la casa y
+    // lo de delante), un sprite por material, recortado a lo que pinta.
+    /** @type {Record<string, Sprite[]>} */
+    const byMaterial = {};
+    const groupBox = {};
+    for (const id of ISLAND_GROUPS) {
+        const box = new Container({ label: `island:${id}` });
+        for (const [material, map] of Object.entries(ISLAND_MATERIAL_MAPS)) {
+            const sprites = materialSprites(`${id}:${material}`, art.groups[id], map);
+            if (sprites.length === 0) continue;
+            box.addChild(...sprites);
+            (byMaterial[material] ?? (byMaterial[material] = [])).push(...sprites);
+        }
+        groupBox[id] = box;
+    }
+    const windows = materialSprites('windows', art.lights.home, { L: 'Q' });
+    const lanternRoom = materialSprites('lanternRoom', art.lights.lighthouse, { L: 'Q' });
     for (const sp of [...windows, ...lanternRoom]) {
         sp.tint = WINDOWS.color;
         sp.blendMode = 'add';
     }
-    // El filo de luz: entero en la pared del mar, más tenue en lo alto (un solo
+    // El filo de luz: entero en lo que mira al mar, más tenue en lo alto (un solo
     // material: el de arriba va en el gris oscuro del arte).
-    const solid = art.rock.map((r, y) => [...r].map((c, x) => (
-        c !== '.' || art.grass[y][x] !== '.' || art.house[y][x] !== '.' || art.tower[y][x] !== '.' ? 'Q' : '.'
+    const solid = art.groups.land.map((r, y) => [...r].map((c, x) => (
+        ISLAND_GROUPS.some((id) => art.groups[id][y][x] !== '.') ? 'Q' : '.'
     )).join(''));
     const side = rimRows(solid, 1);
     const both = rimRows(solid, 1, { top: true });
@@ -149,21 +157,24 @@ export function createStoryCliffLayer(def, view) {
 
     // Palmeras: tronco y hojas, dos fotogramas que se mecen a destiempo.
     const palmsBox = new Container({ label: 'storyPalms' });
-    const palmTex = (kind, mat) => art.palmFrames[kind].map((rows, i) => artTexture(`story:palm:${kind}:${mat}:${i}`, materialRows(rows, mat === 'frond' ? { p: 'O' } : { k: 'O' })));
-    const tex = {
-        high: { frond: palmTex('high', 'frond'), trunk: palmTex('high', 'trunk') },
-        low: { frond: palmTex('low', 'frond'), trunk: palmTex('low', 'trunk') },
-    };
+    const palmTex = {};
+    for (const [kind, frames] of Object.entries(art.palmFrames)) {
+        palmTex[kind] = {
+            leaf: frames.map((rows, i) => artTexture(`story:palm:${kind}:leaf:${i}`, materialRows(rows, ISLAND_MATERIAL_MAPS.leaf))),
+            wood: frames.map((rows, i) => artTexture(`story:palm:${kind}:wood:${i}`, materialRows(rows, ISLAND_MATERIAL_MAPS.wood))),
+        };
+    }
     const palms = art.palms.map((p, i) => {
-        const kind = p.low ? 'low' : 'high';
-        const trunk = new Sprite(tex[kind].trunk[0]);
-        const frond = new Sprite(tex[kind].frond[0]);
-        for (const sp of [trunk, frond]) {
+        const wood = new Sprite(palmTex[p.kind].wood[0]);
+        const leaf = new Sprite(palmTex[p.kind].leaf[0]);
+        for (const sp of [wood, leaf]) {
             sp.scale.set(S);
             sp.position.set(p.x * S, p.y * S);
         }
-        palmsBox.addChild(trunk, frond);
-        return { trunk, frond, kind, frame: 0, t: i * 0.27 };
+        palmsBox.addChild(wood, leaf);
+        byMaterial.wood.push(wood);
+        byMaterial.leaf.push(leaf);
+        return { wood, leaf, kind: p.kind, frame: 0, t: i * 0.27 };
     });
 
     // Las figuras (con los pies en la hierba), con su filo de luz.
@@ -198,7 +209,7 @@ export function createStoryCliffLayer(def, view) {
     const beaconPos = [art.spots.beacon[0] * S, art.spots.beacon[1] * S];
     beacon.container.position.set(beaconPos[0], beaconPos[1]);
     beam.position.set(beaconPos[0], beaconPos[1]);
-    lighthouse.addChild(...tower, ...band, ...towerDark, ...lanternRoom, beam, beacon.container);
+    lighthouse.addChild(groupBox.lighthouse, ...lanternRoom, beam, beacon.container);
 
     // La casa, con sus ventanas y el humo de la chimenea.
     const home = new Container({ label: 'storyHouse' });
@@ -211,7 +222,7 @@ export function createStoryCliffLayer(def, view) {
         smoke.push({ sp, age: -1 });
         home.addChild(sp);
     }
-    home.addChild(...wall, ...roof, ...houseDark, ...windows);
+    home.addChild(groupBox.home, ...windows);
 
     // El farol de ella en el agua: unas filas de luz bajo el cabo que titilan.
     const reflection = new Container({ label: 'storyLanternReflection' });
@@ -224,11 +235,9 @@ export function createStoryCliffLayer(def, view) {
         reflectRows.push(sp);
         reflection.addChild(sp);
     }
-    const land = new Container({ label: 'storyLand' });
-    land.addChild(...rock, ...grass);
     const rimBox = new Container({ label: 'storyRim' });
     rimBox.addChild(...rim);
-    container.addChild(land, lighthouse, home, palmsBox, rimBox, surf, reflection, figures, lantern.container);
+    container.addChild(groupBox.land, groupBox.back, lighthouse, home, groupBox.front, palmsBox, rimBox, surf, reflection, figures, lantern.container);
 
     let W = view.width;
     let groundY = view.groundY;
@@ -323,7 +332,7 @@ export function createStoryCliffLayer(def, view) {
                 if (p) {
                     p.age = 0;
                     p.sp.visible = true;
-                    p.sp.position.set((art.spots.chimney[0] + 1) * S, art.spots.chimney[1] * S);
+                    p.sp.position.set(art.spots.chimney[0] * S, art.spots.chimney[1] * S);
                 }
             }
         }
@@ -358,10 +367,8 @@ export function createStoryCliffLayer(def, view) {
         for (const sp of sprites) sp.tint = n;
     }
 
-    const palmFronds = palms.map((p) => p.frond);
-    const palmTrunks = palms.map((p) => p.trunk);
+    const materials = Object.entries(byMaterial);
     const smokeSprites = smoke.map((p) => p.sp);
-    const darkSprites = [...houseDark, ...towerDark];
     const surfSprites = [surf];
     const figRimSprites = [woman.rim, child.rim];
 
@@ -380,8 +387,8 @@ export function createStoryCliffLayer(def, view) {
                 }
                 for (const p of palms) {
                     if (!tickFrames(p, dt, WIND.palmS, WIND.pair)) continue;
-                    p.frond.texture = tex[p.kind].frond[p.frame];
-                    p.trunk.texture = tex[p.kind].trunk[p.frame];
+                    p.leaf.texture = palmTex[p.kind].leaf[p.frame];
+                    p.wood.texture = palmTex[p.kind].wood[p.frame];
                 }
                 surfT += dt;
                 if (surfT >= SURF_FRAME_S) {
@@ -409,15 +416,7 @@ export function createStoryCliffLayer(def, view) {
         light(state) {
             hour = state.hour;
             storyColors(state, colors);
-            setTint('rock', rock, colors.rock);
-            setTint('grass', grass, colors.grass);
-            setTint('wall', wall, colors.wall);
-            setTint('roof', roof, colors.roof);
-            setTint('tower', tower, colors.tower);
-            setTint('band', band, colors.band);
-            setTint('dark', darkSprites, colors.dark);
-            setTint('palm', palmFronds, colors.palm);
-            setTint('trunk', palmTrunks, colors.trunk);
+            for (let i = 0; i < materials.length; i++) setTint(materials[i][0], materials[i][1], colors[materials[i][0]]);
             setTint('rim', rim, state.mountains.rim);
             setTint('surf', surfSprites, state.sea.crest);
             for (let i = 0; i < 3; i++) smokeRgb[i] = state.clouds.body[i] + (1 - state.clouds.body[i]) * 0.35;
@@ -444,7 +443,7 @@ export function createStoryCliffLayer(def, view) {
         setVisible(id, on) {
             if (id === def.id) container.renderable = on;
             else if (id === 'storyFigures') figures.visible = on;
-            else if (id === 'storyPalms') palmsBox.visible = on;
+            else if (id === 'storyPalms') palmsBox.visible = groupBox.back.visible = groupBox.front.visible = on;
             else if (id === 'storyHouse') {
                 houseOn = on;
                 home.visible = on;

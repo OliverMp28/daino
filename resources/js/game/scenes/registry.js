@@ -336,7 +336,7 @@ export const SCENES = deepFreeze({
                     { id: 'storyLantern', label: 'El farol' },
                     { id: 'storyHouse', label: 'La casa' },
                     { id: 'storyLighthouse', label: 'El faro' },
-                    { id: 'storyPalms', label: 'Palmeras' },
+                    { id: 'storyPalms', label: 'Árboles, palmeras y bote' },
                 ],
                 params: { tracks: ONE_DAY.tracks.cliff } },
             CLOUDS,

@@ -370,6 +370,9 @@ const GROOVE_WEIGHT = 0.3;
 /** Cuánto pesa un cambio de acorde en el pulso donde cae. */
 const CHORD_WEIGHT = 0.1;
 
+/** Hueco mínimo entre las acciones del tutorial del principio (saltos espaciados). */
+export const INTRO_GAP_S = 1.1;
+
 /** Sin plan de modos: se corre de principio a fin. */
 const NO_MODES = Object.freeze({ constant: true, modeAt: () => 'run', allows: () => true, spanAt: () => null });
 
@@ -609,7 +612,7 @@ function fits(action, chosen, ctx) {
     if (next === null && ctx.reserved !== null && action.score <= ctx.reserved.score + 0.1) next = ctx.reserved;
     const combos = ctx.unlocked('combo', action.t);
     // Tutorial del principio (saltos) o estreno de un modo (sus primeras acciones).
-    const introGap = ctx.introActions > 0 ? 1.1 : (action.type === 'flip' && ctx.modeIntroLeft > 0 ? MODE_INTRO_GAP_S : 0);
+    const introGap = ctx.introActions > 0 ? INTRO_GAP_S : (action.type === 'flip' && ctx.modeIntroLeft > 0 ? MODE_INTRO_GAP_S : 0);
 
     if (prev !== null) {
         const need = Math.max(introGap, pairGap(prev.type, action.type, speedAt(action.t), profile, combos));

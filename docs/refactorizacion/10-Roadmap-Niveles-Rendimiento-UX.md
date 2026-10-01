@@ -1568,6 +1568,39 @@ Objetivo del user: **3★ se pasa al segundo o tercer intento; 4★ cuesta cinco
 - **Los agachados siguen sin acentos** (agacharse antes es gratis).
 - El suite JS tarda ~3 min (charts reales y Monte Carlo en paralelo).
 
+#### La partida empieza con la música ✅ (Oct 2026, playtest de One Day)
+
+Jugando One Day (Relajado, T02.6), el user: **"casi hasta el segundo 0:30 se siente muy aburrido porque no pasa nada… fácil no debe significar no hacer nada por 30 segundos"**. Medido: la primera acción llegaba en el **segundo 35.4**.
+
+**Causa** (dos reglas que por separado tenían sentido):
+- El primer tramo de One Day (0-35 s, cuerdas suaves) es de **reposo** (nivel 0 del arco) y el reposo de Relajado no lleva acciones (`apm[0] = 0`): las pone el relleno de silencios de juego.
+- El relleno (`fillLongRests`) **se saltaba todo lo anterior a la tercera acción** para no tocar el tutorial ("sus saltos van espaciados a propósito"). El hueco entre el arranque y la primera acción no lo miraba nadie.
+
+No era solo One Day: cualquier canción que abra en reposo. What's Up Danger empezaba en el segundo 13.2 en Relajado y en el 8.1 en Fácil, y Dawn of Faith dejaba 5.5 s entre dos saltos del tutorial en todas sus dificultades.
+
+**Regla general (charter 13):**
+- **El principio también cuenta.** El relleno mira desde la ventana inicial: el hueco hasta la primera acción y los del tutorial tienen máximo, el de un tramo de reposo (`maxRestS` × `restLevelFactor`: 5.1 s en Relajado … 2.2 s en Extremo). El tutorial sigue siendo de **saltos en tiempos fuertes, espaciados** (`INTRO_GAP_S`), pero llega con los primeros compases.
+- **El reposo con que abre una canción no es un descanso**: todavía no se ha jugado nada. Pasado el tutorial se rellena como la calma (`maxRestS` sin alargar). El respiro largo queda para los reposos de después (un break).
+- Donde la música calla de verdad sigue sin haber acciones, y donde no hay pulso tampoco (One Day no tiene golpes hasta el segundo 7.7: la primera acción es ese primer compás).
+
+| Nivel | Primera acción antes → ahora | Acciones en los primeros 30 s |
+|---|---|---|
+| One Day (Relajado, oficial) | 35.4 s → **7.7 s** | 0 → **9** |
+| What's Up Danger (Relajado) | 13.2 s → 5.6 s | 7 → 9 |
+| What's Up Danger (Fácil) | 8.1 s → 5.6 s | 12 → 13 |
+| Dawn of Faith (Difícil, oficial) | 5.8 s (y un hueco de 5.5 s) → 5.8 s (hueco máximo 2.9 s) | 20 → 22 |
+
+One Day: 7.7 · 11.8 · 16.0 (tutorial, un salto por compás) y después un salto cada dos pulsos (18.1 · 21.1 · 23.3 …), como en la calma que sigue. Los demás oficiales no cambian (ya abrían jugando); el resto de cada chart es idéntico.
+
+**Verificación.** `charter.test.mjs`: canción sintética a 60 BPM que abre con 36 s de reposo, en las 5 dificultades (≥ 6 acciones en esos 36 s, ningún hueco por encima de su máximo, tutorial de saltos espaciados) y **One Day como regresión** (primera acción con el primer compás, ≥ 8 acciones antes del 0:30, ningún hueco de más de 5.1 s en el primer minuto). El medidor de huecos de los tests (`playedRests`) cuenta ahora el principio y dejó de dar por "estreno de un modo" todo lo anterior a un portal. **339 JS.** Oficiales re-horneados y re-sembrados; comunidad re-charteada (`--charter-below=13`).
+
+**Decisiones (vinculantes):**
+- **La partida empieza con la música**: mientras suena y tiene pulso, el principio obedece el mismo máximo de silencio de juego que el resto.
+- **Un descanso se gana**: el silencio largo de un reposo vale tras haber jugado, no al abrir la canción.
+- **Fácil es menos y más espaciado, nunca nada.**
+
+**Limitación:** una canción que abra con música sin golpes (un colchón sin ataques) sigue sin acciones hasta su primer pulso: fuera del pulso no hay dónde ponerlas sin romper "música primero".
+
 ---
 
 ### Ola 7 — Ediciones del autor y editor de niveles 💤 (aplazada: futura actualización)

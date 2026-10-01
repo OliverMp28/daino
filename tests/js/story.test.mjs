@@ -14,7 +14,8 @@ import {
     CHILD_ROWS, SHIP_ROWS, SHIP_WATERLINE, STORY_CELL, STORY_SOLID_MATERIALS, WOMAN_ROWS,
     createStoryColors, storyColors,
 } from '../../resources/js/game/entities/scenery/storyArt.js';
-import { ISLAND_LIFT, islandArt, islandMaterialSpans, islandSurfRows, islandVisibleHeight } from '../../resources/js/game/entities/scenery/storyIsland.js';
+import { ISLAND_GROUPS, ISLAND_LIFT, islandArt, islandLandAt, islandMaterialSpans, islandSurfRows, islandVisibleHeight } from '../../resources/js/game/entities/scenery/storyIsland.js';
+import { ISLAND_INKS, ISLAND_MATERIAL_MAPS } from '../../resources/js/game/entities/scenery/storyIslandParts.js';
 import { rgbToNumber } from '../../resources/js/game/scenes/color.js';
 import { SCENES, sceneCycle } from '../../resources/js/game/scenes/registry.js';
 import { planSky } from '../../resources/js/game/scenes/skyClock.js';
@@ -233,29 +234,36 @@ test('la historia se coloca sin romperse en cualquier canción (los demás ofici
     }
 });
 
-test('la isla: una costa cercana y habitada, con las figuras en el borde y el farol en su mano', () => {
+test('la isla: una costa cercana, verde y habitada, con las figuras en el borde y el farol en su mano', () => {
     const art = islandArt();
     const sameWidth = (rows) => rows.every((r) => r.length === rows[0].length);
     assert.ok(sameWidth(SHIP_ROWS));
     assert.ok(SHIP_WATERLINE > 0 && SHIP_WATERLINE < SHIP_ROWS.length);
-    for (const grid of [art.rock, art.grass, art.house, art.houseLight, art.tower, art.towerLight]) {
-        assert.equal(grid.length, art.height);
-        assert.ok(grid.every((r) => r.length === art.width));
+    // Cada grupo del dibujo, del tamaño de la isla y solo con tintas conocidas.
+    assert.deepEqual(Object.keys(art.groups), [...ISLAND_GROUPS]);
+    for (const [id, grid] of [...Object.entries(art.groups), ...Object.entries(art.lights)]) {
+        assert.equal(grid.length, art.height, id);
+        assert.ok(grid.every((r) => r.length === art.width), id);
     }
+    const count = (grid, material) => grid.reduce((n, r) => n + [...r].filter((c) => ISLAND_INKS[c]?.[0] === material).length, 0);
+    for (const [id, grid] of Object.entries(art.groups)) {
+        const unknown = new Set(grid.flatMap((r) => [...r].filter((c) => c !== '.' && ISLAND_INKS[c] === undefined)));
+        assert.deepEqual([...unknown], [], `${id}: tintas sin material`);
+    }
+    for (const grid of Object.values(art.lights)) assert.ok(grid.every((r) => /^[.L]*$/.test(r)));
     assert.equal(islandArt(), art, 'el dibujo es siempre el mismo (se calcula una vez)');
-    for (const frames of [WOMAN_ROWS, CHILD_ROWS]) {
+    for (const frames of [WOMAN_ROWS, CHILD_ROWS, ...Object.values(art.palmFrames)]) {
         for (const fr of frames) {
             assert.ok(sameWidth(fr));
             assert.equal(fr.length, frames[0].length);
             assert.equal(fr[0].length, frames[0][0].length);
         }
     }
-    // Pies en la tierra: bajo la última fila de cada figura hay roca o hierba.
-    const solid = (x, y) => (art.rock[y]?.[x] ?? '.') !== '.' || (art.grass[y]?.[x] ?? '.') !== '.';
+    // Pies en la tierra: bajo la última fila de cada figura hay tierra.
     for (const [rows, [x0, y0]] of [[WOMAN_ROWS[0], art.spots.woman], [CHILD_ROWS[0], art.spots.child]]) {
         const bottom = y0 + rows.length - 1;
         const feet = [...rows.at(-1)].map((c, i) => (c !== '.' ? x0 + i : null)).filter((x) => x !== null);
-        assert.ok(feet.some((x) => solid(x, bottom) || solid(x, bottom + 1)), `pies en el aire en la fila ${bottom}`);
+        assert.ok(feet.some((x) => islandLandAt(x, bottom) || islandLandAt(x, bottom + 1)), `pies en el aire en la fila ${bottom}`);
     }
     // El farol, junto a la mano de ella; ella, en el borde del cabo.
     const [lx, ly] = art.spots.lamp;
@@ -263,10 +271,31 @@ test('la isla: una costa cercana y habitada, con las figuras en el borde y el fa
     const touches = WOMAN_ROWS[0].some((r, y) => [...r].some((c, x) => c !== '.' && Math.abs(wx + x + 0.5 - lx) <= 1.5 && Math.abs(wy + y + 0.5 - ly) <= 1.5));
     assert.ok(touches, 'el farol no está en su mano');
     assert.ok(art.wall - (wx + WOMAN_ROWS[0][0].length) < 12, 'ella está en el borde');
-    // No es una roca: tiene faro, casa con ventanas y palmeras, y es mucho más ancha que alta.
-    assert.ok(art.tower.some((r) => r.includes('t')) && art.towerLight.some((r) => r.includes('L')));
-    assert.ok(art.house.some((r) => r.includes('w')) && art.houseLight.some((r) => r.includes('L')));
-    assert.ok(art.palms.length >= 3);
+
+    // No es una roca gris (playtest: "se siente a muy rocoso", "desértica"): la
+    // tierra es sobre todo hierba, con tierra a la vista, y la roca es la menor parte.
+    const land = art.groups.land;
+    const [grass, earth, rock] = ['grass', 'earth', 'rock'].map((m) => count(land, m));
+    assert.ok(grass > rock && earth > 0, `hierba ${grass}, tierra ${earth}, roca ${rock}`);
+    assert.ok(rock / (grass + earth + rock) < 0.4, 'la roca, menos del 40 % de la tierra');
+    // Habitada: el faro con su linterna; una casa que no es una caja (muro, tejado,
+    // madera y varias ventanas, cada una con su cruceta); árboles que la arropan;
+    // un palmeral con formas distintas; arbustos, cerca y bote delante.
+    assert.ok(count(art.groups.lighthouse, 'tower') > 0 && art.lights.lighthouse.some((r) => r.includes('L')));
+    for (const m of ['wall', 'roof', 'wood', 'dark']) assert.ok(count(art.groups.home, m) > 0, `la casa sin ${m}`);
+    const litRows = art.lights.home.filter((r) => r.includes('L'));
+    const litRuns = new Set(litRows.flatMap((r) => [...r.matchAll(/L+/g)].map((m) => m.index)));
+    assert.ok(litRuns.size >= 6, `${litRuns.size} cristales encendidos en la casa`);
+    assert.ok(count(art.groups.back, 'leaf') > 300, 'árboles detrás de la casa');
+    assert.ok(count(art.groups.front, 'leaf') > 0 && count(art.groups.front, 'wood') > 0);
+    assert.ok(art.palms.length >= 5 && new Set(art.palms.map((p) => p.kind)).size >= 3, 'un palmeral, no dos palmeras iguales');
+    // Ninguna palmera pegada a la casa (playtest: "puestas con calzador").
+    const homeCols = art.groups.home.flatMap((r) => [...r].map((c, x) => (c !== '.' ? x : -1)).filter((x) => x >= 0));
+    const homeLeft = Math.min(...homeCols);
+    for (const p of art.palms) assert.ok(p.x + art.palmFrames[p.kind][0][0].length < homeLeft - 40, 'una palmera junto a la casa');
+    // Cada material tiene con qué pintarse.
+    for (const material of STORY_SOLID_MATERIALS) assert.ok(ISLAND_MATERIAL_MAPS[material] !== undefined, material);
+
     // Las proporciones: el faro es más alto que la casa, la casa que ella y ella que el niño.
     const spans = islandMaterialSpans();
     const towerH = spans.tower[1] - spans.tower[0];

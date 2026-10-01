@@ -20,6 +20,8 @@
 //   - Emoción (playtest de la 6b): mientras la música suena no hay silencios de
 //     juego más largos que el máximo de su dificultad, y What's Up Danger en
 //     Extremo es denso y rápido de verdad.
+//   - La partida empieza con la música (playtest de One Day): el principio
+//     también cuenta, aunque la canción abra con un tramo de reposo.
 //   - Música (segundo playtest de la dificultad): fuera del pulso solo hay acción
 //     sobre un golpe que se oye. La exigencia de los acentos, en challenge.test.mjs.
 
@@ -242,10 +244,12 @@ test('silencio: donde la música calla no hay acciones', () => {
 });
 
 /**
- * Huecos entre acciones mientras la música suena, fuera de lo que se deja libre a
- * propósito: el tutorial, los portales y el estreno de cada modo, el vuelo (sus
- * notas no son obstáculos), la vuelta a leer la velocidad tras un acelerón, el
- * final y los silencios de verdad. Cada uno con el máximo de su dificultad.
+ * Huecos entre acciones mientras la música suena (el primero, desde que la música
+ * tiene pulso), fuera de lo que se deja libre a propósito: los portales y el
+ * estreno de cada modo, el vuelo (sus notas no son obstáculos), la vuelta a leer
+ * la velocidad tras un acelerón, el final y los silencios de verdad. Cada uno con
+ * el máximo de su dificultad: más largo entre los saltos del tutorial y en un
+ * reposo tras haber jugado, no en el reposo con que abre la canción.
  */
 function playedRests(analysis, chart, profile) {
     const model = buildMusicModel(analysis);
@@ -254,16 +258,19 @@ function playedRests(analysis, chart, profile) {
     const secs = sections(chart);
     const speedChanges = chart.world.speedChanges.map((c) => c.t);
     const out = [];
-    for (let i = CHARTER_RULES.introActions; i < acts.length; i++) {
-        const a = acts[i - 1];
+    const openingEnd = secs.find((sec) => sec.level > 0)?.t ?? Infinity;
+    for (let i = 0; i < acts.length; i++) {
+        const a = i > 0 ? acts[i - 1] : Math.max(CHARTER_RULES.firstActionMinS, model.beats[0] ?? 0);
         const b = acts[i];
-        const debut = portals.some((p) => p.mode !== 'run' && a < p.t + 2.5 && acts.filter((t) => t >= p.t).indexOf(b) <= 1);
+        const debut = portals.some((p) => p.mode !== 'run' && b >= p.t && a < p.t + 2.5 && acts.filter((t) => t >= p.t).indexOf(b) <= 1);
         if (debut || portals.some((p) => p.t > a - 2.5 && p.t < b + 2.5)) continue;
         if (portals.some((p, k) => p.mode === 'fly' && a < (portals[k + 1]?.t ?? Infinity) && b > p.t)) continue;
         if (speedChanges.some((t) => t > a - 1.5 && t < b + 1.5)) continue;
         if (b > chart.audio.durationSec - 10 || model.energyMean(a, b) < 0.12) continue;
-        const level = secs.filter((s) => s.t <= (a + b) / 2).at(-1)?.level ?? 2;
-        out.push({ a, gap: b - a, max: profile.maxRestS * (level === 0 ? CHARTER_RULES.restLevelFactor : 1) });
+        const mid = (a + b) / 2;
+        const level = secs.filter((s) => s.t <= mid).at(-1)?.level ?? 2;
+        const spaced = i < CHARTER_RULES.introActions || (level === 0 && mid >= openingEnd);
+        out.push({ a, gap: b - a, max: profile.maxRestS * (spaced ? CHARTER_RULES.restLevelFactor : 1) });
     }
     return out;
 }
@@ -283,6 +290,51 @@ test('silencios de juego: mientras la música suena, ningún hueco pasa del máx
             assert.deepEqual(over.map((r) => `${r.a.toFixed(1)}+${r.gap.toFixed(2)}`), [], `${bpm} BPM d${report.difficulty}: huecos por encima de ${profile.maxRestS} s`);
         }
     }
+});
+
+test('la partida empieza con la música: una canción que abre con un reposo largo no deja el nivel vacío', async () => {
+    // Playtest de One Day (Relajado): "casi hasta el 0:30 no pasa nada". Su primer
+    // tramo (35 s) es de reposo, el reposo de Relajado no lleva acciones y el
+    // relleno de silencios se saltaba todo lo anterior al tutorial: primera acción
+    // en el segundo 35. Fácil no es medio minuto sin hacer nada.
+    const slow = makeSyntheticSong({
+        bpm: 60,
+        sections: [
+            { bars: 9, energy: 0.2, hits: 0.2, role: 'intro' },
+            { bars: 6, energy: 0.5, hits: 0.6, role: 'verse' },
+            { bars: 8, energy: 0.9, hits: 0.9, role: 'chorus' },
+            { bars: 6, energy: 0.5, hits: 0.6, role: 'verse' },
+            { bars: 8, energy: 0.95, hits: 0.95, role: 'chorus' },
+            { bars: 4, energy: 0.3, hits: 0.3, role: 'outro' },
+        ],
+    });
+    assert.equal(buildChart(slow, { seed: 1, difficulty: 1 }).chart.events.find((e) => e.type === 'section').level, 0, 'la canción de prueba abre en reposo');
+    for (const difficulty of [1, 2, 3, 4, 5]) {
+        const { chart, report } = buildChart(slow, { seed: 1, difficulty });
+        const profile = DIFFICULTY_PROFILES[report.difficulty];
+        const rests = playedRests(slow, chart, profile);
+        const opening = obstacles(chart).filter((e) => e.t < 36).length;
+        assert.ok(opening >= 6, `d${report.difficulty}: ${opening} acciones en los primeros 36 s`);
+        assert.deepEqual(rests.filter((r) => r.gap > r.max + 0.02).map((r) => `${r.a.toFixed(1)}+${r.gap.toFixed(2)}`), [], `d${report.difficulty}: huecos largos`);
+        // El tutorial sigue siendo de saltos espaciados.
+        const obs = obstacles(chart);
+        for (let i = 0; i < CHARTER_RULES.introActions; i++) {
+            assert.equal(OBSTACLE_KIND[obs[i].kind].altitude, 0, `d${difficulty}: la acción ${i} del tutorial es un salto`);
+            if (i > 0) assert.ok(obs[i].t - obs[i - 1].t >= 1.1 - 1e-9, `d${difficulty}: tutorial espaciado`);
+        }
+    }
+
+    // One Day, tal como se juega: la primera acción llega con el primer compás de
+    // la música (su pulso empieza en el segundo 7.7) y a los 30 s ya se han jugado
+    // el tutorial y varios saltos más.
+    const baked = JSON.parse(await readFile(path.join(ROOT, 'database/seeds/official/baked/one-day.json'), 'utf8'));
+    const { chart, report } = buildChart(baked.analysis, { sha256: baked.audio.sha256, difficulty: 1 });
+    const acts = obstacles(chart).map((e) => e.t);
+    assert.ok(acts[0] < baked.analysis.beats[0] + 4.2, `primera acción en ${acts[0].toFixed(1)} s (el pulso empieza en ${baked.analysis.beats[0].toFixed(1)})`);
+    assert.ok(acts.filter((t) => t < 30).length >= 8, `${acts.filter((t) => t < 30).length} acciones antes del 0:30`);
+    let longest = 0;
+    for (let i = 1; i < acts.length && acts[i] < 60; i++) longest = Math.max(longest, acts[i] - acts[i - 1]);
+    assert.ok(longest <= DIFFICULTY_PROFILES[report.difficulty].maxRestS * CHARTER_RULES.restLevelFactor + 0.02, `hueco de ${longest.toFixed(1)} s en el primer minuto`);
 });
 
 test('regresión del playtest de la 6b: What\'s Up Danger en Extremo es denso y rápido, y cada dificultad más que la anterior', async () => {

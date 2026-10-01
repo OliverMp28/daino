@@ -69,7 +69,7 @@ import {
     normalizeRequestedDifficulty,
     resolveDifficulty,
 } from './difficulty.js';
-import { chooseBarActions, createPhraseMemory, dropOrphanRings, duckThreshold, pairGap, segmentGrooves } from './patterns.js';
+import { INTRO_GAP_S, chooseBarActions, createPhraseMemory, dropOrphanRings, duckThreshold, pairGap, segmentGrooves } from './patterns.js';
 
 /**
  * Reglas del charter. Cambiar cualquiera altera los charts generados: sube
@@ -94,7 +94,12 @@ export const CHARTER_RULES = Object.freeze({
     speedTempoMax: 200,
     // La aceleración del mundo vive en speedPlan.js (SPEED_RULES) y la exigencia
     // de los acentos en accents.js (ACCENT_RULES).
-    /** En un tramo de reposo, el silencio de juego máximo (`maxRestS`) se alarga tanto. */
+    /**
+     * En un tramo de reposo, el silencio de juego máximo (`maxRestS`) se alarga
+     * tanto: un respiro tras haber jugado. También entre los saltos del tutorial
+     * (van espaciados a propósito, pero no sin límite). No en el reposo con que
+     * ABRE una canción: ahí todavía no hay nada de lo que descansar.
+     */
     restLevelFactor: 1.6,
     /** Techo de reparaciones del validador (defensa ante bucles). */
     maxRepairs: 400,
@@ -458,6 +463,15 @@ function chartActions(ctx) {
  * cabe entre sus vecinas y la dificultad lo permite, un agachado). Donde la
  * música calla de verdad (un break en silencio), el nivel también calla.
  *
+ * La partida empieza con la música (playtest de One Day, T02.6): el principio
+ * también cuenta. Antes el relleno se saltaba todo lo anterior a la tercera
+ * acción para no tocar el tutorial, y una canción que abre con un tramo de reposo
+ * largo dejaba el nivel vacío hasta que acababa (One Day en Relajado, cuyo reposo
+ * no lleva acciones: la primera, en el segundo 35; What's Up Danger, en el 13).
+ * "Fácil" no es medio minuto sin hacer nada. Ahora el tutorial sigue espaciado
+ * (saltos en tiempos fuertes, con el máximo del reposo) pero llega con los
+ * primeros compases, y el reposo que abre la canción se rellena como la calma.
+ *
  * Tras el playtest de la 6b: con silencios de hasta 4.5-8 s por dificultad, un
  * compás entero sin nada que hacer era lo normal en las canciones de 60-95 BPM
  * (What's Up Danger en Extremo: 16 huecos de 2 s o más). Ahora el máximo va de
@@ -472,18 +486,21 @@ function fillLongRests(actions, ctx) {
         const own = actions.filter((x) => x.t >= span.tIn && x.t < span.tOut);
         debutEnd.set(span, own[MODE_RULES.introActions - 1]?.t ?? span.tOut);
     }
+    // Donde acaba el reposo con que abre la canción (si abre con él).
+    const openingEnd = arc.segments.find((seg) => seg.level > 0)?.t0 ?? Infinity;
     for (let guard = 0; guard < 2000; guard++) {
         let inserted = false;
-        // Tampoco el tutorial del principio: sus saltos van espaciados a propósito.
-        for (let i = CHARTER_RULES.introActions - 1; i < out.length; i++) {
+        for (let i = -1; i < out.length; i++) {
             const a = i >= 0 ? out[i] : null;
             const b = i + 1 < out.length ? out[i + 1] : null;
             const rest = longestRest(a !== null ? a.t : tMin, b !== null ? b.t : tMax, modes.freeSpans);
             if (rest === null) continue;
             const { from, to } = rest;
             const mid = (from + to) / 2;
-            const resting = arc.bars[barAt(model, mid)]?.level === 0;
-            if (to - from <= profile.maxRestS * (resting ? CHARTER_RULES.restLevelFactor : 1)) continue;
+            // El tutorial: los huecos hasta su última acción (saltos espaciados).
+            const tutorial = i < CHARTER_RULES.introActions - 1;
+            const resting = arc.bars[barAt(model, mid)]?.level === 0 && mid >= openingEnd;
+            if (to - from <= profile.maxRestS * (tutorial || resting ? CHARTER_RULES.restLevelFactor : 1)) continue;
             if (model.energyMean(from, to) < 0.12) continue;
 
             let best = null;
@@ -494,16 +511,18 @@ function fillLongRests(actions, ctx) {
                 for (const slot of bar.slots) {
                     if (!slot.onBeat || slot.t < tMin || slot.t > tMax || !modes.allows(slot.t)) continue;
                     if (a === null && slot.t < from) continue;
+                    if (tutorial && slot.metric < 0.8) continue;
                     const span = modes.spanAt(slot.t);
                     if (span !== null && slot.t <= debutEnd.get(span)) continue;
                     // El relleno es la acción básica de cada modo: saltar o invertir; al
                     // correr, agacharse si un salto no cabe.
                     const flip = modes.modeAt(slot.t) === 'flip';
-                    const types = flip ? ['flip'] : unlocked('duck', slot.t) ? ['jump', 'duck'] : ['jump'];
+                    const types = flip ? ['flip'] : !tutorial && unlocked('duck', slot.t) ? ['jump', 'duck'] : ['jump'];
+                    const introGap = tutorial ? INTRO_GAP_S : 0;
                     for (const type of types) {
                         if (!readerOk(slot.t, type)) continue;
-                        if (a !== null && slot.t - a.t < pairGap(a.type, type, speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1) continue;
-                        if (b !== null && b.t - slot.t < pairGap(type, b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1) continue;
+                        if (a !== null && slot.t - a.t < Math.max(introGap, pairGap(a.type, type, speed.speedAt(slot.t), profile, unlocked('combo', slot.t)) + 0.1)) continue;
+                        if (b !== null && b.t - slot.t < Math.max(introGap, pairGap(type, b.type, speed.speedAt(b.t), profile, unlocked('combo', b.t)) + 0.1)) continue;
                         const score = slot.strength + 0.3 * slot.metric - (0.4 * Math.abs(slot.t - mid)) / (to - from) - (type === 'duck' ? 0.2 : 0);
                         if (score > bestScore) {
                             bestScore = score;

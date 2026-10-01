@@ -1,6 +1,6 @@
 // Arte de la primera historia de autor, One Day (T02.6): el barco, las figuras y
-// los materiales con que la hora lo tiñe todo. La isla (tierra, faro, casa y
-// palmeras) se dibuja con código en storyIsland.js. Aparte de las capas
+// los materiales con que la hora lo tiñe todo. La isla (tierra, faro, casa,
+// árboles y palmeras) se dibuja con código en storyIsland.js. Aparte de las capas
 // (StoryShip.js, StoryCliff.js) para que el guardián de legibilidad
 // (scenes/backdrops.js) sepa tamaños y colores sin Pixi.
 //
@@ -217,11 +217,14 @@ export const LAMP_GLOW_ROWS = Object.freeze(['..QQ..', '.QQQQ.', 'QQQQQQ', 'QQQQ
  *   hull              El casco del barco: lo lejano, oscurecido.
  *   sailCanvas/Shade/Haze  Las velas: lona con la luz de las nubes (el mismo
  *                     blanco que el sol tiñe), en sombra y con la bruma de lo lejano.
- *   rock, grass       La isla.
+ *   rock, earth, grass  La isla: roca parda (no gris), tierra y hierba. No pueden
+ *                     ser más claras: lo que se juega pasa por delante y el
+ *                     guardián mide su contraste; el verde gana en saturación.
  *   wall, roof        La casa (piedra encalada y teja).
  *   tower, band       El faro (blanco y franjas rojas). Gris claro y no blanco: el
  *                     Dino es blanco y pasa por delante (lo mide el guardián).
- *   palm, trunk       Las palmeras.
+ *   leaf, wood        Hojas (palmeras, árboles, arbustos) y madera (troncos,
+ *                     puertas, la cerca, el bote).
  *   dark              Puertas, ventanas apagadas y la linterna del faro: lo
  *                     cercano, muy oscuro.
  */
@@ -230,14 +233,15 @@ export const STORY_MATERIALS = Object.freeze({
     sailCanvas: '#f0d29e',
     sailShade: 0.42,
     sailHaze: 0.18,
-    rockDay: '#58483c', rockDayMix: 0.8,
-    grassDay: '#406030', grassDayMix: 0.85,
+    rockDay: '#6e5540', rockDayMix: 0.85,
+    earthDay: '#73492a', earthDayMix: 0.85,
+    grassDay: '#2f6628', grassDayMix: 0.9,
     wallDay: '#6e6458', wallDayMix: 0.6,
     roofDay: '#7a3428', roofDayMix: 0.6,
     towerDay: '#84847f', towerDayMix: 0.45,
     bandDay: '#86302a', bandDayMix: 0.6,
-    palmDay: '#34602c', palmDayMix: 0.8,
-    trunkDay: '#4a3a2a', trunkDayMix: 0.55,
+    leafDay: '#2a6630', leafDayMix: 0.85,
+    woodDay: '#5a4028', woodDayMix: 0.7,
     darkShade: 0.55,
     /** Elevación del sol (grados) a la que la luz es ya de pleno día. */
     daylightElev: 10,
@@ -248,17 +252,18 @@ const SAIL_CANVAS = hexToRgb(M.sailCanvas);
 /** [clave de salida, color de día, cuánto conserva]: lo que la isla tiñe igual. */
 const LAND = Object.freeze([
     ['rock', hexToRgb(M.rockDay), M.rockDayMix],
+    ['earth', hexToRgb(M.earthDay), M.earthDayMix],
     ['grass', hexToRgb(M.grassDay), M.grassDayMix],
     ['wall', hexToRgb(M.wallDay), M.wallDayMix],
     ['roof', hexToRgb(M.roofDay), M.roofDayMix],
     ['tower', hexToRgb(M.towerDay), M.towerDayMix],
     ['band', hexToRgb(M.bandDay), M.bandDayMix],
-    ['palm', hexToRgb(M.palmDay), M.palmDayMix],
-    ['trunk', hexToRgb(M.trunkDay), M.trunkDayMix],
+    ['leaf', hexToRgb(M.leafDay), M.leafDayMix],
+    ['wood', hexToRgb(M.woodDay), M.woodDayMix],
 ]);
 
 /** Materiales que se ven delante del cielo (el guardián mide el más claro). */
-export const STORY_SOLID_MATERIALS = Object.freeze(['rock', 'grass', 'wall', 'roof', 'tower', 'band', 'palm', 'trunk']);
+export const STORY_SOLID_MATERIALS = Object.freeze(['rock', 'earth', 'grass', 'wall', 'roof', 'tower', 'band', 'leaf', 'wood']);
 
 /** Contenedor reutilizable de los colores de la historia. */
 export function createStoryColors() {

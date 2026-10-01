@@ -114,8 +114,13 @@ export const CHART_FORMAT_VERSION = 5;
  * canciones cortas — hileras de cactus hasta 408 px (a 1000 px/s la de 328
  * perdonaba ±82 ms) y último escalón que cierra las aperturas del acento hasta
  * el margen mínimo de la dificultad, nunca por debajo (Ola 6c, calibración).
+ * 13: la partida empieza con la música — el relleno de silencios de juego
+ * cuenta también el principio (el tutorial llega con los primeros compases y el
+ * reposo que abre una canción se rellena como la calma); antes una canción que
+ * abría con un reposo largo dejaba el nivel vacío hasta que acababa (playtest de
+ * One Day, T02.6: primera acción en el segundo 35).
  */
-export const CHARTER_VERSION = 12;
+export const CHARTER_VERSION = 13;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */
