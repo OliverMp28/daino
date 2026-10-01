@@ -116,6 +116,16 @@ export const DUCK_HITBOX_PADDING = { top: 6, right: 30, bottom: 0, left: 16 };
 export const FAST_FALL_MULTIPLIER = 2.4;
 
 /**
+ * El mismo fast-fall cuando el Dino ya va hacia abajo: más fuerte, para que "bajar
+ * ya" se note (playtest de Oct 2026: "baja más rápido, pero no lo suficiente").
+ * Solo bajando: subiendo se queda el de siempre, porque un ↓ pulsado nada más
+ * saltar (salto y ptero seguidos) con más gravedad dejaría al Dino agachado
+ * encima del cactus que está saltando (medido: con 3.0 en todo el salto el
+ * charter perdía esas combinaciones).
+ */
+export const FAST_FALL_DOWN_MULTIPLIER = 4;
+
+/**
  * Salto con control (Oct 2026): un toque da el salto normal (el arco base, el que
  * el charter usa para colocar los obstáculos) y mantener la tecla lo hace MÁS
  * ALTO Y MÁS LARGO: pasado `afterS`, mientras sube con la tecla abajo la gravedad

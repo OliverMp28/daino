@@ -18,6 +18,7 @@ import {
     DUCK_HITBOX_PADDING,
     DUCK_MIN_S,
     DUCK_SIZE,
+    FAST_FALL_DOWN_MULTIPLIER,
     FAST_FALL_MULTIPLIER,
     FLIP_MODE,
     GRAVITY,
@@ -84,7 +85,7 @@ export const RUN_MODE = Object.freeze({
 
     integrate(body, dt, groundY) {
         let g = GRAVITY;
-        if (body.fastFall) g = GRAVITY * FAST_FALL_MULTIPLIER;
+        if (body.fastFall) g = GRAVITY * (body.vy > 0 ? FAST_FALL_DOWN_MULTIPLIER : FAST_FALL_MULTIPLIER);
         else if (body.jumpT >= 0) {
             // Mantenido, sube con menos gravedad: más alto y más tiempo en el aire.
             // Solo pasado `afterS`: un toque es exactamente el arco base.
