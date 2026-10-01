@@ -228,8 +228,8 @@ test('jugador virtual: salta y se agacha como siempre, e invierte ante cada cris
         { t: 6.5, type: 'obstacle', kind: 'CRYSTAL_CEIL' },
     ]);
     const script = virtualPlayerScript(sim, createSpeedProfile(450));
-    assert.deepEqual(script.map((s) => s.input), ['duckStart', 'duckStart', 'duckEnd', 'jump', 'jump', 'jump'],
-        'entre dos pteros seguidos no suelta');
+    assert.deepEqual(script.map((s) => s.input), ['duckStart', 'duckStart', 'duckEnd', 'jump', 'jumpEnd', 'jump', 'jumpEnd', 'jump', 'jumpEnd'],
+        'entre dos pteros seguidos no suelta; cada salto es un toque (el arco base)');
     assert.deepEqual(script.filter((s) => s.input === 'jump').map((s) => s.at), [3, 6, 6.5]);
 });
 

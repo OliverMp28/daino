@@ -11,7 +11,8 @@
 // ptero.
 //
 // Ahora cada acción se supera pulsando en su golpe, se mantenga o no:
-//   - el salto es siempre el mismo arco;
+//   - un toque da el arco con el que se colocó el nivel; mantener lo hace más
+//     alto y más largo (el jugador calcula su salto), siempre por encima del normal;
 //   - un toque agacha lo que dura el gesto y el Dino no se levanta con algo encima.
 // Lo protege el "jugador de toques" jugando los niveles oficiales.
 
@@ -65,24 +66,34 @@ const tap = (input, at) => (input === 'jump'
     ? [[at, 'jump'], [at + TAP_S, 'jumpEnd']]
     : [[at, 'duckStart'], [at + TAP_S, 'duckEnd']]);
 
-test('el salto es siempre el mismo arco: da igual cuánto se mantenga la tecla', () => {
+test('un toque da el salto normal; mantener lo hace más alto y más largo, siempre por encima del normal', () => {
     const arc = (releaseAfter) => {
         const body = bodyState(GROUND);
         applyInput(body, 'jump');
-        let apex = 0;
-        let steps = 0;
+        const hs = [];
         for (let i = 0; i < 400; i++) {
             if (i === Math.round(releaseAfter / PHYSICS_STEP_S)) applyInput(body, 'jumpEnd');
             integrateBody(body, PHYSICS_STEP_S, GROUND);
-            apex = Math.max(apex, GROUND - DINO_SIZE.h - body.y);
-            steps++;
+            hs.push(GROUND - DINO_SIZE.h - body.y);
             if (body.grounded) break;
         }
-        return { apex, airS: steps * PHYSICS_STEP_S };
+        return hs;
     };
+    const base = arc(0);
+    const apex = (hs) => Math.max(...hs);
+    assert.ok(apex(base) > 150 && apex(base) < 165, `arco base: ${apex(base).toFixed(0)}`);
     const held = arc(Infinity);
-    assert.ok(held.apex > 150 && held.airS > 0.7, `salto completo: ${held.apex.toFixed(0)} de alto, ${held.airS.toFixed(2)} s`);
-    for (const release of [0.03, 0.06, 0.1, 0.2]) assert.deepEqual(arc(release), held, `soltando a los ${release} s`);
+    assert.ok(apex(held) > 185, `mantenido sube más: ${apex(held).toFixed(0)}`);
+    assert.ok(held.length * PHYSICS_STEP_S > base.length * PHYSICS_STEP_S + 0.1, `y dura más: ${(held.length * PHYSICS_STEP_S).toFixed(2)} s`);
+    let last = base;
+    assert.deepEqual(arc(0.06), base, 'un toque es exactamente el salto normal');
+    assert.deepEqual(arc(0.1), base);
+    for (const release of [0.06, 0.15, 0.2, 0.3, 0.4, Infinity]) {
+        const hs = arc(release);
+        assert.ok(apex(hs) >= apex(last) && hs.length >= last.length, `soltando a ${release} s: más alto y más largo que soltando antes`);
+        for (let i = 0; i < base.length; i++) assert.ok(hs[i] >= base[i] - 1e-6, `soltando a ${release} s, paso ${i}: por debajo del salto normal`);
+        last = hs;
+    }
 });
 
 test('un toque en el golpe salva un cactus a cualquier velocidad del juego, también pulsando ±80 ms', () => {
@@ -158,6 +169,7 @@ test('↓ en el aire acelera la caída y el Dino aterriza agachado; al soltar se
     const airtime = (duckAfter) => {
         const body = bodyState(GROUND);
         applyInput(body, 'jump');
+        applyInput(body, 'jumpEnd');
         let steps = 0;
         for (let i = 0; i < 400; i++) {
             if (i === duckAfter) applyInput(body, 'duckStart');

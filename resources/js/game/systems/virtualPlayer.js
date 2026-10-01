@@ -83,7 +83,8 @@ export function virtualPlayerScript(obstacles, profile, pressOffset = () => 0, h
     const tapS = flight.tapS ?? null;
     const presses = obstacles.map((o, index) => {
         const at = o.t + pressOffset(index);
-        if (o.def.action !== 'duck') return { at, input: 'jump', index, releaseAt: tapS === null ? -1 : at + tapS };
+        // Sin `tapS` suelta en el mismo instante: el arco base, con el que se valida todo.
+        if (o.def.action !== 'duck') return { at, input: 'jump', index, releaseAt: tapS === null ? at : at + tapS };
         return { at, input: 'duckStart', index, releaseAt: tapS === null ? o.cross + (o.def.w / 2 + DUCK_HOLD_MARGIN_PX) / profile.speedAt(o.cross) : at + tapS };
     });
     presses.sort((a, b) => a.at - b.at);
@@ -92,11 +93,13 @@ export function virtualPlayerScript(obstacles, profile, pressOffset = () => 0, h
     let nextDuckAt = Infinity;
     for (let i = presses.length - 1; i >= 0; i--) {
         const p = presses[i];
-        script.push({ at: p.at, input: p.input, index: p.index });
         if (p.input !== 'duckStart') {
+            // La lista se construye al revés: soltar va antes para quedar detrás de pulsar.
             if (p.releaseAt >= 0) script.push({ at: p.releaseAt, input: 'jumpEnd', index: p.index });
+            script.push({ at: p.at, input: p.input, index: p.index });
             continue;
         }
+        script.push({ at: p.at, input: p.input, index: p.index });
         // Solo suelta si nadie vuelve a agacharse antes: entonces manda ese.
         if (nextDuckAt >= p.releaseAt) script.push({ at: p.releaseAt, input: 'duckEnd', index: p.index });
         nextDuckAt = p.at;

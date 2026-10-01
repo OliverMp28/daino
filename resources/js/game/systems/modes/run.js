@@ -2,8 +2,9 @@
 //
 // Una pulsación, un gesto (Oct 2026): cada acción del nivel se supera pulsando
 // en su golpe, se mantenga la tecla o no.
-//   - Saltar: siempre el mismo arco, el que el charter usa para colocar los
-//     obstáculos. Mantener no lo alarga ni soltar lo corta (config.js cuenta por qué).
+//   - Saltar: un toque da el arco base, el que el charter usa para colocar los
+//     obstáculos. Mantener lo hace más alto y más largo (JUMP_HOLD): el jugador
+//     calcula su salto. El arco mantenido va siempre por encima del base.
 //   - Agacharse: un toque deja al Dino agachado un mínimo (DUCK_MIN_S) y, si al
 //     soltar tiene algo encima, sigue agachado hasta que pasa (`settle`): nadie
 //     se levanta debajo de un ptero. Mantener sigue valiendo.
@@ -21,6 +22,7 @@ import {
     FLIP_MODE,
     GRAVITY,
     JUMP_BUFFER_S,
+    JUMP_HOLD,
     JUMP_RING,
     JUMP_VELOCITY,
     MODE_COLORS,
@@ -36,6 +38,9 @@ function jump(body) {
     if (body.dead) return false;
     if (!body.grounded && body.coyoteT <= 0) return false;
     launch(body, JUMP_VELOCITY);
+    // Salto del suelo: mantenido sube más (JUMP_HOLD). El de un anillo, no.
+    body.jumpT = 0;
+    body.jumpHeld = body.jumpKey;
     return true;
 }
 
@@ -48,6 +53,8 @@ function launch(body, velocity) {
     body.duckHeld = false;
     body.duckT = 0;
     body.fastFall = false;
+    body.jumpT = -1;
+    body.jumpHeld = false;
 }
 
 /** @type {import('./index.js').MovementMode} */
@@ -76,7 +83,14 @@ export const RUN_MODE = Object.freeze({
     },
 
     integrate(body, dt, groundY) {
-        const g = body.fastFall ? GRAVITY * FAST_FALL_MULTIPLIER : GRAVITY;
+        let g = GRAVITY;
+        if (body.fastFall) g = GRAVITY * FAST_FALL_MULTIPLIER;
+        else if (body.jumpT >= 0) {
+            // Mantenido, sube con menos gravedad: más alto y más tiempo en el aire.
+            // Solo pasado `afterS`: un toque es exactamente el arco base.
+            if (body.jumpHeld && body.vy < 0 && body.jumpT >= JUMP_HOLD.afterS) g = GRAVITY * JUMP_HOLD.liftGravity;
+            body.jumpT += dt;
+        }
 
         body.vy += g * dt;
         body.y += body.vy * dt;
@@ -88,6 +102,7 @@ export const RUN_MODE = Object.freeze({
             body.grounded = true;
             body.coyoteT = COYOTE_TIME_S;
             body.fastFall = false;
+            body.jumpT = -1;
         } else {
             body.grounded = false;
             body.coyoteT = Math.max(0, body.coyoteT - dt);
@@ -119,9 +134,14 @@ export const RUN_MODE = Object.freeze({
     input(body, input) {
         switch (input) {
             case 'jump':
+                body.jumpKey = true;
                 if (jump(body)) return 'jump';
                 // Pulsado un pelín antes de aterrizar: se guarda (jump buffer).
                 if (!body.grounded && !body.dead) body.jumpBufferT = JUMP_BUFFER_S;
+                return null;
+            case 'jumpEnd':
+                body.jumpKey = false;
+                body.jumpHeld = false;
                 return null;
             case 'duckStart': {
                 if (body.dead) return null;
@@ -246,7 +266,7 @@ let arcCache = null;
 function jumpArc() {
     if (arcCache !== null) return arcCache;
     const body = bodyState(1000);
-    jump(body);
+    jump(body);   // sin mantener: el arco base
     const ys = [];
     for (let i = 0; i < 400; i++) {
         RUN_MODE.integrate(body, PHYSICS_STEP_S, 1000);

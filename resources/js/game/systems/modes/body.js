@@ -28,6 +28,9 @@ export const BODY_EVENT = Object.freeze({
  * @property {boolean} duckHeld    Se mantiene pulsado agacharse.
  * @property {number} duckT        Lo que queda del mínimo de un agachado (DUCK_MIN_S).
  * @property {boolean} fastFall
+ * @property {boolean} jumpKey     La tecla de salto está abajo.
+ * @property {boolean} jumpHeld    Este salto sigue mantenido (sube más: JUMP_HOLD).
+ * @property {number} jumpT        Segundos desde que despegó del suelo (−1: no es un salto del suelo).
  * @property {number} coyoteT
  * @property {number} jumpBufferT
  * @property {boolean} dead
@@ -47,6 +50,9 @@ export function bodyState(groundY) {
         duckHeld: false,
         duckT: 0,
         fastFall: false,
+        jumpKey: false,
+        jumpHeld: false,
+        jumpT: -1,
         coyoteT: COYOTE_TIME_S,
         jumpBufferT: 0,
         dead: false,

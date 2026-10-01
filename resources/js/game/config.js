@@ -115,6 +115,22 @@ export const DUCK_HITBOX_PADDING = { top: 6, right: 30, bottom: 0, left: 16 };
  */
 export const FAST_FALL_MULTIPLIER = 2.4;
 
+/**
+ * Salto con control (Oct 2026): un toque da el salto normal (el arco base, el que
+ * el charter usa para colocar los obstáculos) y mantener la tecla lo hace MÁS
+ * ALTO Y MÁS LARGO: pasado `afterS`, mientras sube con la tecla abajo la gravedad
+ * es menor (hasta ~193 de alto y 0.85 s de aire, frente a 158 y 0.72 s). Un toque
+ * (menos de `afterS`) es EXACTAMENTE el arco base: el nivel se supera a toques. El jugador
+ * calcula su salto: corto y rápido con un toque, largo manteniendo. El arco
+ * mantenido va siempre por encima del base, así que nunca quita margen sobre un
+ * obstáculo; lo que cambia es que aterriza más tarde (decisión del jugador).
+ * Más alto no cabe: con un anillo encima se saldría de las pantallas más anchas.
+ *
+ *   afterS        Cuánto hay que mantener para que el salto empiece a alargarse.
+ *   liftGravity   Gravedad mientras sube con la tecla mantenida (× GRAVITY).
+ */
+export const JUMP_HOLD = Object.freeze({ afterS: 0.12, liftGravity: 0.7 });
+
 /** Ventana tras dejar el suelo en la que el salto todavía cuenta (coyote time). */
 export const COYOTE_TIME_S = 0.09;
 
