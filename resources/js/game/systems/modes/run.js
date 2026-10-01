@@ -1,29 +1,36 @@
 // Modo CORRER — saltar y agacharse (Bloque 5 + rediseño Jul 2026).
 //
-// Gravedad variable de plataformas moderno:
-//   - Subiendo con el botón ya soltado → gravedad × JUMP_CUT_MULTIPLIER
-//     (soltar pronto = salto corto; mantener = salto completo).
-//   - ↓ en el aire (fast-fall) → gravedad × FAST_FALL_MULTIPLIER, y anula el
-//     corte de salto (la intención "bajar YA" gana).
+// Una pulsación, un gesto (Oct 2026): cada acción del nivel se supera pulsando
+// en su golpe, se mantenga la tecla o no.
+//   - Saltar: siempre el mismo arco, el que el charter usa para colocar los
+//     obstáculos. Mantener no lo alarga ni soltar lo corta (config.js cuenta por qué).
+//   - Agacharse: un toque deja al Dino agachado un mínimo (DUCK_MIN_S) y, si al
+//     soltar tiene algo encima, sigue agachado hasta que pasa (`settle`): nadie
+//     se levanta debajo de un ptero. Mantener sigue valiendo.
+//   - ↓ en el aire (fast-fall) → gravedad × FAST_FALL_MULTIPLIER: es la manera de
+//     caer antes.
 //   - Coyote time tras dejar el suelo y jump buffer justo antes de aterrizar.
 
 import {
     COYOTE_TIME_S,
     DINO_SIZE,
     DUCK_HITBOX_PADDING,
+    DUCK_MIN_S,
     DUCK_SIZE,
     FAST_FALL_MULTIPLIER,
     FLIP_MODE,
     GRAVITY,
     JUMP_BUFFER_S,
-    JUMP_CUT_MULTIPLIER,
     JUMP_RING,
     JUMP_VELOCITY,
     MODE_COLORS,
     PHYSICS_STEP_S,
 } from '../../config.js';
-import { DINO_CENTER_X, obstacleHitbox, standingHitbox } from '../geometry.js';
+import { DINO_CENTER_X, FIGURE, obstacleRects, standingHitbox } from '../geometry.js';
 import { BODY_EVENT, bodyState } from './body.js';
+
+/** Caja de pie para preguntar si cabe levantarse (`settle`): no se asigna una por paso. */
+const STAND_PROBE = { x: 0, y: 0, w: 0, h: 0 };
 
 function jump(body) {
     if (body.dead) return false;
@@ -36,8 +43,10 @@ function launch(body, velocity) {
     body.vy = -velocity;
     body.grounded = false;
     body.coyoteT = 0;
-    body.jumpHeld = true;
+    // Saltar deja de agacharse, aunque ↓ siga pulsado (hay que volver a pulsarlo).
     body.ducking = false;
+    body.duckHeld = false;
+    body.duckT = 0;
     body.fastFall = false;
 }
 
@@ -46,7 +55,7 @@ export const RUN_MODE = Object.freeze({
     id: 'run',
     label: 'Correr',
     color: MODE_COLORS.run,
-    hint: Object.freeze({ keys: 'Espacio: saltar · ↓: agacharse', touch: 'Toca a la izquierda para saltar y mantén la derecha para agacharte' }),
+    hint: Object.freeze({ keys: 'Espacio: saltar · ↓: agacharse', touch: 'Toca a la izquierda para saltar y a la derecha para agacharte' }),
     actions: Object.freeze(['jump', 'duck']),
     /** Tras entrar, cuánto tarda en poder actuar con garantías: caer desde el techo de otro modo. */
     settleS: 0.45,
@@ -67,9 +76,7 @@ export const RUN_MODE = Object.freeze({
     },
 
     integrate(body, dt, groundY) {
-        let g = GRAVITY;
-        if (body.fastFall) g = GRAVITY * FAST_FALL_MULTIPLIER;
-        else if (body.vy < 0 && !body.jumpHeld) g = GRAVITY * JUMP_CUT_MULTIPLIER;
+        const g = body.fastFall ? GRAVITY * FAST_FALL_MULTIPLIER : GRAVITY;
 
         body.vy += g * dt;
         body.y += body.vy * dt;
@@ -86,6 +93,7 @@ export const RUN_MODE = Object.freeze({
             body.coyoteT = Math.max(0, body.coyoteT - dt);
         }
         if (body.jumpBufferT > 0) body.jumpBufferT = Math.max(0, body.jumpBufferT - dt);
+        if (body.duckT > 0) body.duckT = Math.max(0, body.duckT - dt);
 
         if (wasGrounded || !body.grounded) return BODY_EVENT.NONE;
         if (body.jumpBufferT > 0) {
@@ -96,6 +104,18 @@ export const RUN_MODE = Object.freeze({
         return BODY_EVENT.LANDED;
     },
 
+    /**
+     * Levantarse. Quien ya no mantiene ↓ y agotó el mínimo del gesto se levanta
+     * en cuanto cabe: en el suelo, solo si de pie no chocaría con nada (`hits`).
+     * Soltar pronto bajo un ptero ya no es morir; el Dino espera a que pase.
+     */
+    settle(body, hits) {
+        if (!body.ducking || body.duckHeld || body.duckT > 0) return;
+        if (body.grounded && hits(standingHitbox(body, STAND_PROBE, false), FIGURE.STANDING)) return;
+        body.ducking = false;
+        body.fastFall = false;
+    },
+
     input(body, input) {
         switch (input) {
             case 'jump':
@@ -103,19 +123,18 @@ export const RUN_MODE = Object.freeze({
                 // Pulsado un pelín antes de aterrizar: se guarda (jump buffer).
                 if (!body.grounded && !body.dead) body.jumpBufferT = JUMP_BUFFER_S;
                 return null;
-            case 'jumpEnd':
-                body.jumpHeld = false;
-                return null;
             case 'duckStart': {
                 if (body.dead) return null;
                 const wasStanding = !body.ducking;
                 body.ducking = true;
+                body.duckHeld = true;
+                body.duckT = DUCK_MIN_S;
                 if (!body.grounded) body.fastFall = true;
                 return wasStanding && body.grounded ? 'duck' : null;
             }
             case 'duckEnd':
-                body.ducking = false;
-                body.fastFall = false;
+                // La postura la resuelve `settle`: el mínimo del gesto y lo que haya encima.
+                body.duckHeld = false;
                 return null;
             default:
                 return null;
@@ -152,6 +171,10 @@ export const RUN_MODE = Object.freeze({
         return standingHitbox(body, out, false);
     },
 
+    figure(body) {
+        return body.ducking && body.grounded ? FIGURE.BOX : FIGURE.STANDING;
+    },
+
     /**
      * Adelanto por defecto: el tiempo al ápice del salto. Medido con la física
      * real (tests/js/sync-and-playability.test.mjs): la pulsación que maximiza
@@ -165,7 +188,7 @@ export const RUN_MODE = Object.freeze({
 
     /**
      * Márgenes de error de un salto aislado sobre un obstáculo del suelo, sin
-     * simular una partida: el salto completo se integra UNA vez con el paso de la
+     * simular una partida: el salto se integra UNA vez con el paso de la
      * física (`jumpArc`) y el margen sale de cuándo va por encima del obstáculo
      * frente a cuándo se solapan en horizontal, con los mismos hitboxes que la
      * partida. Lo usa `playability.timingMarginsS` (el charter lo consulta miles
@@ -184,36 +207,41 @@ export const RUN_MODE = Object.freeze({
         const G = 1000;
         const body = bodyState(G);
         const dino = standingHitbox(body, { x: 0, y: 0, w: 0, h: 0 });
-        const box = obstacleHitbox(def, DINO_CENTER_X - def.w / 2, G - def.h, { x: 0, y: 0, w: 0, h: 0 });
-        // Con el centro del obstáculo sobre el del Dino, cuánto mundo le falta
-        // para dejar de solapar por cada lado: antes del cruce ya solapa desde
-        // `reachBefore` de distancia y sigue haciéndolo `reachAfter` después.
-        const reachBefore = dino.x + dino.w - box.x;
-        const reachAfter = box.x + box.w - dino.x;
-        // Va por encima mientras la base de su hitbox no baja de la cima del obstáculo.
-        const clearY = box.y - (dino.y + dino.h - body.y);
         const arc = jumpArc();
-        let first = -1;
-        let last = -1;
-        for (let k = 0; k < arc.length; k++) {
-            if (arc[k] > clearY) continue;
-            if (first < 0) first = k;
-            last = k;
-        }
-        if (first < 0) return { early: 0, late: 0 };
-        // El paso k del arco se comprueba k pasos después de pulsar, más medio
-        // paso de media (la pulsación cae en cualquier punto de la rejilla). Al
-        // bajar, el choque lo detecta el paso SIGUIENTE al último por encima, y
-        // aterrizar lo retrasa otro medio: +2 pasos, medido.
         const dt = PHYSICS_STEP_S;
         const lead = this.leadS(def);
-        const late = lead - (first + 0.5) * dt - reachBefore / speedPxS;
-        const early = (last + 2) * dt - lead - reachAfter / speedPxS;
+        let early = Infinity;
+        let late = Infinity;
+        // Cada pieza del obstáculo (una sola caja, casi siempre) deja su margen;
+        // el salto tiene que salvarlas todas: manda la más estrecha por cada lado.
+        for (const box of obstacleRects(def, DINO_CENTER_X - def.w / 2, G - def.h)) {
+            // Con el centro del obstáculo sobre el del Dino, cuánto mundo le falta
+            // para dejar de solapar por cada lado: antes del cruce ya solapa desde
+            // `reachBefore` de distancia y sigue haciéndolo `reachAfter` después.
+            const reachBefore = dino.x + dino.w - box.x;
+            const reachAfter = box.x + box.w - dino.x;
+            // Va por encima mientras la base de su hitbox no baja de la cima de la pieza.
+            const clearY = box.y - (dino.y + dino.h - body.y);
+            let first = -1;
+            let last = -1;
+            for (let k = 0; k < arc.length; k++) {
+                if (arc[k] > clearY) continue;
+                if (first < 0) first = k;
+                last = k;
+            }
+            if (first < 0) return { early: 0, late: 0 };
+            // El paso k del arco se comprueba k pasos después de pulsar, más medio
+            // paso de media (la pulsación cae en cualquier punto de la rejilla). Al
+            // bajar, el choque lo detecta el paso SIGUIENTE al último por encima, y
+            // aterrizar lo retrasa otro medio: +2 pasos, medido.
+            late = Math.min(late, lead - (first + 0.5) * dt - reachBefore / speedPxS);
+            early = Math.min(early, (last + 2) * dt - lead - reachAfter / speedPxS);
+        }
         return late < 0 || early < 0 ? { early: 0, late: 0 } : { early, late };
     },
 });
 
-/** Y (esquina superior del box de pie) tras cada paso de un salto completo desde un suelo en 1000. */
+/** Y (esquina superior del box de pie) tras cada paso de un salto desde un suelo en 1000. */
 let arcCache = null;
 function jumpArc() {
     if (arcCache !== null) return arcCache;

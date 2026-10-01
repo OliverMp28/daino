@@ -15,14 +15,18 @@
 
 import { GRAVITY, JUMP_VELOCITY } from '../config.js';
 import { MOVEMENT_MODES, movementMode } from './modes/index.js';
-import { DINO_CENTER_X } from './geometry.js';
+import { DINO_CENTER_X, FIGURE } from './geometry.js';
 
 export {
     DINO_CENTER_X,
+    FIGURE,
     aabbHit,
     ceilingYOf,
     computeGroundY,
+    figureHit,
+    obstacleHit,
     obstacleHitbox,
+    obstacleRects,
     obstacleTopY,
     triggerZone,
 } from './geometry.js';
@@ -88,7 +92,28 @@ export function bodyHitbox(body, out = { x: 0, y: 0, w: 0, h: 0 }) {
 }
 
 /**
- * Segundos desde el despegue hasta el ápice de un salto COMPLETO. Deriva de la
+ * Qué parte de su caja es cuerpo (geometry.FIGURE): con ella y la caja,
+ * `figureHit` decide si algo lo toca.
+ * @param {object} body
+ */
+export function bodyFigure(body) {
+    return movementMode(body.mode).figure?.(body) ?? FIGURE.BOX;
+}
+
+/**
+ * Postura del cuerpo tras un paso (después de `integrateBody`, antes de mirar
+ * choques). La partida y el simulador lo llaman igual. `hits(box, figure)` dice
+ * si esa caja chocaría con algo en este instante.
+ *
+ * @param {object} body
+ * @param {(box: { x: number, y: number, w: number, h: number }, figure: number) => boolean} hits
+ */
+export function settlePosture(body, hits) {
+    movementMode(body.mode).settle?.(body, hits);
+}
+
+/**
+ * Segundos desde el despegue hasta el ápice del salto. Deriva de la
  * física: retocar `JUMP_VELOCITY` o `GRAVITY` reajusta solo el adelanto de los
  * obstáculos de correr.
  */

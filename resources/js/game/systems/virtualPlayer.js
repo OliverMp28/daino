@@ -5,11 +5,13 @@
 // obstáculo pulsa en su instante de acción (desplazado lo que diga
 // `pressOffset`), según la acción de su kind:
 //
-//   jump   pulsa saltar (salto completo: no suelta antes de tiempo). Si el Dino va
-//          por el aire dentro de un anillo (Ola 6c), la física lo convierte en un
-//          segundo salto: el jugador no hace nada distinto.
+//   jump   pulsa saltar. Si el Dino va por el aire dentro de un anillo (Ola 6c),
+//          la física lo convierte en un segundo salto: el jugador no hace nada distinto.
 //   duck   mantiene ↓ desde el golpe hasta que el ptero pasó del todo; si el
 //          siguiente también se pasa agachado y llega antes, no suelta entre medias.
+//          Con `tapS`, en cambio, da un toque: pulsa y suelta enseguida, como quien
+//          juega en un móvil. El nivel tiene que superarse igual (una pulsación,
+//          un gesto): lo comprueban los tests con los oficiales.
 //   flip   pulsa (cualquier botón invierte la gravedad).
 //   hold   (vuelo, Ola 6b) mantiene desde que empieza la nota hasta que acaba.
 //
@@ -70,17 +72,19 @@ export const FLIGHT_PLAYER = Object.freeze({
  *        del validador la acortan y la alargan.
  * @param {Array<{ t: number, until: number }>} [holds]  Notas mantenidas, en orden.
  * @param {{ course?: { spans: Array<{ tIn: number, tOut: number, points: Array<{ t: number, alt: number }> }> } | null,
- *           player?: typeof FLIGHT_PLAYER | null }} [flight]
+ *           player?: typeof FLIGHT_PLAYER | null, tapS?: number | null }} [flight]
  *        Con `course` (el túnel del nivel), las notas se vuelan mirándolo con
  *        `player` (FLIGHT_PLAYER por defecto; null = a ciegas). Sin él, a ciegas.
+ *        `tapS`: saltar y agacharse son toques de esa duración (por defecto se
+ *        mantiene el agachado hasta que pasa el obstáculo y el salto no se suelta).
  * @returns {ScriptedInput[]}  Ordenado por `at` (estable).
  */
 export function virtualPlayerScript(obstacles, profile, pressOffset = () => 0, holds = [], flight = {}) {
+    const tapS = flight.tapS ?? null;
     const presses = obstacles.map((o, index) => {
         const at = o.t + pressOffset(index);
-        return o.def.action === 'duck'
-            ? { at, input: 'duckStart', index, releaseAt: o.cross + (o.def.w / 2 + DUCK_HOLD_MARGIN_PX) / profile.speedAt(o.cross) }
-            : { at, input: 'jump', index, releaseAt: -1 };
+        if (o.def.action !== 'duck') return { at, input: 'jump', index, releaseAt: tapS === null ? -1 : at + tapS };
+        return { at, input: 'duckStart', index, releaseAt: tapS === null ? o.cross + (o.def.w / 2 + DUCK_HOLD_MARGIN_PX) / profile.speedAt(o.cross) : at + tapS };
     });
     presses.sort((a, b) => a.at - b.at);
 
@@ -89,7 +93,10 @@ export function virtualPlayerScript(obstacles, profile, pressOffset = () => 0, h
     for (let i = presses.length - 1; i >= 0; i--) {
         const p = presses[i];
         script.push({ at: p.at, input: p.input, index: p.index });
-        if (p.input !== 'duckStart') continue;
+        if (p.input !== 'duckStart') {
+            if (p.releaseAt >= 0) script.push({ at: p.releaseAt, input: 'jumpEnd', index: p.index });
+            continue;
+        }
         // Solo suelta si nadie vuelve a agacharse antes: entonces manda ese.
         if (nextDuckAt >= p.releaseAt) script.push({ at: p.releaseAt, input: 'duckEnd', index: p.index });
         nextDuckAt = p.at;

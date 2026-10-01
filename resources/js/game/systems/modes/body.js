@@ -24,9 +24,10 @@ export const BODY_EVENT = Object.freeze({
  * @property {number} y            Esquina superior del box de pie (DINO_SIZE).
  * @property {number} vy
  * @property {boolean} grounded    Apoyado en la superficie hacia la que cae.
- * @property {boolean} ducking
+ * @property {boolean} ducking     Postura agachada (se ve y cuenta en el suelo).
+ * @property {boolean} duckHeld    Se mantiene pulsado agacharse.
+ * @property {number} duckT        Lo que queda del mínimo de un agachado (DUCK_MIN_S).
  * @property {boolean} fastFall
- * @property {boolean} jumpHeld
  * @property {number} coyoteT
  * @property {number} jumpBufferT
  * @property {boolean} dead
@@ -43,8 +44,9 @@ export function bodyState(groundY) {
         vy: 0,
         grounded: true,
         ducking: false,
+        duckHeld: false,
+        duckT: 0,
         fastFall: false,
-        jumpHeld: false,
         coyoteT: COYOTE_TIME_S,
         jumpBufferT: 0,
         dead: false,

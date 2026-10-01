@@ -26,7 +26,13 @@
 // @property {(body: object, input: string) => string | null} input
 //           Aplica una entrada cruda ('jump', 'jumpEnd', 'duckStart', 'duckEnd').
 //           Devuelve el gesto que produjo ('jump', 'duck', 'flip') o null.
-// @property {(body: object, out: object) => object} hitbox
+// @property {(body: object, out: object) => object} hitbox  La caja que envuelve al cuerpo.
+// @property {(body: object) => number} [figure]
+//           Opcional: qué parte de esa caja es cuerpo (geometry.FIGURE). Sin él, la caja entera.
+// @property {(body: object, hits: (box: object, figure: number) => boolean) => void} [settle]
+//           Opcional: la postura tras cada paso, que puede depender de lo que hay
+//           alrededor (`hits` dice si una caja chocaría ahora). Correr lo usa para
+//           no levantarse debajo de algo.
 // @property {(def: object) => number} leadS  Adelanto de un kind de este modo.
 // @property {(def: object, speedPxS: number) => ({ early: number, late: number } | null)} [marginsS]
 //           Opcional: márgenes de error de un kind aislado sin simular (el de

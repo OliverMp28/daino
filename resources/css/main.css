@@ -48,6 +48,8 @@ body {
     width: 100%;
     height: 100%;
     overflow: hidden;
+    /* Móvil: ni rebote ni "tirar para recargar" en mitad de una partida. */
+    overscroll-behavior: none;
     background: #05050a;
     color: var(--color-daino-fg);
     font-family: var(--font-display);
@@ -68,6 +70,14 @@ body {
     display: block;
     width: 100%;
     height: 100%;
+    /* Se juega tocando y manteniendo el dedo sobre el lienzo: el navegador no
+       tiene que esperar a ver si es un desplazamiento o un zoom (retrasa el
+       toque), ni seleccionar nada, ni abrir el menú de pulsación larga. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
 }
 
 /* ---------------------------------------------------------------------------
@@ -142,6 +152,14 @@ body[data-drag="active"]::after {
 
 #menu-root { z-index: 30; }
 #hud-root  { z-index: 40; }
+
+/* El HUD se lee, no se selecciona: un dedo mantenido (agacharse, el propulsor)
+   no debe marcar sus textos ni abrir el menú de pulsación larga. */
+#hud-root {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
 
 /* Children interactivos del HUD/menú deben restaurar pointer-events. Usar
    `data-interactive="true"` en cada elemento clicable para que la regla aplique
@@ -974,6 +992,35 @@ kbd,
 .daino-hud__banner[data-shown="true"] {
     opacity: 1;
     transform: translate(-50%, 0) scale(1);
+}
+
+/* Cuenta atrás al reanudar desde la pausa: 3, 2, 1 en el centro de la escena. */
+.daino-hud__count {
+    position: absolute;
+    top: 38%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: clamp(4rem, 14vw, 9rem);
+    font-weight: 800;
+    line-height: 1;
+    color: var(--color-daino-fg);
+    text-shadow: 0 0 2.5rem color-mix(in oklch, var(--color-daino-high) 70%, transparent), 0 0.4rem 2rem rgba(0, 0, 0, 0.7);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.daino-hud__count[data-shown="true"] {
+    opacity: 1;
+    animation: daino-count 420ms ease-out both;
+}
+
+@keyframes daino-count {
+    from { transform: translate(-50%, -50%) scale(1.5); opacity: 0.2; }
+    to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-hud__count[data-shown="true"] { animation: none; }
 }
 
 /* Con el panel de resultados abierto, el rótulo repetiría lo que dice el panel. */

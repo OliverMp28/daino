@@ -62,7 +62,7 @@ import { createFlightTunnel } from './entities/FlightTunnel.js';
 import { createFlightCourse } from './systems/flightCourse.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
-import { BODY_EVENT, applyTrigger, bodyHitbox, ceilingYOf, computeGroundY, enterMode, integrateBody } from './systems/physics.js';
+import { BODY_EVENT, applyTrigger, bodyFigure, bodyHitbox, ceilingYOf, computeGroundY, enterMode, integrateBody, settlePosture } from './systems/physics.js';
 import { toSimTriggers } from './systems/playability.js';
 import { createModeTimeline } from './systems/modeTimeline.js';
 import { MOVEMENT_MODES } from './systems/modes/index.js';
@@ -213,6 +213,10 @@ export class GameSession {
         // Física a paso fijo sincronizada con el reloj de la canción.
         this._physics = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
         this._hitbox = { x: 0, y: 0, w: 0, h: 0 };
+        /** Instante del paso de física en curso (lo lee `_wouldHit`). */
+        this._stepT = 0;
+        /** ¿Chocaría esa caja ahora? Para la postura del Dino (no levantarse bajo algo). */
+        this._wouldHit = (box, figure) => this.spawner.collisionAt(box, this._stepT, this._groundY, figure) !== null;
         /** Pulsaciones pendientes, fechadas en tiempo de canción. */
         this._inputs = createInputTimeline();
     }
@@ -423,13 +427,20 @@ export class GameSession {
 
         // Spawner: coloca cada sprite donde el tiempo de canción dice; los
         // portales y el techo del modo, con la misma fórmula.
-        this.spawner.tick(songTime, dt, { width: view.width, groundY });
-        this._gates.tick(songTime, dt, { width: view.width, groundY });
-        this._tunnel.tick(songTime, { width: view.width, groundY });
+        //
+        // Si hubo choque, el mundo se dibuja en el instante del GOLPE (el paso
+        // de física que lo detectó), no en el del fotograma: es la imagen que se
+        // queda congelada bajo el panel, y tiene que enseñar el choque. Con el
+        // del fotograma el obstáculo salía hasta un fotograma más allá (más, si
+        // hubo un tirón) y parecía que no se habían tocado.
+        const worldT = collided ? this._physics.time : songTime;
+        this.spawner.tick(worldT, dt, { width: view.width, groundY });
+        this._gates.tick(worldT, dt, { width: view.width, groundY });
+        this._tunnel.tick(worldT, { width: view.width, groundY });
         // El orbe al alcance del Dino en el aire se ilumina: "pulsa ahora".
         this.spawner.armTrigger(this.dino.grounded
             ? null
-            : this.spawner.triggerAt(bodyHitbox(this.dino, this._hitbox), songTime, groundY));
+            : this.spawner.triggerAt(bodyHitbox(this.dino, this._hitbox), worldT, groundY));
 
         if (collided) {
             this._startDeath();
@@ -811,6 +822,9 @@ export class GameSession {
 
         this._inputs.drainUntil(t, (action) => dino.input(action));
         const events = integrateBody(dino, PHYSICS_STEP_S, groundY);
+        // Postura: quien soltó ↓ se levanta cuando cabe, no debajo de un ptero.
+        this._stepT = t;
+        settlePosture(dino, this._wouldHit);
 
         // Aterrizaje (en el suelo o en el techo): squash, polvo y la pulsación
         // guardada, que la física ya ha ejecutado (BUFFERED) y aquí solo se ve.
@@ -843,7 +857,7 @@ export class GameSession {
                 box = bodyHitbox(dino, this._hitbox);
             }
         }
-        const hit = this.spawner.collisionAt(box, t, groundY) !== null
+        const hit = this.spawner.collisionAt(box, t, groundY, bodyFigure(dino)) !== null
             // Muros del túnel del vuelo, con la anchura del hitbox (flightCourse.js).
             || (!this._course.empty && this._course.collisionAt(box, t, groundY, this._speed.speedAt(t)));
         // Herramienta de dev (ui/devTools.js, solo en `import.meta.env.DEV`): con
@@ -940,7 +954,8 @@ export class GameSession {
         this._dying = true;
         this._dieT = 0;
         this._inputs.clear();
-        this._finalSongTime = Math.max(0, this.audioEngine.getSongTime());
+        // Hasta donde se llegó: el instante del golpe.
+        this._finalSongTime = Math.max(0, this._physics.time ?? this.audioEngine.getSongTime());
 
         this.dino.setDead();
         this.engine.setBeatPulse(0);

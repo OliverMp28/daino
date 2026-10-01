@@ -118,9 +118,13 @@ export const CHART_FORMAT_VERSION = 5;
  * cuenta también el principio (el tutorial llega con los primeros compases y el
  * reposo que abre una canción se rellena como la calma); antes una canción que
  * abría con un reposo largo dejaba el nivel vacío hasta que acababa (playtest de
- * One Day, T02.6: primera acción en el segundo 35).
+ * One Day, T02.6: primera acción en el segundo 35). 14: colisiones que se ven —
+ * el Dino de pie ya no choca por el hueco sobre su lomo y el ptero, el grupo de
+ * cactus y los cristales chocan por su dibujo, no por la caja que lo envuelve
+ * (playtest de Oct 2026: se moría sin tocarse). Los márgenes de esos obstáculos
+ * crecen un poco y el charter los vuelve a medir.
  */
-export const CHARTER_VERSION = 13;
+export const CHARTER_VERSION = 14;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */

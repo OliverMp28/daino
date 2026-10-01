@@ -142,10 +142,14 @@ export class Dino extends Container {
         }
     }
 
-    /** Pose de muerte (ojo en X). La llama GameSession al chocar. */
+    /**
+     * Pose de muerte (ojo en X), en la postura con la que chocó: es la imagen que
+     * queda congelada. La llama GameSession al chocar.
+     */
     setDead() {
         this.dead = true;
-        this._sprite.texture = getTexture('dinoDead', this.skinId);
+        const pose = !this.grounded ? 'dinoJumpDead' : this.ducking ? 'dinoDuckDead' : 'dinoDead';
+        this._sprite.texture = getTexture(pose, this.skinId);
         this._endSpin();
     }
 

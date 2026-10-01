@@ -14,8 +14,8 @@
 //     viaje dura ~0.21 s, rápido para que no quede flotando en medio.
 //   - Soltar no hace nada. Cabeza abajo el hitbox refleja su relleno.
 
-import { DINO_SIZE, FLIP_MODE, JUMP_BUFFER_S, MODE_COLORS, OBSTACLE_HITBOX_PADDING, PHYSICS_STEP_S } from '../../config.js';
-import { ceilingYOf, standingHitbox } from '../geometry.js';
+import { DINO_SIZE, FLIP_MODE, JUMP_BUFFER_S, MODE_COLORS, PHYSICS_STEP_S } from '../../config.js';
+import { FIGURE, ceilingYOf, obstacleHitbox, standingHitbox } from '../geometry.js';
 import { BODY_EVENT, bodyState } from './body.js';
 
 function flip(body) {
@@ -41,8 +41,9 @@ export const FLIP_MODE_DEF = Object.freeze({
     enter(body) {
         body.flyHeld = 0;
         body.ducking = false;
+        body.duckHeld = false;
+        body.duckT = 0;
         body.fastFall = false;
-        body.jumpHeld = false;
         body.jumpBufferT = 0;
     },
 
@@ -97,6 +98,10 @@ export const FLIP_MODE_DEF = Object.freeze({
         return standingHitbox(body, out, body.gravityDir < 0);
     },
 
+    figure(body) {
+        return body.gravityDir < 0 ? FIGURE.STANDING_INVERTED : FIGURE.STANDING;
+    },
+
     /**
      * Adelanto de un cristal: lo que tarda el Dino, desde la pulsación, en
      * despejar su altura, más `leadMarginS`. Se deriva de la física (paso a paso,
@@ -121,16 +126,16 @@ export const FLIP_MODE_DEF = Object.freeze({
  * @param {{ h: number, altitude: number }} def
  */
 export function clearTimeS(def) {
-    const key = `${def.h}/${def.altitude}`;
+    const ground = 1000;
+    const box = { x: 0, y: 0, w: 0, h: 0 };
+    // Borde superior del hitbox del kind apoyado en el suelo (con su relleno o sus piezas).
+    const hazardTop = obstacleHitbox({ ...def, surface: 'floor' }, 0, ground - def.h - def.altitude, box).y;
+    const key = hazardTop;
     const cached = clearCache.get(key);
     if (cached !== undefined) return cached;
 
-    const ground = 1000;
     const body = bodyState(ground);
     body.mode = 'flip';
-    const box = { x: 0, y: 0, w: 0, h: 0 };
-    // Borde superior del hitbox de un cristal del suelo (con su relleno).
-    const hazardTop = ground - def.h - def.altitude + OBSTACLE_HITBOX_PADDING.top;
     flip(body);
     let t = 0;
     for (let i = 0; i < 2000; i++) {

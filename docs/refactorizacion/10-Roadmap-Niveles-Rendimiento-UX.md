@@ -1601,6 +1601,85 @@ One Day: 7.7 · 11.8 · 16.0 (tutorial, un salto por compás) y después un salt
 
 **Limitación:** una canción que abra con música sin golpes (un colchón sin ataques) sigue sin acciones hasta su primer pulso: fuera del pulso no hay dónde ponerlas sin romper "música primero".
 
+#### Una pulsación, un gesto: saltos, agachados y colisiones que se ven ✅ (Oct 2026, playtest con un amigo)
+
+Tres comentarios tras jugar One Day y otros niveles:
+- El user: **"presionaba la tecla de salto y no saltaba, y perdí… me pasó una o dos veces"**.
+- Su amigo: **"antes sentía que manteniendo la tecla el salto era más largo y pulsando rápido, corto"**.
+- Su amigo, otra vez: **"se levantó cuando se estaba agachando del pájaro y creyó que no iba a perder… al ver el juego parado, el dino no choca al pájaro"** (con captura).
+
+Los tres eran lo mismo visto desde sitios distintos: **el nivel se construye y se valida con un jugador que mantiene las teclas, y la partida castigaba a quien solo las pulsa**. Y lo que mataba no siempre era lo que se veía.
+
+**1. El salto dependía de cuánto se mantenía la tecla.** Soltar pronto cortaba el salto (`JUMP_CUT_MULTIPLIER` 2.6, rediseño de Jul 2026). Funcionaba como se diseñó (medido con teclas reales por CDP: 40 ms → 84 de alto y 0.40 s de aire; 500 ms → 158 y 0.68 s). El problema es que el charter coloca cada obstáculo para que cruce al Dino en el ápice del salto COMPLETO, y su validador solo salta así. Margen para pulsar (ms antes / después del golpe) según cuánto se mantenga, ante un cactus suelto:
+
+| Velocidad | toque 0.06 s | 0.1 s | 0.15 s | 0.2 s | 0.3 s | completo |
+|---|---|---|---|---|---|---|
+| 250 px/s | no se salva | no se salva | +76 / +132 | +26 / +132 | −74 / +132 | −116 / +132 |
+| 400 px/s | +166 / +166 | +92 / +182 | +26 / +182 | −24 / +182 | −124 / +182 | −166 / +182 |
+| 600 px/s | +150 / +208 | +68 / +216 | +2 / +216 | −48 / +216 | −148 / +216 | −190 / +216 |
+| 1000 px/s | +124 / +224 | +42 / +232 | −24 / +232 | −74 / +232 | −174 / +232 | −216 / +232 |
+
+Un margen que empieza en positivo significa que **pulsando EN el golpe se muere**: había que pulsar tarde. One Day va a 376 px/s y son 70 cactus: con un toque de 0.1 s el salto solo valía pulsando entre 100 y 180 ms tarde. Mantener ≥ 0.25 s lo arreglaba, y por eso "no pasa siempre". En un móvil, donde se juega a toques, era lo normal. Con los anillos, igual: soltar cortaba también el segundo salto.
+
+**2. Agacharse exigía dos tiempos y solo se avisaba de uno.** El ptero cruza al Dino 0.36 s después del golpe y hay que seguir agachado hasta que pasa: de 0.42 s (1000 px/s) a 0.60 s (250 px/s) manteniendo. Soltar un poco antes era levantarse contra él. Ese segundo tiempo no lo validaba nadie para una persona (el jugador virtual mantiene hasta 60 unidades después).
+
+**3. Lo que mataba no era lo que se veía.** Cada dibujo chocaba por una caja con relleno fijo. Medido colocando los dibujos reales en todas las posiciones en que el juego da choque (aire que queda entre los dos, en celdas de 4 unidades):
+
+| Dino contra… | Antes | Ahora |
+|---|---|---|
+| De pie, ptero (levantarse con su cola sobre el lomo: la captura) | **7** | 1 |
+| En el aire, ptero | 6 | 2 |
+| En el aire, grupo de cactus (caer justo detrás) | 5 | 2 |
+| Antigravedad, cristal del suelo / del techo | 3-4 | 0-1 |
+| Cactus suelto e hileras | 2 | 2 |
+
+La caja del Dino de pie incluía el aire sobre su lomo (la cabeza empieza en la celda 11) y la del ptero, el de debajo de su cola y su ala. Además **la imagen congelada no era la del golpe**: el choque se detecta en un paso de física, pero el mundo se dibujaba en el instante del fotograma, hasta 16 ms después (más con un tirón), con el obstáculo ya más allá.
+
+**4. El reloj de la canción avanzaba a escalones.** `AudioContext.currentTime` solo sube cuando el sistema pide otro bloque de audio. Medido (Chrome, Windows, 60 FPS): escalones de 9 a 20 ms; un fotograma avanzaba la canción 9 ms y el siguiente 20. Los obstáculos, que se colocan desde ese reloj, temblaban frente al suelo, y cada pulsación se fechaba con ese error. En un móvil los bloques son mayores.
+
+**5. La pausa.** Volver a la pestaña reanudaba el audio aunque la partida estuviese en pausa (el manejador de visibilidad no sabía de la pausa): la canción seguía detrás del panel. Reanudar era instantáneo, con las manos todavía en el ratón (o el dedo en el botón). Y si el sistema cortaba el audio (una llamada en un móvil), la partida se congelaba sin panel.
+
+**Lo que NO era** (medido, para no arreglar lo que no está roto): una tecla pulsada durante un tirón no se pierde ni se fecha mal (con el hilo bloqueado 120 y 250 ms, Chrome entrega la tecla antes del siguiente fotograma y la física la aplica en su instante); One Day va a 60 FPS (p95 17 ms) en la Intel UHD 620 a 1080p.
+
+**Reglas nuevas:**
+- **El salto es siempre el mismo arco** (`modes/run.js`): mantener no lo alarga ni soltar lo corta. `JUMP_CUT_MULTIPLIER` y `jumpHeld` ya no existen. Para caer antes sigue el fast-fall (↓ en el aire).
+- **Agacharse es un gesto**: un toque deja al Dino agachado `DUCK_MIN_S` (0.4 s) y, al soltar, **no se levanta mientras tenga algo encima** (`settle` del modo, con `physics.settlePosture`: la partida y el simulador preguntan si la caja de pie chocaría ahora). Mantener sigue valiendo y saltar lo cancela.
+- **Figura dentro de la caja** (`geometry.js`): `FIGURE` y `figureHit`. De pie, la caja menos el hueco sobre el lomo (`STANDING_NOTCH`, reflejado cabeza abajo). Los obstáculos que no llenan su caja traen relleno propio (`hitPad`: el ptero choca por su cuerpo, no por el ala) o piezas (`hitParts`: los cristales); `obstacleHit` es LA colisión de la partida y del simulador. El grupo de cactus se redibujó para llenar su caja (los tres casi igual de altos).
+- **La imagen congelada es la del golpe**: al chocar el mundo se dibuja en el instante del paso que lo detectó, y el Dino muere en su postura (`dinoJumpDead`, `dinoDuckDead`).
+- **Reloj continuo** (`audio/steadyClock.js`, puro): reloj de alta resolución más un desfase que se estima con la envolvente superior del reloj a escalones y se corrige despacio. Monótono; quieto con el audio detenido.
+- **El audio se detiene por motivos** (`AudioEngine.hold/release`: `pause`, `hidden`) y solo suena sin ninguno. **Toda detención jugando es una pausa con su panel** (`audio:pause` → `AppController`). **Reanudar va con cuenta atrás** (3, 2, 1; pausar durante la cuenta la cancela). Si medio segundo después el audio no ha vuelto (algún navegador móvil solo lo reanuda dentro de un gesto), vuelve el panel y el siguiente "Reanudar" lo hace dentro del toque.
+- **Nada se queda pulsado** al perder el foco (`input.js`), y en táctil el lienzo no espera gestos del navegador (`touch-action: none`), ni selecciona ni abre el menú de pulsación larga.
+
+**Charter 14.** Las cajas nuevas caben dentro de las de antes: los charts publicados siguen siendo superables. El charter vuelve a medir los márgenes y gasta la misma exigencia por canción, pero parte de lo que antes mataba eran choques con el aire en combinaciones con pteros: en Mi Fiesta (Difícil) el riesgo que no venía de los acentos bajó de 0.58 a 0.21 y lo compensan los acentos (se supera el mismo 22 %). Con las piezas, un cristal perdona 5-25 ms más por el lado de pulsar tarde; con 110 ms como tope de la escalera de afilados, la zona roja de What's Up Danger dejaba de apretar y el charter gastaba la exigencia antes. Dos escalones más (95 y 80 ms) lo devuelven a su sitio:
+
+| What's Up Danger, Extremo (±45 ms, 600 partidas) | Lo supera | Riesgo por cuarto de canción |
+|---|---|---|
+| Charter 13 | 6.5 % | 0.22 · 0.49 · 0.49 · 1.55 |
+| Piezas, escalera hasta 110 | 8.5 % | 0.31 · 0.70 · 0.57 · 0.88 |
+| Piezas, escalera hasta 80 (charter 14) | 5.0 % | 0.19 · 0.45 · 0.53 · 1.85 |
+
+**Verificación.**
+- `gestures.test.mjs`: mismo arco se suelte cuando se suelte; un toque en el golpe (±80 ms) salva un cactus y agacha bajo el ptero de 250 a 1000 px/s; soltar con el ptero encima no levanta al Dino; y **los 9 oficiales se superan a toques** (`validateChart(…, { tapS })`: el jugador virtual pulsa y suelta a los 60 ms) con la tolerancia de su dificultad.
+- `hitboxes.test.mjs`: ninguna postura con ningún kind deja más de una celda de aire en un choque (`helpers/silhouettes.mjs`); el ptero sigue obligando a agacharse; el hueco es aire en todos los dibujos del Dino; piezas dentro de su caja.
+- `steady-clock.test.mjs` y `song-clock.test.mjs`: continuo con bloques de 3 a 40 ms, monótono, un corte de audio de 80 ms, pausa, motivos que se acumulan.
+- **365 JS, 81 PHP, 112 Python.** Bundle principal 86.9 KB gzip (+1.8).
+- **E2E** (Chrome con la GPU real, teclado y toques por CDP): el reloj de la partida baila 0.19 ms por fotograma (p95; el de audio, 8.1); cuatro cactus de One Day con toques de 50 ms, todos a 158 de alto; un bot que **solo da toques** supera Sugar Red (3★: 10 pteros, hileras y un anillo) y **What's Up Danger en Extremo entero** (216 s, 100 pteros, antigravedad con cristales afilados, propulsor y anillos; 59.9 FPS, p99 17.6 ms) al 100 %, y otro que suelta ↓ con cada ptero encima, también; las imágenes congeladas enseñan el choque; pausa → pestaña oculta y de vuelta → sigue en pausa; cuenta atrás (y pausar durante la cuenta la cancela); el audio cortado desde fuera abre el panel; reintentar y salir al menú desde la pausa dejan el audio sonando; ↓ mantenido se suelta al perder el foco; en táctil emulado, un toque a la izquierda salta completo (158, 0.68 s) y uno a la derecha agacha 0.4 s.
+
+**Decisiones (vinculantes):**
+- **Una pulsación, un gesto.** Cada acción del nivel se supera pulsando en su golpe, se mantenga o no. Sustituye al salto de altura variable del rediseño de Jul 2026: en un juego donde el nivel se coloca para un arco, un salto más corto es una trampa, no una opción. Lo protege el jugador de toques sobre los oficiales.
+- **El Dino no se levanta debajo de algo.**
+- **Lo que choca es lo que se ve**: en un choque los dibujos se tocan o les falta una celda. Un kind o una postura nuevos pasan por `hitboxes.test.mjs`; si su dibujo no llena la caja, `hitPad`, `hitParts` o redibujarlo.
+- **La imagen congelada es la del golpe.**
+- **Los kinds publicados no se renombran ni se quitan** (los charts públicos, congelados, los nombran): las escaleras de variantes solo crecen. Y una caja de colisión solo puede encogerse dentro de la anterior.
+- **El reloj de la canción es continuo**; nada del juego lee `ctx.currentTime` directamente.
+- **El audio se detiene por motivos, toda detención es una pausa con panel y se reanuda con cuenta atrás.**
+
+**Limitaciones:**
+- Saltar debajo de un ptero sigue siendo chocar: es una acción explícita, no una postura.
+- Dos fuentes de agacharse a la vez (↓ y S, dos dedos a la derecha): soltar una suelta el gesto. Con el Dino sin levantarse bajo nada, no mata.
+- La latencia de salida se toma de lo que informa el navegador; con auriculares Bluetooth que informen mal haría falta una calibración manual en AJUSTES (no existe).
+- Lo táctil se probó emulado; falta un móvil de verdad.
+
 ---
 
 ### Ola 7 — Ediciones del autor y editor de niveles 💤 (aplazada: futura actualización)

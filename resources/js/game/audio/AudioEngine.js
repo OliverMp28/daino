@@ -19,6 +19,7 @@
 //     duplicar la key entre módulos.
 
 import { getVolume } from '../../ui/settings.js';
+import { createSteadyClock } from './steadyClock.js';
 
 const FFT_SIZE = 2048;             // doc 07 §D.1 — pineado.
 const SMOOTHING = 0.82;
@@ -65,6 +66,21 @@ export class AudioEngine {
         this._latency = 0;           // corrección de latencia de salida aplicada (s)
         this._latencyUpdatedAt = 0;  // ctx.currentTime de la última actualización
         this._onVisibilityChange = null;
+        /**
+         * `ctx.currentTime` avanza a escalones (cada bloque de audio); este reloj
+         * da su instante continuo (ver steadyClock.js).
+         */
+        this._clock = createSteadyClock();
+        /** Reloj de alta resolución, en segundos (los tests ponen el suyo). */
+        this._wallS = () => performance.now() / 1000;
+        /** Suelo del reloj de la canción: nunca retrocede dentro de una reproducción. */
+        this._songFloor = -Infinity;
+        /**
+         * Motivos por los que el audio está detenido ('pause': el jugador;
+         * 'hidden': la pestaña no se ve). Solo suena cuando no queda ninguno.
+         * @type {Set<string>}
+         */
+        this._holds = new Set();
     }
 
     /** Crea el AudioContext. Idempotente. Devuelve el state ('running' o 'suspended'). */
@@ -130,16 +146,17 @@ export class AudioEngine {
         // Page Visibility API — pausamos manualmente al cambiar de pestaña.
         // Razón: Daino es un juego rítmico; si la pestaña pierde foco mientras
         // la canción sigue, los obstáculos del Bloque 5+ se desincronizarán
-        // del beat. Pausar el AudioContext congela el reloj de la canción y
+        // del beat. Detener el AudioContext congela el reloj de la canción y
         // todo se mantiene alineado al volver. statechange dispatcheará los
         // eventos audio:pause/resume gracias al handler de arriba.
+        //
+        // Es un motivo más para estar detenido ('hidden'), no una orden de
+        // reanudar al volver: antes, volver a la pestaña reanudaba el audio
+        // aunque el jugador tuviese la partida en pausa, y la canción seguía
+        // sola detrás del panel.
         this._onVisibilityChange = () => {
-            if (this.ctx === null) return;
-            if (document.hidden && this.ctx.state === 'running') {
-                this.ctx.suspend().catch(() => {});
-            } else if (!document.hidden && this.ctx.state === 'suspended') {
-                this.ctx.resume().catch(() => {});
-            }
+            if (document.hidden) this.hold('hidden');
+            else this.release('hidden');
         };
         document.addEventListener('visibilitychange', this._onVisibilityChange);
 
@@ -150,6 +167,23 @@ export class AudioEngine {
         }
 
         return this.ctx.state;
+    }
+
+    /**
+     * Detiene el audio por un motivo. Se acumulan: sigue detenido mientras quede
+     * alguno (`release`).
+     * @param {string} reason  'pause' (el jugador), 'hidden' (la pestaña no se ve).
+     */
+    hold(reason) {
+        this._holds.add(reason);
+        if (this.ctx !== null && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
+    }
+
+    /** Retira un motivo; si era el último, el audio sigue donde estaba. */
+    release(reason) {
+        this._holds.delete(reason);
+        if (this._holds.size > 0 || this.ctx === null) return;
+        if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') this.ctx.resume().catch(() => {});
     }
 
     /** Decodifica un ArrayBuffer (de FileReader) a AudioBuffer. */
@@ -207,6 +241,8 @@ export class AudioEngine {
         // ahora; getSongTime la irá ajustando sin saltos si cambia.
         this._latency = this._measuredLatency();
         this._latencyUpdatedAt = this.ctx.currentTime;
+        this._clock.restart();
+        this._songFloor = -Infinity;
 
         return {
             stop: () => {
@@ -313,20 +349,36 @@ export class AudioEngine {
      * muestre al usuario debe acotarlo a 0. La GameSession lo usa como única
      * fuente de verdad temporal de la partida.
      *
+     * Es continuo y monótono: `ctx.currentTime` avanza a escalones (un bloque
+     * de audio cada vez) y aquí se lee su instante continuo (steadyClock.js).
+     * Con el contexto detenido (pausa, pestaña oculta) el reloj no avanza.
+     *
      * @returns {number}
      */
     getSongTime() {
         if (this.ctx === null || this.source === null) return 0;
-        const now = this.ctx.currentTime;
-        const elapsed = now - this._latencyUpdatedAt;
+        const step = this.ctx.currentTime;
+        const elapsed = step - this._latencyUpdatedAt;
         if (elapsed > 0) {
             // Converger hacia la latencia medida, a velocidad limitada.
             const maxStep = elapsed * LATENCY_SLEW_RATE;
             const delta = this._measuredLatency() - this._latency;
             this._latency += Math.max(-maxStep, Math.min(maxStep, delta));
-            this._latencyUpdatedAt = now;
+            this._latencyUpdatedAt = step;
         }
-        return now - this._playStartedAt - this._latency;
+        // `state` solo falta en los contextos de prueba, que siempre "suenan".
+        const running = this.ctx.state === undefined || this.ctx.state === 'running';
+        let now;
+        if (running) {
+            now = this._clock.read(this._wallS(), step);
+        } else {
+            // Detenido: el reloj se queda donde iba y al volver se re-ancla.
+            now = Math.max(step, this._clock.last);
+            this._clock.reset();
+        }
+        const t = now - this._playStartedAt - this._latency;
+        if (t > this._songFloor) this._songFloor = t;
+        return this._songFloor;
     }
 
     /**

@@ -16,7 +16,7 @@ import { createFixedStepper } from '../../resources/js/game/systems/fixedStep.js
 import { createInputTimeline, songTimeOfEvent } from '../../resources/js/game/systems/inputTimeline.js';
 import { createSpawner } from '../../resources/js/game/systems/spawner.js';
 import {
-    applyInput, bodyHitbox, bodyState, enterMode, integrateBody,
+    applyInput, bodyFigure, bodyHitbox, bodyState, enterMode, integrateBody, settlePosture,
 } from '../../resources/js/game/systems/physics.js';
 import { MAX_PHYSICS_CATCHUP_S, PHYSICS_STEP_S } from '../../resources/js/game/config.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
@@ -108,7 +108,8 @@ function playLikeTheGame(chart, frameMs) {
         stepper.advance(songTime, (t) => {
             while (modeIdx < modes.length && modes[modeIdx].t <= t) enterMode(body, modes[modeIdx++].mode);
             integrateBody(body, PHYSICS_STEP_S, GROUND);
-            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null || hits(box, t)) { hitAt = t; return true; }
+            settlePosture(body, (b, figure) => spawner.collisionAt(b, t, GROUND, figure) !== null);
+            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND, bodyFigure(body)) !== null || hits(box, t)) { hitAt = t; return true; }
             return false;
         });
         if (hitAt !== null) return { ok: false, at: hitAt };
@@ -236,7 +237,8 @@ function runWithTimestampedInputs(chart, frameMs) {
             while (modeIdx < modes.length && modes[modeIdx].t <= t) enterMode(body, modes[modeIdx++].mode);
             inputs.drainUntil(t, (a) => applyInput(body, a));
             integrateBody(body, PHYSICS_STEP_S, GROUND);
-            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND) !== null || hits(box, t)) { hit = true; return true; }
+            settlePosture(body, (b, figure) => spawner.collisionAt(b, t, GROUND, figure) !== null);
+            if (spawner.collisionAt(bodyHitbox(body, box), t, GROUND, bodyFigure(body)) !== null || hits(box, t)) { hit = true; return true; }
             return false;
         });
         if (hit) return false;

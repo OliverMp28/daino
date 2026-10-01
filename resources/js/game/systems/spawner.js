@@ -22,7 +22,7 @@
 //     entra cuesta O(1) amortizado por frame.
 //   - `getActive()` devuelve siempre el mismo array, sin copias.
 
-import { DINO_CENTER_X, aabbHit, obstacleHitbox, obstacleTopY, triggerZone } from './physics.js';
+import { DINO_CENTER_X, FIGURE, aabbHit, obstacleHit, obstacleTopY, triggerZone } from './physics.js';
 import { toSimObstacles, toSimTriggers } from './playability.js';
 import { asSpeedProfile } from './speedProfile.js';
 
@@ -171,17 +171,18 @@ export function createSpawner(cfg) {
          * @param {{ x: number, y: number, w: number, h: number }} box
          * @param {number} songTime
          * @param {number} groundY
+         * @param {number} [figure]  Qué parte de la caja es cuerpo (physics.bodyFigure).
+         *        Por defecto, la caja entera.
          * @returns {string | null} kind del obstáculo con el que choca, o null.
          */
-        collisionAt(box, songTime, groundY) {
+        collisionAt(box, songTime, groundY, figure = FIGURE.BOX) {
             const nowD = profile.constant ? 0 : profile.distanceAt(songTime);
             for (let i = 0; i < activeData.length; i++) {
                 const data = activeData[i];
                 const x = leftX(data, songTime, nowD);
                 // Descarte horizontal barato antes de construir el hitbox.
                 if (data.trigger || x > box.x + box.w || x + data.def.w < box.x) continue;
-                obstacleHitbox(data.def, x, obstacleTopY(data.def, groundY), scratchBox);
-                if (aabbHit(box, scratchBox)) return data.kind;
+                if (obstacleHit(figure, box, data.def, x, obstacleTopY(data.def, groundY), scratchBox)) return data.kind;
             }
             return null;
         },

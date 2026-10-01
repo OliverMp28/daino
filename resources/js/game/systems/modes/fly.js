@@ -38,8 +38,9 @@ export const FLY_MODE_DEF = Object.freeze({
         body.flyHeld = 0;
         body.gravityDir = 1;
         body.ducking = false;
+        body.duckHeld = false;
+        body.duckT = 0;
         body.fastFall = false;
-        body.jumpHeld = false;
         body.jumpBufferT = 0;
         body.vy = 0;
     },

@@ -36,6 +36,7 @@ let modeLabelEl = null;
 let modeHintEl = null;
 let chevEls = [];
 let bannerEl = null;
+let countEl = null;
 let captionEl = null;
 let controlsEl = null;
 let songEl = null;
@@ -226,7 +227,7 @@ function buildControls() {
         return el;
     };
     if (touch) {
-        box.append(side('is-left', 'Toca', 'Saltar'), side('is-right', 'Mantén', 'Agacharse'));
+        box.append(side('is-left', 'Toca', 'Saltar'), side('is-right', 'Toca', 'Agacharse'));
     } else {
         box.append(side('is-left', 'Espacio', 'Saltar'), side('is-right', '↓', 'Agacharse'), side('is-pause', 'Esc', 'Pausa'));
     }
@@ -306,6 +307,29 @@ const api = {
         bannerEl.dataset.shown = text ? 'true' : 'false';
     },
     /** Rótulo de una historia de autor (T02.6). Pasar '' para que se desvanezca. */
+    /**
+     * Cuenta atrás al reanudar desde la pausa: un número grande en el centro.
+     * Cadena vacía = fuera.
+     */
+    setCountdown(text) {
+        if (!rootEl) return;
+        if (!countEl) {
+            countEl = document.createElement('div');
+            countEl.className = 'daino-hud__count';
+            countEl.setAttribute('role', 'status');
+            countEl.setAttribute('aria-live', 'assertive');
+            rootEl.appendChild(countEl);
+        }
+        countEl.textContent = text;
+        countEl.dataset.shown = text ? 'true' : 'false';
+        // Cada número entra con su golpe: se reinicia la animación.
+        if (text) {
+            countEl.style.animation = 'none';
+            void countEl.offsetWidth;
+            countEl.style.animation = '';
+        }
+    },
+
     setCaption(text) {
         if (!captionEl) return;
         if (text) captionEl.textContent = text;
@@ -425,6 +449,7 @@ const api = {
             timerEl = null;
             progressFgEl = null;
             bannerEl = null;
+            countEl = null;
             captionEl = null;
             controlsEl = null;
             songEl = null;

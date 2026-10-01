@@ -2,6 +2,10 @@
 //
 // Medido en Chrome: `outputLatency` vale 0 al empezar a sonar y salta a 40 ms
 // ~117 ms después. Restarla tal cual hacía retroceder el reloj 40 ms de golpe.
+//
+// Oct 2026: el reloj se lee continuo (steadyClock.js, con sus pruebas aparte), se
+// queda quieto con el audio detenido y el audio se detiene por motivos que se
+// acumulan (pausa del jugador, pestaña oculta).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,6 +18,8 @@ function engineWithFakeClock() {
     const engine = new AudioEngine();
     engine.ctx = ctx;
     engine.source = {};
+    // Los dos relojes avanzan juntos: aquí se prueba la latencia, no los escalones.
+    engine._wallS = () => ctx.currentTime;
     engine._playStartedAt = ctx.currentTime;
     engine._latency = engine._measuredLatency();
     engine._latencyUpdatedAt = ctx.currentTime;
@@ -61,4 +67,58 @@ test('valores de latencia absurdos se ignoran', () => {
     ctx.outputLatency = Number.NaN;
     ctx.baseLatency = 5;   // 5 s: no es una latencia plausible
     assert.equal(engine._measuredLatency(), 0);
+});
+
+/** Contexto de mentira con estado: suspend/resume como los del navegador. */
+function engineWithState() {
+    const { engine, ctx } = engineWithFakeClock();
+    ctx.state = 'running';
+    ctx.calls = [];
+    ctx.suspend = () => { ctx.calls.push('suspend'); ctx.state = 'suspended'; return Promise.resolve(); };
+    ctx.resume = () => { ctx.calls.push('resume'); ctx.state = 'running'; return Promise.resolve(); };
+    return { engine, ctx };
+}
+
+test('el audio se detiene por motivos que se acumulan: volver a la pestaña no reanuda una partida en pausa', () => {
+    const { engine, ctx } = engineWithState();
+    engine.hold('pause');
+    assert.deepEqual(ctx.calls, ['suspend']);
+    // El jugador cambia de pestaña con la partida en pausa y vuelve.
+    engine.hold('hidden');
+    engine.release('hidden');
+    assert.deepEqual(ctx.calls, ['suspend'], 'sigue en pausa: nadie lo reanudó');
+    assert.equal(ctx.state, 'suspended');
+    engine.release('pause');
+    assert.deepEqual(ctx.calls, ['suspend', 'resume']);
+    // Soltar un motivo que no estaba no hace nada raro.
+    engine.release('pause');
+    assert.deepEqual(ctx.calls, ['suspend', 'resume']);
+});
+
+test('ocultar la pestaña jugando detiene el audio y al volver sigue, si nadie más lo retiene', () => {
+    const { engine, ctx } = engineWithState();
+    engine.hold('hidden');
+    assert.equal(ctx.state, 'suspended');
+    engine.release('hidden');
+    assert.equal(ctx.state, 'running');
+});
+
+test('con el audio detenido el reloj de la canción no avanza, y al volver sigue donde iba sin saltar atrás', () => {
+    const { engine, ctx } = engineWithState();
+    let wall = 100;
+    engine._wallS = () => wall;
+    const tick = (s) => { wall += s; if (ctx.state === 'running') ctx.currentTime += s; };
+    for (let i = 0; i < 60; i++) { tick(1 / 60); engine.getSongTime(); }
+    const before = engine.getSongTime();
+    engine.hold('pause');
+    for (let i = 0; i < 300; i++) { tick(1 / 60); assert.equal(engine.getSongTime(), before, 'en pausa no avanza'); }
+    engine.release('pause');
+    let prev = before;
+    for (let i = 0; i < 60; i++) {
+        tick(1 / 60);
+        const t = engine.getSongTime();
+        assert.ok(t >= prev && t - prev < 0.03, `tras la pausa avanza ${((t - prev) * 1000).toFixed(1)} ms en un fotograma`);
+        prev = t;
+    }
+    assert.ok(Math.abs(prev - (before + 1)) < 0.02, 'un segundo después de reanudar, un segundo más de canción');
 });

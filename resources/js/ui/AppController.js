@@ -100,6 +100,14 @@ let run = null;
 /** Destino pedido desde la pausa cuando la partida ya estaba superada (se cierra como victoria antes). */
 let pendingExit = null;
 
+/** Cuenta atrás al reanudar desde la pausa: de cuánto, cada cuánto y cuándo se comprueba que el audio volvió. */
+const RESUME_COUNTDOWN = Object.freeze({ from: 3, stepMs: 420, watchMs: 500 });
+/** El audio no volvió tras una cuenta atrás: el siguiente "Reanudar" lo hace dentro del gesto. */
+let resumeInGesture = false;
+/** Temporizador de la cuenta atrás en marcha (0 = ninguna). */
+let resumeTimer = 0;
+let onAudioPause = null;
+
 /**
  * Número de la petición de partida vigente. Si llega otra mientras la
  * anterior carga (soltar un MP3 con otro descargándose), la vieja descubre al
@@ -167,6 +175,14 @@ export function start(cfg) {
     onPause = () => handlePauseRequested();
     Input.on('pause', onPause);
 
+    // El audio se detuvo sin que nadie pausara (la pestaña se ocultó, el sistema
+    // interrumpió el sonido: una llamada, otro audio en un móvil): es una pausa
+    // como cualquier otra, con su panel. Sin él, al volver la canción arrancaba
+    // sola con el jugador sin las manos puestas; y en un móvil que no reanuda el
+    // audio por su cuenta, la partida se quedaba congelada sin nada que tocar.
+    onAudioPause = () => { if (state === STATE.PLAYING) handlePauseRequested(); };
+    window.addEventListener('audio:pause', onAudioPause);
+
     // Girar el móvil a vertical en plena partida la pausa: la escena se queda
     // diminuta y los toques caerían donde no toca. El panel sugiere volver a
     // girarlo.
@@ -202,11 +218,14 @@ export function dispose() {
     if (onGameState) window.removeEventListener('daino:gamestate', onGameState);
     if (onPrefetch) window.removeEventListener(PREFETCH_REQUEST_EVENT, onPrefetch);
     if (onPause) Input.off('pause', onPause);
+    if (onAudioPause) window.removeEventListener('audio:pause', onAudioPause);
+    cancelResume();
     if (onViewportChange) window.removeEventListener('resize', onViewportChange);
     onPlayRequest = null;
     onGameState = null;
     onPrefetch = null;
     onPause = null;
+    onAudioPause = null;
     onViewportChange = null;
     closeRunPanel();
     run = null;
@@ -405,6 +424,10 @@ function catalogTabFor(level) {
 function startAttempt() {
     const audioEngine = getAudioEngine();
     lastAudioEngine = audioEngine;
+    // Partida nueva: ninguna pausa pendiente (por si se salió en mitad de una).
+    cancelResume();
+    resumeInGesture = false;
+    audioEngine.release('pause');
 
     // El shader lee el FFT del audio activo; se desconecta al volver al menú.
     engineApi.attachAudio(audioEngine);
@@ -488,16 +511,24 @@ function stageText(stage, progress) {
 }
 
 function handlePauseRequested() {
+    if (!lastAudioEngine || activeSession === null || run === null) return;
+    // Pausar otra vez durante la cuenta atrás: se cancela y vuelve el panel.
+    if (state === STATE.PAUSED) {
+        if (cancelResume()) openPausePanel();
+        return;
+    }
     // Solo aplica durante PLAYING.
     if (state !== STATE.PLAYING) return;
-    if (!lastAudioEngine || activeSession === null || run === null) return;
 
     setState(STATE.PAUSED);
 
-    // Suspend del AudioContext congela todo: dispatcha 'audio:pause', la
-    // GameSession congela su tick y el reloj de la canción no avanza.
-    void lastAudioEngine.ctx?.suspend?.();
+    // Detener el audio congela todo: dispatcha 'audio:pause', la GameSession
+    // congela su tick y el reloj de la canción no avanza.
+    lastAudioEngine.hold('pause');
+    openPausePanel();
+}
 
+function openPausePanel() {
     const durationSec = activeSession._durationSec;
     const reachedSec = Math.min(durationSec, Math.max(0, lastAudioEngine.getSongTime()));
     openRunPanel(runPanelView({
@@ -576,14 +607,74 @@ function handleRunAction(action) {
     switch (action) {
         case RUN_ACTION.RESUME:
             if (state !== STATE.PAUSED) return;
-            void lastAudioEngine?.ctx?.resume?.();
-            setState(STATE.PLAYING);
+            if (resumeInGesture) {
+                // El navegador no dejó reanudar el audio fuera de un gesto: se
+                // reanuda aquí mismo, dentro del toque, sin cuenta atrás.
+                resumeInGesture = false;
+                setState(STATE.PLAYING);
+                lastAudioEngine?.release('pause');
+                watchResume();
+                return;
+            }
+            resumeAfterCountdown();
             return;
         case RUN_ACTION.RETRY: void retry(); return;
         case RUN_ACTION.LEVELS: void leaveTo('levels'); return;
         case RUN_ACTION.MENU: void leaveTo('menu'); return;
         default: return;
     }
+}
+
+/**
+ * Reanudar con cuenta atrás: 3, 2, 1 y la canción sigue. Reanudar de golpe era
+ * volver a un obstáculo ya encima con las manos todavía en el ratón (o el dedo
+ * en el botón, en un móvil); la cuenta da tiempo a colocarse y a recordar el
+ * pulso. Pausar durante la cuenta la cancela (`handlePauseRequested`).
+ */
+function resumeAfterCountdown() {
+    cancelResume();
+    let left = RESUME_COUNTDOWN.from;
+    const step = () => {
+        resumeTimer = 0;
+        if (state !== STATE.PAUSED || activeSession === null) return;
+        if (left === 0) {
+            activeSession.hud?.setCountdown?.('');
+            setState(STATE.PLAYING);
+            lastAudioEngine?.release('pause');
+            watchResume();
+            return;
+        }
+        activeSession.hud?.setCountdown?.(String(left));
+        left--;
+        resumeTimer = window.setTimeout(step, RESUME_COUNTDOWN.stepMs);
+    };
+    step();
+}
+
+/**
+ * Tras reanudar, comprueba que el audio ha vuelto de verdad. Algún navegador
+ * móvil solo deja reanudarlo dentro de un gesto (y la cuenta atrás termina en un
+ * temporizador): si medio segundo después sigue detenido, vuelve el panel y el
+ * siguiente "Reanudar" lo hace dentro del toque. Sin esto la partida se
+ * quedaría congelada sin nada que pulsar.
+ */
+function watchResume() {
+    const engine = lastAudioEngine;
+    window.setTimeout(() => {
+        if (state !== STATE.PLAYING || engine !== lastAudioEngine || activeSession === null) return;
+        if (document.hidden || engine?.ctx == null || engine.ctx.state === 'running') return;
+        resumeInGesture = true;
+        handlePauseRequested();
+    }, RESUME_COUNTDOWN.watchMs);
+}
+
+/** @returns {boolean} true si había una cuenta atrás en marcha. */
+function cancelResume() {
+    if (resumeTimer === 0) return false;
+    window.clearTimeout(resumeTimer);
+    resumeTimer = 0;
+    activeSession?.hud?.setCountdown?.('');
+    return true;
 }
 
 /**
@@ -601,9 +692,9 @@ async function retry() {
     await fadeOverlay({
         totalMs: 360,
         onMidpoint: () => {
-            // Desde la pausa el AudioContext está suspendido. Reanudarlo dentro
-            // del gesto (tecla o clic en Reintentar).
-            if (lastAudioEngine?.ctx?.state === 'suspended') void lastAudioEngine.ctx.resume();
+            // Desde la pausa el audio está detenido: se suelta la pausa (sigue
+            // detenido si además la pestaña está oculta).
+            lastAudioEngine?.release('pause');
             if (activeSession) {
                 try { activeSession.stop(); } catch { /* ya parado */ }
                 activeSession = null;
@@ -644,11 +735,9 @@ async function transitionToMenu(onMenu) {
     await fadeOverlay({
         totalMs: 600,
         onMidpoint: () => {
-            // Si venimos de la pausa el AudioContext está suspendido; sin
-            // resume el ticker del engine seguiría congelado en el menú.
-            if (lastAudioEngine?.ctx?.state === 'suspended') {
-                void lastAudioEngine.ctx.resume();
-            }
+            // Si venimos de la pausa el audio está detenido; sin soltarla el
+            // ticker del engine seguiría congelado en el menú.
+            lastAudioEngine?.release('pause');
 
             if (activeSession) {
                 try { activeSession.stop(); } catch { /* ya parado */ }

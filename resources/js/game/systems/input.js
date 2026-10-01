@@ -3,9 +3,10 @@
 //   'jump'      — pulsación de salto. Teclado Space/ArrowUp (sin auto-repeat),
 //                 touch en la MITAD IZQUIERDA del viewport, GAME_ACTION 'JUMP'
 //                 del bridge (modo iframe en Vout).
-//   'jumpEnd'   — se soltó el botón/tap de salto. Habilita el salto de altura
-//                 variable (soltar pronto = salto corto).
-//   'duckStart' — mantener ↓/KeyS o touch en la MITAD DERECHA (doc 06 §6).
+//   'jumpEnd'   — se soltó el botón/tap de salto. Corriendo no cambia nada (el
+//                 salto es siempre el mismo arco); en el vuelo, soltar es bajar.
+//   'duckStart' — ↓/KeyS o touch en la MITAD DERECHA (doc 06 §6). Un toque basta
+//                 para agacharse; mantener sigue valiendo.
 //   'duckEnd'   — se soltó el agacharse.
 //   'pause'     — Escape (delega al <dialog> nativo si hay uno abierto).
 //
@@ -20,6 +21,9 @@
 //   - Touch: el lado se decide en touchstart y se recuerda por touch id — el
 //     touchend del mismo dedo emite el End del canal que abrió, aunque el
 //     dedo se haya deslizado al otro lado.
+//   - Nada se queda pulsado: si la ventana pierde el foco o la pestaña se oculta
+//     con una tecla o un dedo abajo, su `keyup`/`touchend` no llega nunca. Al
+//     perder el foco se suelta todo lo que estuviera mantenido.
 //   - Desacoplado de Pixi y de la entidad — la GameSession suscribe.
 
 import { setOnGameAction, isBridgeEmbedded } from '../../iframe/bridge.js';
@@ -42,6 +46,10 @@ class InputHub {
         this._touchEnd = null;
         /** @type {Map<number, 'jump' | 'duck'>} side abierto por cada touch id. */
         this._touchSides = new Map();
+        /** @type {Map<string, 'jump' | 'duck'>} canal abierto por cada tecla mantenida. */
+        this._keysHeld = new Map();
+        this._releaseAll = null;
+        this._onHidden = null;
         this._mounted = false;
     }
 
@@ -91,7 +99,10 @@ class InputHub {
                 // ev.repeat fuera: mantener pulsado NO re-salta (el jump buffer
                 // ya cubre el "pulsé un pelín antes de aterrizar").
                 ev.preventDefault();
-                if (!ev.repeat) this.emit(KEYS_JUMP.has(ev.code) ? 'jump' : 'duckStart', stamp(ev));
+                if (ev.repeat) return;
+                const channel = KEYS_JUMP.has(ev.code) ? 'jump' : 'duck';
+                this._keysHeld.set(ev.code, channel);
+                this.emit(channel === 'jump' ? 'jump' : 'duckStart', stamp(ev));
                 return;
             }
             if (KEYS_PAUSE.has(ev.code)) {
@@ -105,11 +116,24 @@ class InputHub {
             }
         };
         this._keyUp = (ev) => {
+            this._keysHeld.delete(ev.code);
             if (KEYS_JUMP.has(ev.code)) this.emit('jumpEnd', stamp(ev));
             else if (KEYS_DUCK.has(ev.code)) this.emit('duckEnd', stamp(ev));
         };
         window.addEventListener('keydown', this._keyDown);
         window.addEventListener('keyup', this._keyUp);
+
+        // Sin foco no llegan los `keyup` ni los `touchend`: se suelta todo ahora.
+        this._releaseAll = () => {
+            const at = now();
+            for (const channel of this._keysHeld.values()) this.emit(channel === 'jump' ? 'jumpEnd' : 'duckEnd', at);
+            for (const side of this._touchSides.values()) this.emit(side === 'jump' ? 'jumpEnd' : 'duckEnd', at);
+            this._keysHeld.clear();
+            this._touchSides.clear();
+        };
+        this._onHidden = () => { if (document.hidden) this._releaseAll(); };
+        window.addEventListener('blur', this._releaseAll);
+        document.addEventListener('visibilitychange', this._onHidden);
 
         this._touchStart = (ev) => {
             // Si el tap viene encima de UI DOM (toasts, menú, modales, HUD,
@@ -165,6 +189,8 @@ class InputHub {
         if (!this._mounted) return;
         if (this._keyDown) window.removeEventListener('keydown', this._keyDown);
         if (this._keyUp) window.removeEventListener('keyup', this._keyUp);
+        if (this._releaseAll) window.removeEventListener('blur', this._releaseAll);
+        if (this._onHidden) document.removeEventListener('visibilitychange', this._onHidden);
         if (this._touchStart) document.body.removeEventListener('touchstart', this._touchStart);
         if (this._touchEnd) {
             document.body.removeEventListener('touchend', this._touchEnd);
@@ -173,6 +199,9 @@ class InputHub {
         if (isBridgeEmbedded()) setOnGameAction(null);
         this._handlers.clear();
         this._touchSides.clear();
+        this._keysHeld.clear();
+        this._releaseAll = null;
+        this._onHidden = null;
         this._keyDown = null;
         this._keyUp = null;
         this._touchStart = null;

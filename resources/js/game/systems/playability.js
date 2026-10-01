@@ -31,11 +31,13 @@ import { OBSTACLE_KIND, PHYSICS_STEP_S } from '../config.js';
 import {
     applyInput,
     applyTrigger,
+    bodyFigure,
     bodyHitbox,
     bodyState,
     enterMode,
     integrateBody,
-    obstacleHitbox,
+    settlePosture,
+    obstacleHit,
     obstacleTopY,
     triggerZone,
     actionLeadS,
@@ -147,7 +149,7 @@ export function toSimModes(events) {
  *        Velocidad constante o perfil de velocidad del nivel (Ola 5).
  * @param {{ dt?: number, pressOffset?: (index: number) => number, modes?: Array<{ t: number, mode: string }>,
  *           holds?: Array<{ t: number, until: number }>, course?: ReturnType<typeof createFlightCourse> | null,
- *           triggers?: SimObstacle[], flightPlayer?: object | null }} [opts]
+ *           triggers?: SimObstacle[], flightPlayer?: object | null, tapS?: number | null }} [opts]
  *        `pressOffset(i)` desplaza la pulsación del obstáculo i (segundos;
  *        negativo = se adelanta). Por defecto 0: jugador perfecto.
  *        `modes`: cambios de modo del nivel en orden (toSimModes). Sin ellos, se corre.
@@ -156,6 +158,7 @@ export function toSimModes(events) {
  *        `triggers` (Ola 6c): activadores del nivel (toSimTriggers).
  *        `flightPlayer`: cómo vuela el jugador virtual (virtualPlayer.FLIGHT_PLAYER por
  *        defecto: corrige mirando el túnel; null: a ciegas).
+ *        `tapS`: saltar y agacharse con toques de esa duración en vez de mantener.
  * @returns {{ ok: true } | { ok: false, index: number, t: number, atSongTime: number }}
  */
 export function simulateRun(obstacles, speed, opts = {}) {
@@ -181,6 +184,7 @@ export function simulateRun(obstacles, speed, opts = {}) {
     const script = virtualPlayerScript(obstacles, profile, opts.pressOffset, holds, {
         course,
         player: opts.flightPlayer,
+        tapS: opts.tapS,
     });
     const body = bodyState(SIM_GROUND_Y);
 
@@ -219,12 +223,28 @@ export function simulateRun(obstacles, speed, opts = {}) {
     endT += 0.25;
     let holdIdx = -1;   // última nota que ya empezó (para atribuir un choque con el túnel)
 
+    // ¿Chocaría una caja con algún obstáculo en `now`? Para la postura
+    // (settlePosture): solo se consulta cuando el cuerpo quiere levantarse.
+    let now = startT;
+    const hitsNow = (box, figure) => {
+        const d = profile.constant ? 0 : profile.distanceAt(now);
+        for (let i = lo; i < obstacles.length; i++) {
+            const o = obstacles[i];
+            if (o.cross > now + reachS) break;
+            const ahead = profile.constant ? (o.cross - now) * profile.base : crossD[i] - d;
+            if (obstacleHit(figure, box, o.def, DINO_CENTER_X + ahead - o.def.w / 2, obstacleTopY(o.def, SIM_GROUND_Y), oh)) return true;
+        }
+        return false;
+    };
+
     for (let tau = startT; tau <= endT; tau += dt) {
         // Mismo orden que GameSession: primero el portal, después las pulsaciones.
         while (modeIdx < modes.length && modes[modeIdx].t <= tau) enterMode(body, modes[modeIdx++].mode);
         while (inputIdx < script.length && script[inputIdx].at <= tau) applyInput(body, script[inputIdx++].input);
 
         integrateBody(body, dt, SIM_GROUND_Y);
+        now = tau;
+        settlePosture(body, hitsNow);
         bodyHitbox(body, dh);
 
         if (triggers.length > 0) {
@@ -256,14 +276,14 @@ export function simulateRun(obstacles, speed, opts = {}) {
         if (lo === hi) continue;
 
         const nowD = profile.distanceAt(tau);
+        const figure = bodyFigure(body);
         for (let i = lo; i < hi; i++) {
             const o = obstacles[i];
             // Con velocidad constante, la fórmula exacta de la Ola 3 (sin restar
             // dos distancias grandes): mismos resultados bit a bit que antes.
             const ahead = profile.constant ? (o.cross - tau) * profile.base : crossD[i] - nowD;
             const x = DINO_CENTER_X + ahead - o.def.w / 2;
-            obstacleHitbox(o.def, x, obstacleTopY(o.def, SIM_GROUND_Y), oh);
-            if (aabbHit(dh, oh)) {
+            if (obstacleHit(figure, dh, o.def, x, obstacleTopY(o.def, SIM_GROUND_Y), oh)) {
                 return { ok: false, index: i, t: o.t, atSongTime: tau };
             }
         }
@@ -334,7 +354,7 @@ const READER_SEARCH_S = 1;
  * @param {SimObstacle[]} obstacles
  * @param {number | import('./speedProfile.js').SpeedProfile} speed
  * @param {{ toleranceS?: number, dt?: number, adaptS?: number, modes?: Array<{ t: number, mode: string }>,
- *           holds?: Array<{ t: number, until: number }>, course?: object | null, triggers?: SimObstacle[], flightPlayer?: object | null }} [opts]
+ *           holds?: Array<{ t: number, until: number }>, course?: object | null, triggers?: SimObstacle[], flightPlayer?: object | null, tapS?: number | null }} [opts]
  * @returns {{ ok: true } | { ok: false, index: number, t: number, pattern: string }}
  */
 export function validatePlayability(obstacles, speed, opts = {}) {
@@ -356,7 +376,7 @@ export function validatePlayability(obstacles, speed, opts = {}) {
     }
     for (const [name, pressOffset] of runs) {
         const r = simulateRun(obstacles, profile, {
-            dt: opts.dt, pressOffset, modes: opts.modes, holds: opts.holds, course: opts.course, triggers: opts.triggers, flightPlayer: opts.flightPlayer,
+            dt: opts.dt, pressOffset, modes: opts.modes, holds: opts.holds, course: opts.course, triggers: opts.triggers, flightPlayer: opts.flightPlayer, tapS: opts.tapS,
         });
         if (!r.ok) return { ok: false, index: r.index, t: r.t, pattern: name };
     }
@@ -369,7 +389,7 @@ export function validatePlayability(obstacles, speed, opts = {}) {
  * tres cosas.
  *
  * @param {{ events: Array<{ t: number, type: string }>, world: { speedPxS: number, speedChanges?: object[] } }} chart
- * @param {{ toleranceS?: number, dt?: number, adaptS?: number }} [opts]
+ * @param {{ toleranceS?: number, dt?: number, adaptS?: number, tapS?: number | null }} [opts]
  */
 export function validateChart(chart, opts = {}) {
     const course = createFlightCourse(chart.events);

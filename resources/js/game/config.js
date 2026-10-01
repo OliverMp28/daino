@@ -74,6 +74,17 @@ export const DINO_X = 120;
 export const DINO_HITBOX_PADDING = { top: 10, right: 30, bottom: 15, left: 20 };
 
 /**
+ * El hueco de la caja del Dino de pie: su esquina de arriba a la izquierda, sobre
+ * el lomo y detrás de la cabeza, donde el dibujo no tiene nada (la cabeza empieza
+ * en la celda 11 y el lomo en la fila 8). Lo que solo pisa ese hueco no lo toca.
+ *
+ * Sin él, levantarse con la cola de un ptero todavía sobre el lomo era chocar con
+ * el aire: se moría a 30-40 unidades de que nada se tocase (playtest, Oct 2026).
+ * Medido contra los dibujos en tests/js/hitboxes.test.mjs.
+ */
+export const STANDING_NOTCH = Object.freeze({ w: 24, h: 22 });
+
+/**
  * Box lógico del Dino AGACHADO (26×12 celdas × 4). Más ancho y mucho más
  * bajo que de pie — pasa por debajo del ptero. El box se ancla a la base
  * del box de pie (los pies no se mueven), centrado horizontalmente.
@@ -84,16 +95,18 @@ export const DUCK_SIZE = { w: 104, h: 48 };
 export const DUCK_HITBOX_PADDING = { top: 6, right: 30, bottom: 0, left: 16 };
 
 // --------------------------- Feel del salto ---------------------------
-// Estándar de plataformas: el salto responde a CUÁNTO mantienes pulsado y
-// perdona imprecisiones de unos pocos frames. Todo determinista (timers en
-// segundos de juego, no wall-clock).
-
-/**
- * Multiplicador de gravedad mientras el Dino SUBE y el jugador ya soltó el
- * botón — corta el salto antes. Soltar rápido = salto corto, mantener =
- * salto completo.
- */
-export const JUMP_CUT_MULTIPLIER = 2.6;
+// Una pulsación, un gesto: el salto es SIEMPRE el mismo arco, el que el charter
+// usa para colocar cada obstáculo (su centro cruza al Dino en el ápice). Perdona
+// imprecisiones de unos pocos frames (coyote, jump buffer). Todo determinista
+// (timers en segundos de juego, no wall-clock).
+//
+// Hasta Oct 2026 la altura dependía de cuánto se mantenía la tecla (soltar pronto
+// cortaba el salto). Medido con la física: con un toque de 0.1 s el salto sube 103
+// en vez de 158 y dura 0.47 s en vez de 0.72, y pulsando EN el golpe ya no se
+// salva un cactus a ninguna velocidad (a 300 px/s había que mantener ≥ 0.25 s).
+// El nivel se construye y se valida con el salto completo, así que un toque
+// corto, el gesto natural en un móvil, era morir "habiendo saltado". Para caer
+// antes está el fast-fall (↓ en el aire).
 
 /**
  * Multiplicador de gravedad cuando el jugador pulsa ↓ en el aire (fast-fall,
@@ -107,6 +120,19 @@ export const COYOTE_TIME_S = 0.09;
 
 /** Si pulsas saltar un pelín antes de aterrizar, el salto se guarda y dispara al tocar suelo. */
 export const JUMP_BUFFER_S = 0.12;
+
+/**
+ * Agacharse también es un gesto: un toque deja al Dino agachado al menos este
+ * tiempo, y después no se levanta mientras tenga algo encima (modes/run.js).
+ * Así basta pulsar en el golpe, como al saltar; mantener sigue valiendo.
+ *
+ * El ptero llega tras el golpe: su morro alcanza la cabeza del Dino entre 0.12 s
+ * (250 px/s) y 0.30 s (1000 px/s) después. Con 0.4 s, un toque hasta 100 ms
+ * antes del golpe sigue agachado cuando llega (275 ms a 250 px/s). No más: quien
+ * mantiene suelta siempre después (el ptero cruza 0.36 s tras el golpe), así que
+ * el mínimo no cambia nada para él ni para el validador del charter.
+ */
+export const DUCK_MIN_S = 0.4;
 
 // --------------------------- Modos de movimiento (Ola 6) ---------------------------
 // Cada modo cambia las reglas del cuerpo durante un tramo de la canción y entra y
@@ -272,8 +298,23 @@ export const MAX_BURST_PARTICLES = 140;
  */
 export const CACTUS_ROW_CELLS = Object.freeze(Array.from({ length: 17 }, (_, i) => 22 + 5 * i));
 
-/** Márgenes de adelanto de los cristales afilados, en ms (ver `sharpCrystals`). */
-export const SHARP_CRYSTAL_MARGINS_MS = Object.freeze([190, 160, 130, 110]);
+/**
+ * Márgenes de adelanto de los cristales afilados, en ms (ver `sharpCrystals`).
+ * 95 y 80 llegaron con las piezas de colisión del cristal (Oct 2026): al chocar
+ * solo por su dibujo, cada cristal perdona 5-25 ms más por el lado de pulsar
+ * tarde, y con 110 como tope la zona roja de un Extremo dejaba de apretar (el
+ * charter gastaba la exigencia antes, en vez de al final). La lista solo crece:
+ * los charts publicados nombran estos kinds.
+ */
+export const SHARP_CRYSTAL_MARGINS_MS = Object.freeze([190, 160, 130, 110, 95, 80]);
+
+/**
+ * Piezas de colisión del grupo de cristales (el dibujo `crystal`, 13×16 celdas):
+ * el cristal pequeño de la izquierda, la aguja del centro y el de la derecha. La
+ * aguja conserva el alto de la caja de siempre (de él sale el adelanto de la
+ * antigravedad); lo que cambia es que rozar el aire junto a ella ya no mata.
+ */
+const CRYSTAL_HIT_PARTS = Object.freeze([[6, 32, 6, 28], [16, 6, 16, 54], [36, 24, 10, 36]]);
 
 /**
  * Catálogo de tipos de obstáculo — REGISTRO ÚNICO Y EXTENSIBLE. Añadir un
@@ -304,6 +345,15 @@ export const SHARP_CRYSTAL_MARGINS_MS = Object.freeze([190, 160, 130, 110]);
  *                  El charter elige, entre las variantes del kind de cada acción,
  *                  la que deja el margen que pide la dificultad a la velocidad de
  *                  ese golpe. Añadir una variante = una entrada con `accentOf`.
+ *   hitPad         Relleno propio de su caja de colisión ({ top, right, bottom,
+ *                  left }; por defecto OBSTACLE_HITBOX_PADDING), para los dibujos
+ *                  que no llenan su caja: la caja debe quedar dentro de lo que se ve.
+ *   hitParts       Para los dibujos que ni así caben en una caja (un grupo de
+ *                  alturas distintas): las piezas que chocan, cada una [x, y, w, h]
+ *                  desde la esquina de arriba a la izquierda del kind. Sustituyen a
+ *                  la caja; lo que envuelve a todas es su `obstacleHitbox`.
+ *                  Regla para las dos (tests/js/hitboxes.test.mjs): cuando el juego
+ *                  da choque, los dibujos se tocan o les falta una celda.
  *   precision      true en las variantes que solo son justas a partir de cierta
  *                  velocidad (las hileras largas): no valen a cualquier velocidad
  *                  ni junto a cualquier cosa, así que las pruebas genéricas de
@@ -331,9 +381,17 @@ export const OBSTACLE_KIND = Object.freeze({
     },
     CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', accentOf: 'CACTUS_SMALL', weight: 1 },
     ...cactusRows(),
-    PTERO: { w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, mode: 'run', surface: 'floor', action: 'duck', role: 'duck', weight: 1 },
-    CRYSTAL_FLOOR: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'floor', action: 'flip', role: 'flip', weight: 1 },
-    CRYSTAL_CEIL: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'ceiling', action: 'flip', role: 'flip', weight: 1 },
+    // hitPad: choca el cuerpo, que está en los dos fotogramas del aleteo; el ala
+    // (arriba en uno, abajo en el otro) no. La cola acaba en punta (solo su fila
+    // central llega a la celda 20): la caja termina donde el cuerpo aún tiene alto.
+    // Por abajo pasa 6 del cuerpo, lo justo para que la cabeza del Dino de pie,
+    // cuya caja empieza 10 por debajo de lo que se ve, siga chocando con él.
+    PTERO: {
+        w: 96, h: 56, altitude: 58, sprites: ['pteroA', 'pteroB'], animPeriodS: 0.18, mode: 'run', surface: 'floor', action: 'duck', role: 'duck', weight: 1,
+        hitPad: { top: 20, right: 20, bottom: 10, left: 6 },
+    },
+    CRYSTAL_FLOOR: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'floor', action: 'flip', role: 'flip', weight: 1, hitParts: CRYSTAL_HIT_PARTS },
+    CRYSTAL_CEIL: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'ceiling', action: 'flip', role: 'flip', weight: 1, hitParts: CRYSTAL_HIT_PARTS },
     ...sharpCrystals(),
 });
 
@@ -370,13 +428,13 @@ function sharpCrystals() {
     const out = {};
     for (const ms of SHARP_CRYSTAL_MARGINS_MS) {
         for (const [surface, base] of [['floor', 'CRYSTAL_FLOOR'], ['ceiling', 'CRYSTAL_CEIL']]) {
-            out[`${base}_SHARP_${ms}`] = { w: 52, h: 64, altitude: 0, sprites: ['crystalSharp'], mode: 'flip', surface, action: 'flip', role: 'accent', accentOf: base, weight: 1, leadMarginS: ms / 1000 };
+            out[`${base}_SHARP_${ms}`] = { w: 52, h: 64, altitude: 0, sprites: ['crystalSharp'], mode: 'flip', surface, action: 'flip', role: 'accent', accentOf: base, weight: 1, leadMarginS: ms / 1000, hitParts: CRYSTAL_HIT_PARTS };
         }
     }
     return out;
 }
 
-/** Padding del hitbox del obstacle (más ajustado que el del Dino). */
+/** Padding del hitbox del obstacle (más ajustado que el del Dino). Un kind puede traer el suyo (`hitPad`). */
 export const OBSTACLE_HITBOX_PADDING = { top: 6, right: 6, bottom: 4, left: 6 };
 
 // --------------------------- Velocidad por BPM ---------------------------
