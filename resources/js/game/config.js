@@ -741,7 +741,15 @@ export const SPEED_LINES = Object.freeze({
     topFraction: 0.16,
     /** Fundido del conjunto al aparecer y al irse (1/s). */
     fadeRate: 5,
-    colors: Object.freeze([0x8fe0ff, 0xf2f5ff, 0xff5d7e]),
+    /**
+     * Una de cada tres rayas es blanca; las otras llevan los dos colores de los
+     * efectos (fx/director.js: los de la escena o los de la canción, a juego con
+     * el cielo), aclarados con `pastel` de blanco. Son rayas de LUZ, finas y casi
+     * transparentes: un color saturado sumado tan flojo sobre el azul de la noche
+     * no se lee como luz, sino como una raya granate.
+     */
+    white: 0xf2f5ff,
+    pastel: 0.45,
 });
 
 /**

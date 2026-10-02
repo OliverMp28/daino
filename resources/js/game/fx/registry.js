@@ -182,6 +182,9 @@ export const DEFAULT_FX_PREF = 'full';
  * Colores de los efectos por defecto ("neón"): el rosa del pulso y el cian de los
  * agudos. Espejo de los tokens de @theme en main.css. Una escena puede fijar los
  * suyos (`scene.fx.colors`); desde la T03.3, cada canción elige su paleta.
+ *
+ * Son una intención, no lo que se pinta: el director los pone a juego con el
+ * cielo de cada hora (tones.js). Sobre el azul del día este rosa es un magenta.
  */
 export const FX_COLORS = Object.freeze({
     warm: Object.freeze([0.88, 0.22, 0.38]),

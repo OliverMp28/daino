@@ -46,12 +46,11 @@ export const SPECTRUM_RULES = Object.freeze({
  *   count     barras a lo ancho de la vista.
  *   fill      parte de su hueco que ocupa cada barra (el resto, separación).
  *   maxRise   cuánto sube una barra a tope sobre la silueta (unidades de mundo).
- *   alpha     opacidad en reposo y a tope (mezcla normal con un color ya limitado:
- *             fx/limiter.js `capColor`).
- *   dayTint   de día las barras son silueta (el color de las montañas): cuánto
- *             llevan del color del efecto [0,1].
+ *   alpha     opacidad en reposo y a tope (mezcla normal con un color que ya está
+ *             bajo el techo de la franja jugable: fx/tones.js `spectrumTone`).
+ * De qué color son, y cuánta luz llevan de día y de noche: fx/tones.js.
  */
-export const SPECTRUM_BARS = Object.freeze({ count: 36, fill: 0.68, maxRise: 104, alpha: Object.freeze([0.7, 1]), dayTint: 0.25 });
+export const SPECTRUM_BARS = Object.freeze({ count: 36, fill: 0.68, maxRise: 104, alpha: Object.freeze([0.8, 1]) });
 
 /**
  * @param {{ sampleRate?: number, bins?: number, rules?: typeof SPECTRUM_RULES }} [opts]

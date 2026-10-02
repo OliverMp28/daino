@@ -457,6 +457,7 @@ function tick(ticker) {
     }
     scenery.setFx(fxFrame);
     speedLines?.setLevel(fxSignals.speed.lines * levels.speedLines);
+    speedLines?.setColors(fxDirector.colors);
 
     // Las motas suben con la energía de lo que suena y más en los tramos que
     // empujan: en una estrofa flotan, en el clímax vuelan. Su nivel dice cuánto

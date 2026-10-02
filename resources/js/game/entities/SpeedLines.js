@@ -10,12 +10,16 @@
 // Nunca bajan a la franja del juego (clearAboveGroundPx): una raya a la altura
 // del ptero se leería como un obstáculo.
 //
+// Su color es el de los efectos (`setColors`), aclarado: el frío, el cálido y blanco.
+//
 // Coste: un pool fijo de Sprites de Texture.WHITE (≤ 40), sin crear ni
 // destruir nada durante la partida. El engine lo limita con el presupuesto de
 // partículas del estado (RenderProfile).
 
 import { Container, Sprite, Texture } from 'pixi.js';
 import { SPEED_LINES } from '../config.js';
+import { FX_COLORS } from '../fx/registry.js';
+import { rgbToNumber } from '../scenes/color.js';
 
 /**
  * @param {{ width: number, height: number, groundY: number }} viewport
@@ -45,6 +49,14 @@ export function createSpeedLines(viewport) {
     let clearance = SPEED_LINES.clearAboveGroundPx;
     let pendingBurst = 0;
     let shown = 0;        // alpha del conjunto, con fundido
+    /** Un color de efecto, hecho luz: con su parte de blanco. */
+    const pastelTmp = [0, 0, 0];
+    const pastel = (rgb) => {
+        for (let k = 0; k < 3; k++) pastelTmp[k] = rgb[k] + (1 - rgb[k]) * SPEED_LINES.pastel;
+        return rgbToNumber(pastelTmp);
+    };
+    /** De qué color nace cada raya: el frío de los efectos, blanco y el cálido. */
+    const palette = [pastel(FX_COLORS.cool), SPEED_LINES.white, pastel(FX_COLORS.warm)];
 
     function launch(line, anywhere, burst) {
         const k = burst ? 1 : level;
@@ -54,7 +66,7 @@ export function createSpeedLines(viewport) {
         line.factor = f0 + Math.random() * (f1 - f0);
         line.s.width = (l0 + (l1 - l0) * k) * (0.6 + Math.random() * 0.8);
         line.s.alpha = (a0 + (a1 - a0) * k) * (0.6 + Math.random() * 0.4);
-        line.s.tint = SPEED_LINES.colors[Math.floor(Math.random() * SPEED_LINES.colors.length)];
+        line.s.tint = palette[Math.floor(Math.random() * palette.length)];
         const top = H * SPEED_LINES.topFraction;
         const bottom = Math.max(top + 8, groundY - clearance);
         line.s.y = Math.round(top + Math.random() * (bottom - top));
@@ -76,6 +88,16 @@ export function createSpeedLines(viewport) {
         /** Intensidad [0,1]. Las rayas entran por la derecha: nunca aparecen de golpe. */
         setLevel(v) {
             level = v < 0 ? 0 : v > 1 ? 1 : v;
+        },
+
+        /**
+         * Los dos colores de los efectos del fotograma. Las rayas que ya cruzan
+         * conservan el suyo: cambian las que nacen.
+         * @param {{ warm: ArrayLike<number>, cool: ArrayLike<number> }} colors
+         */
+        setColors(colors) {
+            palette[0] = pastel(colors.cool);
+            palette[2] = pastel(colors.warm);
         },
 
         /** Ráfaga de un acelerón: rayas por toda la pantalla a la vez. */

@@ -17,13 +17,18 @@
 // Los cinco primeros casi nunca cambian (se recalculan al cambiar algo); los demás,
 // cada fotograma, con fundido: un efecto no aparece ni desaparece de golpe.
 //
-// También da los colores de los efectos: los de la escena si los fija, o los de
-// la canción, girados por sus cambios de tonalidad.
+// También da los colores de los efectos: los de la escena si los fija (una
+// historia de autor: son parte de su paleta y no se tocan), o los de la canción,
+// girados por sus cambios de tonalidad y puestos A JUEGO CON EL CIELO de la hora
+// (tones.js): sobre el azul del día el rosa se va al magenta; en el ocaso rosa
+// sigue siendo rosa. Un color de efecto lejos del tono de lo que tiene detrás se
+// vuelve gris al mezclarse con él.
 //
 // Puro: mismas señales ⇒ mismos niveles. Se prueba en Node.
 
 import { DEFAULT_FX_PREF, FX, FX_COLORS, FX_COSTS, FX_FADE, FX_FAMILIES, FX_IDS, FX_PREFS } from './registry.js';
 import { sceneFxPolicy } from './policy.js';
+import { harmonize } from './tones.js';
 
 const ramp = (v, from, to) => {
     const x = (v - from) / (to - from);
@@ -80,6 +85,7 @@ export function createFxDirector() {
     const dev = { master: true, off: new Set(), solo: null, gain: {} };
 
     const colors = { warm: [...FX_COLORS.warm], cool: [...FX_COLORS.cool] };
+    const hueTmp = [0, 0, 0];
 
     function refix() {
         for (const id of FX_IDS) {
@@ -176,7 +182,7 @@ export function createFxDirector() {
             }
 
             // Colores: los de la escena, fijos; si no, los de la canción, girados
-            // por sus cambios de tonalidad.
+            // por sus cambios de tonalidad y a juego con el cielo que tienen detrás.
             if (policy.colors !== null) {
                 for (let i = 0; i < 3; i++) {
                     colors.warm[i] = policy.colors.warm[i];
@@ -184,8 +190,8 @@ export function createFxDirector() {
                 }
             } else {
                 const turns = s.song.hue * levels.keyHue;
-                rotateHue(palette.warm, turns, colors.warm);
-                rotateHue(palette.cool, turns, colors.cool);
+                harmonize(rotateHue(palette.warm, turns, hueTmp), s.sky.band, colors.warm);
+                harmonize(rotateHue(palette.cool, turns, hueTmp), s.sky.band, colors.cool);
             }
         },
 

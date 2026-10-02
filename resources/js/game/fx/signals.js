@@ -23,6 +23,14 @@ import { FX_LIMIT } from './limiter.js';
 const skyTmp = [0, 0, 0];
 
 /**
+ * A qué altura sobre el suelo se mira el cielo "de detrás del juego" (unidades de
+ * mundo: en mitad de la franja donde viven los obstáculos y los efectos del
+ * paisaje), y cuánto por encima del horizonte de la escena como poco.
+ */
+const SKY_BAND_PX = 140;
+const SKY_BAND_MIN_OVER_HORIZON_PX = 40;
+
+/**
  * El cielo como señal de los efectos: el sol late si hay sol, las estrellas si es
  * de noche, las motas se van si llueve. Se llama cuando cambia la hora.
  *
@@ -48,6 +56,10 @@ export function readSkySignals(state, scene, s, viewHeight = WORLD_VIEW.targetHe
         if (l > maxLuma) maxLuma = l;
     }
     sky.maxLuma = maxLuma;
+    // El cielo que queda detrás de lo que se juega: los colores de los efectos se
+    // ponen a juego con él (tones.js). Sobre el horizonte de la escena, si lo sube.
+    const bandPx = Math.max(SKY_BAND_PX, rise + SKY_BAND_MIN_OVER_HORIZON_PX);
+    skyColorAt(state, Math.max(0, Math.min(1, 1 - (bandPx - rise) / skyH)), sky.band);
     return s;
 }
 
@@ -93,6 +105,8 @@ export function createFxSignals() {
             precip: 0,
             /** Luminancia del punto más claro del cielo por encima de la franja jugable. */
             maxLuma: 0,
+            /** Color del cielo detrás de lo que se juega (negro hasta que se lee la primera hora). */
+            band: [0, 0, 0],
         },
         hush: 0,
     };

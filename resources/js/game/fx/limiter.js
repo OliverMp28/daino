@@ -26,8 +26,9 @@ export const FX_LIMIT = Object.freeze({
     /**
      * Techo del sustituto de luminancia en la franja jugable. El fondo más claro
      * que aún deja leer lo que se juega tiene luminancia real 0.092 (el ptero y
-     * los cristales afilados, a 2.5:1; lo comprueba un test): 0.085 del sustituto
-     * son ≤ 0.072 reales.
+     * los cristales afilados, a 2.5:1; lo comprueba un test). La real nunca pasa
+     * del sustituto: con 0.085 un gris mide 0.072 y el color que más se le acerca,
+     * un añil vivo (el extremo de las barras del espectro, fx/tones.js), 0.083.
      */
     cap: 0.085,
     /** Hasta dónde llega la franja jugable sobre el suelo (la cabeza del Dino en un doble salto). */

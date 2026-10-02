@@ -10,22 +10,26 @@
 // montañas. Las barras no se mueven de sitio: solo suben y bajan (nada en la
 // franja jugable se mueve como un obstáculo).
 //
-// De día y de noche, con lo que el cielo deja:
-//   - DE NOCHE son luz: los dos colores de los efectos, de cálido (graves) a azul
-//     (agudos), bajados al techo de luminancia de la franja jugable
-//     (fx/limiter.js, `capColor`).
+// EL COLOR (fx/tones.js). De los graves a los agudos, del cálido al frío de los
+// efectos POR EL TONO (magenta, violeta, añil), no en línea recta por sRGB, que
+// pasa por un malva sucio; y solo con tonos que siguen siendo color bajo el techo
+// de luminancia de la franja jugable (fx/limiter.js): un rojo ahí es un granate y
+// un cian, un gris. Con la luminancia que deja el cielo de cada hora:
+//   - DE NOCHE son luz: el tono, a la luminancia del techo;
 //   - DE DÍA no cabe luz detrás de lo que se juega (el cielo ya está en ese
-//     techo), así que son SILUETA: el color más oscuro del paisaje a esa hora (el
-//     de las montañas cercanas), con un punto del color del efecto. Más oscuras
-//     que el cielo y que las crestas que tienen delante, como un horizonte de
-//     torres que baila. (Como luz del mismo brillo que el cielo solo lo
-//     ensuciaban: columnas pardas sobre el azul.)
-//   Entre las dos, el atardecer las va encendiendo.
-// Las dos se pintan con mezcla normal y con colores que el guardián de legibilidad
-// conoce (scenes/backdrops.js): lo que se juega se lee delante a cualquier hora.
+//     techo): son el mismo tono, en sombra. Vivo y algo más oscuro que el cielo se
+//     lee como color; apagado, como suciedad (playtest: "se ven grisáceas");
+//   - AL ANOCHECER cada barra se enciende de la punta hacia abajo: la punta ya es
+//     luz contra el cielo alto, oscuro, y el pie sigue en sombra contra el
+//     resplandor del horizonte. (Con un solo color que pasase de sombra a luz, a
+//     mitad de camino la barra medía lo mismo que su cielo y desaparecía.)
+//   Por eso cada barra son dos Sprites: la sombra, entera, y la luz encima.
+// Siempre con mezcla normal y por debajo del techo: lo que se juega se lee delante
+// a cualquier hora (el guardián mide estos mismos colores: scenes/backdrops.js).
 //
-// El extremo frío es azul, no cian: bajo un mismo techo de luminancia un azul se
-// ve mucho más que un cian (el cian oscuro es un gris verdoso).
+// (Se probó una "marca del pico", la raya que en un ecualizador se queda un
+// instante donde llegó la barra: sueltas por la franja jugable eran rayas
+// flotando a la altura a la que vuela el ptero. Fuera.)
 //
 // Efecto 'spectrum' (lo gobierna el director, fx/director.js); elemento
 // 'spectrumBars' del panel dev.
@@ -37,20 +41,15 @@ import { GROUND_OFFSET_PX } from '../../config.js';
 import { PIXEL_SCALE } from '../../assets/pixelart.js';
 import { rgbToNumber } from '../../scenes/color.js';
 import { skyColorAt } from '../../scenes/skyModel.js';
-import { FX_LIMIT, capColor, proxyLuma } from '../../fx/limiter.js';
+import { proxyLuma } from '../../fx/limiter.js';
 import { SPECTRUM_BARS } from '../../fx/spectrum.js';
+import { spectrumDay, spectrumEnds, spectrumLight, spectrumShade } from '../../fx/tones.js';
 
 /** Cuánto asoma la barra bajo la cresta más baja de su hueco (por los valles). */
 const BELOW_PX = 24;
 
-/**
- * Con qué claridad del cielo detrás de las barras (su luminancia, en techos del
- * limitador) son ya todo luz (noche) y con cuál son todo silueta (día).
- */
-const NIGHT_BLEND = Object.freeze([0.3, 0.75]);
-
-/** El extremo frío de las barras: el color frío de los efectos, llevado al azul. */
-const DEEP_COOL = Object.freeze([0.45, 0.6, 1]);
+/** Con cuánta sombra (`spectrumDay`) la sombra de una barra ya se ve entera: por debajo se va apagando bajo la luz. */
+const SHADE_FULL_AT = 0.25;
 
 /** Degradado vertical en escalones (pixel art): opaco abajo, transparente en la punta. */
 let gradientTexture = null;
@@ -71,24 +70,27 @@ function gradient() {
 }
 
 /**
- * @param {{ id: string, params: { host: string, dayColor?: 'far' | 'near', count?: number, maxRise?: number } }} def
- *   `dayColor`: qué color del paisaje de la hora llevan de día (scenes/skyModel.js, `mountains`).
- * @param {{ width: number, height: number, groundY: number, horizonRise?: number, find: (id: string) => { heightAt?: (x: number) => number } | null }} view
+ * @param {{ id: string, params: { host: string, count?: number, maxRise?: number } }} def
+ * @param {{ width: number, height: number, groundY: number, horizonRise?: number, find: (id: string) => { heightAt?: (x: number) => number, heightRange?: () => { min: number, max: number } } | null }} view
  */
 export function createSpectrumLayer(def, view) {
     const count = def.params.count ?? SPECTRUM_BARS.count;
     const maxRise = def.params.maxRise ?? SPECTRUM_BARS.maxRise;
-    const dayColor = def.params.dayColor ?? 'near';
     const container = new Container({ label: def.id });
     container.visible = false;
 
+    /** La sombra de cada barra (debajo) y su luz (encima, de la punta hacia abajo). */
     /** @type {Sprite[]} */
-    const bars = [];
-    for (let i = 0; i < count; i++) {
-        const s = new Sprite(gradient());
-        s.alpha = 0;
-        bars.push(s);
-        container.addChild(s);
+    const shades = [];
+    /** @type {Sprite[]} */
+    const lights = [];
+    for (const pool of [shades, lights]) {
+        for (let i = 0; i < count; i++) {
+            const s = new Sprite(gradient());
+            s.alpha = 0;
+            pool.push(s);
+            container.addChild(s);
+        }
     }
 
     let W = view.width;
@@ -96,15 +98,15 @@ export function createSpectrumLayer(def, view) {
     let slot = W / count;
     let barW = Math.max(PIXEL_SCALE, Math.round((slot * SPECTRUM_BARS.fill) / PIXEL_SCALE) * PIXEL_SCALE);
     let on = true;
-    /** [0,1] cuánto son luz (1 de noche) y cuánto silueta (0 a pleno día). */
-    let night = 1;
-    /** El color de silueta de esta hora. */
-    const silhouette = [0, 0, 0];
     let viewH = view.height;
-    /** Lo último con lo que se tiñeron: colores de los efectos, silueta y hora. */
+    /** Sustituto de luminancia del cielo que las barras tienen detrás a esta hora. */
+    let skyLuma = 0;
+    /** [0,1] cuánto de cada barra es sombra: 1 de día, 0 de noche. */
+    let day = 0;
+    /** Lo último con lo que se tiñeron: colores de los efectos y claridad del cielo. */
     let tintKey = '';
-    const mixTmp = [0, 0, 0];
-    const capTmp = [0, 0, 0];
+    const ends = [0, 0];
+    const toneTmp = [0, 0, 0];
     const skyTmp = [0, 0, 0];
 
     function layout(width, ground) {
@@ -113,26 +115,27 @@ export function createSpectrumLayer(def, view) {
         slot = W / count;
         barW = Math.max(PIXEL_SCALE, Math.round((slot * SPECTRUM_BARS.fill) / PIXEL_SCALE) * PIXEL_SCALE);
         for (let i = 0; i < count; i++) {
-            bars[i].x = Math.round(i * slot + (slot - barW) / 2);
-            bars[i].width = barW;
+            const x = Math.round(i * slot + (slot - barW) / 2);
+            shades[i].x = x;
+            shades[i].width = barW;
+            lights[i].x = x;
+            lights[i].width = barW;
         }
     }
     layout(view.width, view.groundY);
 
     const snap = (v) => Math.round(v / PIXEL_SCALE) * PIXEL_SCALE;
 
-    /** Tiñe las barras: de la silueta (día) a la luz de los efectos (noche). */
+    /** Tiñe las barras: de los graves a los agudos, con la luz que deja el cielo. */
     function tint(colors) {
-        const key = `${rgbToNumber(colors.warm)}:${rgbToNumber(colors.cool)}:${rgbToNumber(silhouette)}:${Math.round(night * 24)}`;
+        const key = `${rgbToNumber(colors.warm)}:${rgbToNumber(colors.cool)}:${Math.round(skyLuma * 2000)}`;
         if (key === tintKey) return;
         tintKey = key;
-        const light = SPECTRUM_BARS.dayTint + (1 - SPECTRUM_BARS.dayTint) * night;
+        spectrumEnds(colors, ends);
         for (let i = 0; i < count; i++) {
             const t = count > 1 ? i / (count - 1) : 0;
-            for (let k = 0; k < 3; k++) mixTmp[k] = colors.warm[k] + (colors.cool[k] * DEEP_COOL[k] - colors.warm[k]) * t;
-            capColor(mixTmp, capTmp);
-            for (let k = 0; k < 3; k++) mixTmp[k] = silhouette[k] + (capTmp[k] - silhouette[k]) * light;
-            bars[i].tint = rgbToNumber(mixTmp);
+            shades[i].tint = rgbToNumber(spectrumShade(ends, t, skyLuma, toneTmp));
+            lights[i].tint = rgbToNumber(spectrumLight(ends, t, toneTmp));
         }
     }
 
@@ -145,16 +148,13 @@ export function createSpectrumLayer(def, view) {
         },
         /** @param {ReturnType<import('../../scenes/skyModel.js').createSkyState>} state */
         light(state) {
-            // El cielo que tienen detrás, a media altura de las barras.
+            // El cielo que tienen detrás, a media altura de lo que suben sobre su silueta.
             const rise = view.horizonRise ?? 0;
-            const frac = 1 - (maxRise - rise) / Math.max(1, viewH - GROUND_OFFSET_PX - rise);
-            const sky = proxyLuma(skyColorAt(state, Math.max(0, Math.min(1, frac)), skyTmp)) / FX_LIMIT.cap;
-            const t = (sky - NIGHT_BLEND[0]) / (NIGHT_BLEND[1] - NIGHT_BLEND[0]);
-            night = 1 - (t <= 0 ? 0 : t >= 1 ? 1 : t);
-            const c = state.mountains[dayColor];
-            silhouette[0] = c[0];
-            silhouette[1] = c[1];
-            silhouette[2] = c[2];
+            const range = view.find(def.params.host)?.heightRange?.();
+            const at = (range ? (range.min + range.max) / 2 : 0) + maxRise / 2;
+            const frac = 1 - (at - rise) / Math.max(1, viewH - GROUND_OFFSET_PX - rise);
+            skyLuma = proxyLuma(skyColorAt(state, Math.max(0, Math.min(1, frac)), skyTmp));
+            day = spectrumDay(skyLuma);
         },
         /**
          * @param {{ levels: Record<string, number>, colors: { warm: number[], cool: number[] }, signals: import('../../fx/signals.js').FxSignals, spectrum: ReturnType<import('../../fx/spectrum.js').createSpectrum> }} fx
@@ -169,8 +169,12 @@ export function createSpectrumLayer(def, view) {
             // Más altas cuanto más empuja el tramo.
             const reach = maxRise * (0.6 + 0.4 * fx.signals.song.intensity);
             const [a0, a1] = SPECTRUM_BARS.alpha;
+            // Cuánto de cada barra es luz (de la punta hacia abajo) y cuánto se ve su sombra.
+            const lit = 1 - day;
+            const shadeA = Math.min(1, day / SHADE_FULL_AT);
             for (let i = 0; i < count; i++) {
-                const s = bars[i];
+                const s = shades[i];
+                const l = lights[i];
                 const v = fx.spectrum.at(count > 1 ? i / (count - 1) : 0);
                 // Una barra en silencio se queda transparente, no oculta: en Pixi v8
                 // cambiar `visible` rehace las instrucciones de dibujo de toda la
@@ -178,16 +182,26 @@ export function createSpectrumLayer(def, view) {
                 // y 1.5 ms por fotograma del hilo principal).
                 if (v < 0.02) {
                     s.alpha = 0;
+                    l.alpha = 0;
                     continue;
                 }
                 // La cresta más baja de su hueco: desde ahí asoma la barra.
                 const x0 = s.x;
-                const base = Math.min(host.heightAt(x0), host.heightAt(x0 + barW * 0.5), host.heightAt(x0 + barW));
-                const top = snap(Math.max(0, base) + v * reach);
+                const base = Math.max(0, Math.min(host.heightAt(x0), host.heightAt(x0 + barW * 0.5), host.heightAt(x0 + barW)));
+                const top = snap(base + v * reach);
                 const bottom = Math.max(0, snap(base) - BELOW_PX);
-                s.y = groundY - top;
-                s.height = Math.max(PIXEL_SCALE, top - bottom);
-                s.alpha = Math.min(1, level * (a0 + (a1 - a0) * v));
+                const height = Math.max(PIXEL_SCALE, top - bottom);
+                const alpha = Math.min(1, level * (a0 + (a1 - a0) * v));
+                s.alpha = alpha * shadeA;
+                if (shadeA > 0) {
+                    s.y = groundY - top;
+                    s.height = height;
+                }
+                l.alpha = lit > 0 ? alpha : 0;
+                if (lit > 0) {
+                    l.y = groundY - top;
+                    l.height = Math.max(PIXEL_SCALE, snap(height * lit));
+                }
             }
         },
         setVisible(id, visible) {

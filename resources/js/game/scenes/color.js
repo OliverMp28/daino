@@ -52,20 +52,34 @@ export function rgbToOklab(rgb, out = [0, 0, 0]) {
 }
 
 /**
- * OKLab → sRGB [0, 1] (recortado al gamut).
+ * OKLab → RGB lineal, SIN recortar: un canal fuera de [0, 1] dice que el color no
+ * cabe en sRGB (lo usa quien busca el color más vivo que sí cabe: fx/tones.js).
  * @param {ArrayLike<number>} lab
  * @param {number[] | Float32Array} [out]
  */
-export function oklabToRgb(lab, out = [0, 0, 0]) {
+export function oklabToLinear(lab, out = [0, 0, 0]) {
     const l = lab[0] + 0.3963377774 * lab[1] + 0.2158037573 * lab[2];
     const m = lab[0] - 0.1055613458 * lab[1] - 0.0638541728 * lab[2];
     const s = lab[0] - 0.0894841775 * lab[1] - 1.291485548 * lab[2];
     const l3 = l * l * l;
     const m3 = m * m * m;
     const s3 = s * s * s;
-    out[0] = toGamma(4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3);
-    out[1] = toGamma(-1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3);
-    out[2] = toGamma(-0.0041960863 * l3 - 0.7034186147 * m3 + 1.707614701 * s3);
+    out[0] = 4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3;
+    out[1] = -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3;
+    out[2] = -0.0041960863 * l3 - 0.7034186147 * m3 + 1.707614701 * s3;
+    return out;
+}
+
+/**
+ * OKLab → sRGB [0, 1] (recortado al gamut).
+ * @param {ArrayLike<number>} lab
+ * @param {number[] | Float32Array} [out]
+ */
+export function oklabToRgb(lab, out = [0, 0, 0]) {
+    oklabToLinear(lab, out);
+    out[0] = toGamma(out[0]);
+    out[1] = toGamma(out[1]);
+    out[2] = toGamma(out[2]);
     return out;
 }
 

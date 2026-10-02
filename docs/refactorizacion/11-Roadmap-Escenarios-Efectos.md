@@ -11,7 +11,7 @@
 >
 > **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
 >
-> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche), T02.5 (Automático por el carácter de la canción) y T02.6 (historias de autor y One Day) ✅; quedan las historias siguientes (T02.7+). T03 en curso: rediseñado con el user (§2.11-2.15 y §3, T03); T03.1 (cimientos y control) y T03.2 (el espectro en el paisaje y el pulso por astro) ✅; quedan la identidad por canción (T03.3) y el playtest (T03.4).
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche), T02.5 (Automático por el carácter de la canción) y T02.6 (historias de autor y One Day) ✅; quedan las historias siguientes (T02.7+). T03 en curso: rediseñado con el user (§2.11-2.16 y §3, T03); T03.1 (cimientos y control) y T03.2 (el espectro en el paisaje y el pulso por astro) ✅, con dos rondas de ajustes tras jugarlo (la segunda, el color de los efectos: §2.16); quedan la identidad por canción (T03.3) y el playtest (T03.4).
 
 ---
 
@@ -181,6 +181,17 @@ Los efectos se construyen con piezas del propio paisaje (su silueta, su mar, sus
 ### 2.15 Nada de pantalla destella más de tres veces por segundo
 
 Lo que late con el pulso (hasta 6 veces por segundo en una subida a contratiempo) no llega a ser un destello: su cambio de luminancia se queda por debajo del umbral de la WCAG 2.3.1, con margen. Los destellos de verdad (el del drop) van sueltos. Lo prueba un test.
+
+### 2.16 El color de un efecto va a juego con lo que tiene detrás (segundo playtest, con el user)
+
+"Las barras se ven grisáceas: son rojizas y con el fondo azulado queda raro." Un efecto no trae un color fijo: trae una intención (un cálido y un frío) y **el cielo de la hora dice cómo se ve** (`fx/tones.js`). Cuatro reglas, las mismas para cualquier escena, hora, paleta o efecto nuevo:
+
+- **A juego con el cielo.** Un color de efecto no queda a más de 70° de tono del cielo que tiene detrás: dos colores lejanos, mezclados, pasan por el gris. Lo hace el director con los dos colores de los efectos; los pintores no saben nada. Los colores que fija una escena (una historia de autor) son parte de su paleta y no se tocan.
+- **Bajo el techo, solo tonos que brillan en oscuro.** A la luminancia que deja la franja jugable (§2.12), un añil, un violeta o un magenta siguen siendo color; un rojo es un granate y un cian o un amarillo, un gris. Lo que pinta color dentro de la franja usa ese arco.
+- **Del cálido al frío se va por el tono**, no en línea recta por sRGB, que pasa por un malva sucio.
+- **Nada pasa de sombra a luz con un solo color.** A mitad de camino mediría lo mismo que su cielo y desaparecería. Se hace en dos partes (la barra se enciende de la punta hacia abajo).
+
+Lo protege un test que recorre todas las escenas y horas.
 
 ---
 
@@ -684,7 +695,7 @@ El modelo y sus decisiones, en §2.11-2.15. Las olas sustituyen a las T03.1-T03.
 ##### Qué se construyó
 
 - **`fx/spectrum.js`** (puro): 24 barras en bandas **logarítmicas** (45 Hz-11 kHz) desde los 1024 bins nativos del AnalyserNode. Cada barra se mide contra sí misma: lleva su suelo (lo que suena de fondo en su banda) y su techo (su pico reciente) y enseña dónde está entre los dos. Los bytes del analizador van en decibelios y suavizados: a todo volumen quedan casi todos arriba y quietos; así se ve lo que se mueve. Sube al instante, cae suave y el silencio es plano.
-- **Barras tras la silueta** (`entities/scenery/SilhouetteSpectrum.js`, tipo de capa `spectrum`): 36 barras detrás de la capa anfitriona, que las recorta: asoman justo por encima de la cresta que tienen delante. Anfitrionas: las montañas lejanas (Cordillera, Tormenta, Nieve) y los edificios lejanos (Ciudad), que exponen su silueta (`heightAt`). **De noche son luz** (de cálido, los graves, a azul, los agudos, en escalones); **de día son silueta** (el color más oscuro del paisaje a esa hora, con un punto del color del efecto); el atardecer las va encendiendo.
+- **Barras tras la silueta** (`entities/scenery/SilhouetteSpectrum.js`, tipo de capa `spectrum`): 36 barras detrás de la capa anfitriona, que las recorta: asoman justo por encima de la cresta que tienen delante. Anfitrionas: las montañas lejanas (Cordillera, Tormenta, Nieve) y los edificios lejanos (Ciudad), que exponen su silueta (`heightAt`). **De noche son luz** (de cálido, los graves, a azul, los agudos, en escalones); **de día son silueta** (el color más oscuro del paisaje a esa hora, con un punto del color del efecto); el atardecer las va encendiendo. *(El color cambió tras el segundo playtest: ver "Ajustes tras el segundo playtest" más abajo.)*
 - **El mar por bandas** (`Sea.js`): cada fila de crestas se aviva con una banda, los graves en la orilla y los agudos en el horizonte (Costa y Lluvia).
 - **Las ventanas de la ciudad** (`Skyline.js`): cada escalón de ventanas sigue una banda; se atenúan y vuelven a su luz con cada golpe (nunca más brillantes que en el escenario).
 - **El filo de las crestas** (`Ridge.js`, efecto `ridgePulse`): el filo de luz del escenario se enciende con los graves y el pulso. Las montañas laten, de día y de noche.
@@ -725,16 +736,49 @@ El user jugó y dijo tres cosas: "parece que todos los niveles están con los ef
 - **En la Ciudad no se sentía** (What's Up Danger): las barras apenas asomaban sobre los edificios lejanos. Ahora suben más y **las ventanas bailan** con las bandas.
 - **Verificación**: 400 JS en verde (el guardián con las barras de día y de noche, los destellos con el bombeo nuevo: el golpe cambia la luminancia menos de 0.10 a cualquier hora). E2E con la GPU real: capturas seguidas de Running With the Wolves de día (las barras oscuras a lo ancho, el filo de las crestas encendido, el sol entero) y de noche, y de What's Up Danger (barras de luz sobre los tejados, ventanas por grupos). El bot de toques vuelve a ganar What's Up Danger al 100 % a 59.7 FPS (p99 17.4 ms, un fotograma suelto de 167 ms), sin errores. Coste con los ajustes (Mi Fiesta, 6 s cada medida, cuatro rondas, con la máquina más cargada que en la medida anterior): con todo encendido, 26.8 % del hilo principal; sin el espectro, 25.6 %; sin ningún efecto, 25.0 %; fotogramas p95 16.9-17.0 ms en los tres casos.
 
+##### Ajustes tras el segundo playtest (Oct 2026): el color de los efectos
+
+El user mandó una captura de la Cordillera de día: "el efecto de barras se nota medio grisáceo: es rojizo, pero con el fondo azulado se ve raro; pasa lo mismo cuando se hace de noche, y puede que pase más con otros escenarios". Pidió que los efectos se viesen y se sintiesen mejor **sin esos problemas visuales**.
+
+**Qué pasaba, medido** (capturas de las siete escenas a varias horas y una maqueta con los cielos y las crestas reales):
+
+| | Antes | Ahora |
+|---|---|---|
+| Distancia de tono del cálido de los efectos al cielo de detrás | 107° de día (rosa sobre azul), 87° de noche | ≤ 70° a cualquier hora de cualquier escena |
+| Viveza de las barras (croma ÷ claridad, OKLab) | 0.33 en los graves, **0.22 en el centro**, 0.28 en los agudos | 0.40 en los graves, 0.48 en el centro, 0.62 en los agudos |
+| Color de las barras de noche | granate → malva grisáceo → azul acero | magenta → violeta → añil |
+| Color de las barras de día | el de las montañas cercanas con un 25 % de granate: un morado pardo | el mismo magenta → violeta → añil, en sombra |
+
+Tres causas, ninguna de una escena concreta:
+
+1. **El color del efecto no sabía qué tenía detrás.** El rosa de los efectos está a 107° del azul del día: mezclados, pasan por el gris.
+2. **Bajo un techo de luminancia no todos los colores siguen siendo color.** A la luminancia que deja la franja jugable el rojo es un granate y el cian, un gris verdoso (el verde se come el presupuesto de luminancia). El azul puro mide justo 0.072.
+3. **Del cálido al frío en línea recta por sRGB** se pasa por un malva sucio.
+
+**Qué se construyó** (§2.16):
+
+- **`fx/tones.js`** (puro). `harmonize`: un color de efecto gira hacia el tono del cielo de detrás hasta quedar a 70° como mucho, con su brillo y su viveza (OKLCh). `vividAt`: el color más vivo que cabe en sRGB para un tono (siempre está en una arista del cubo RGB: una tabla de 360 tonos, calculada una vez). `spectrumLight`/`spectrumShade`/`spectrumDay`: el color de cada barra, por el tono, dentro del arco que brilla en oscuro (`TONE_RULES.arc`, del añil al magenta rosado), como luz o en sombra. Números en `TONE_RULES` y `SPECTRUM_TONES`.
+- **El director pone los colores a juego con el cielo** (`fx/director.js`): los dos colores de los efectos, girados por la tonalidad como antes y después armonizados con el cielo de detrás del juego (`signals.sky.band`, que el engine lee con la hora). De día el cálido es un magenta; en el ocaso rosa sigue siendo el rosa de siempre. Los que fija una escena (One Day) no se tocan. Todos los pintores lo reciben sin cambiar: el brillo del horizonte, el tinte del clímax, el pulso del suelo, la ola del drop.
+- **Las barras** (`SilhouetteSpectrum.js`): magenta → violeta → añil. De noche, luz (a la luminancia del techo); de día, **el mismo tono en sombra** (0.65 × la luminancia del cielo): vivo y algo más oscuro que el cielo se lee como color; apagado, como suciedad. **Al anochecer cada barra se enciende de la punta hacia abajo**: son dos Sprites (la sombra entera y la luz encima). Con un solo color que pasaba de sombra a luz, a mitad de camino la barra medía lo mismo que su cielo y desaparecía, justo en la subida al clímax; así la punta es luz contra el cielo alto, ya oscuro, y el pie es silueta contra el resplandor del horizonte.
+- **Las líneas de velocidad** llevaban tres colores fijos; el rosa, sumado casi transparente sobre el azul de la noche, era una raya granate. Ahora llevan los dos colores de los efectos, aclarados (`SPEED_LINES.pastel`), y blanco.
+- **El guardián mide lo que se pinta**: el tono más claro de todo el arco, como luz y a plena opacidad (`scenes/backdrops.js`).
+
+**Probado y descartado**: la "marca del pico" (la raya que en un ecualizador se queda un instante donde llegó la barra). Sueltas por la franja jugable eran rayas flotando a la altura del ptero (§6).
+
+**Verificación**: `fx-tones.test.mjs` (8): el color más vivo de cada tono; el rosa sobre el azul gira al magenta con su mismo brillo; lo que ya está cerca no cambia y un cielo gris no arrastra a nadie; **el playtest como regresión** (a ninguna hora de ninguna escena, con ningún giro de tonalidad, un color de efecto queda a más de 70° del cielo); One Day conserva su oro y su verde azulado; las barras son color de punta a punta en las cuatro escenas que las llevan, a 361 horas, sin gris en medio y bajo el techo; cualquier par de colores da una rampa con color; y una barra no desaparece contra su cielo con ninguna claridad. **418 JS** en verde (el guardián de las 7 escenas a 620 horas con los colores nuevos). E2E con la GPU real: capturas de la Cordillera, la Ciudad, la Costa, la Tormenta y la Nieve de día, al atardecer (cinco horas seguidas), de noche y al alba; What's Up Danger hasta el clímax, dos pasadas, a **59.8-59.9 FPS** (p95 16.8-16.9 ms, p99 17.0-17.2 ms, 5-9 fotogramas de más de 40 ms en 166 s), sin errores de consola; One Day, con sus efectos vetados a cero y sus colores, como antes. Build de producción cargado y jugado en el navegador. Bundle principal 94.9 KB gzip (+0.9).
+
+**Límites**: el color se ha juzgado con capturas, no jugando: si gusta lo dice quien juega. El extremo añil de las barras es lo más claro que hay detrás del juego (0.083 de luminancia; el ptero queda a 2.68:1, con 2.5 de mínimo). Las barras van siempre del añil al magenta: una paleta de canción (T03.3) que no esté en ese arco se nota en lo que queda por encima de la franja jugable (el tinte del clímax, las líneas de velocidad, las firmas), no en las barras.
+
 #### ⬜ T03.3 — Identidad por canción
 
-- **Paletas curadas** (`fx/palettes.js`): un puñado de dúos de color probados (neón, brasa, hielo, ultravioleta, oro…); la tonalidad y el ánimo de la canción eligen uno. Cada paleta pasa el guardián.
+- **Paletas curadas** (`fx/palettes.js`): un puñado de dúos de color probados (neón, brasa, hielo, ultravioleta, oro…); la tonalidad y el ánimo de la canción eligen uno. Cada paleta pasa el guardián, y el director la pone a juego con el cielo como a la de siempre (§2.16): una paleta es una intención, no un color fijo.
 - **Reparto** (`fx/casting.js`, como `sceneCasting.js`): retratos por efecto firma a partir de los rasgos de la canción (`songTraits.js`), la paleta y un temperamento (una balada, más suave). Se calcula con el análisis del servidor en `chartFromAnalysis` (`fxAuto`) y se guarda en `levels.fx_auto` (migración `014`, worker, horneados, seeder y `cast-scenes`). No toca el chart: un nivel público también lo recibe. Sin propuesta (canción local, análisis del navegador), los colores y efectos de siempre. El autor no elige.
 - **Firmas**: **aurora** (cortinas de luz en lo alto del cielo nocturno, en canciones tranquilas o cristalinas; cara: fuera en calidad baja) y **lluvia de estrellas** en el clímax (las estrellas fugaces del escenario, en tandas con los primeros tiempos). Una por nivel.
 - **Motas por banda**: cada grupo de motas baila con su banda.
 
 #### ⬜ T03.4 — Playtest y afinado
 
-¿Se nota la música en la pantalla sin distraer?, ¿las barras de noche se quieren más?, ¿el suelo de día molesta o acompaña?, ¿One Day se siente limpio? El panel "Efectos" deja apagar, ver solo o subir cada efecto mientras se juega. Coste de cada efecto medido con la GPU real (con "solo"), y `compress` del shader en build (sus comentarios viajan en el bundle).
+¿Se nota la música en la pantalla sin distraer?, ¿los colores de las barras gustan de día y de noche (magenta, violeta, añil)?, ¿se ve bien cómo se encienden al anochecer?, ¿las barras de noche se quieren más?, ¿el suelo de día molesta o acompaña?, ¿One Day se siente limpio? El panel "Efectos" deja apagar, ver solo o subir cada efecto mientras se juega. Coste de cada efecto medido con la GPU real (con "solo"), y `compress` del shader en build (sus comentarios viajan en el bundle).
 
 
 ---
@@ -770,6 +814,7 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 | Una historia da tirones justo en su momento clave | Medido con la GPU real: los tirones del drop de One Day venían de los filtros CSS del HUD, no de la escena; el HUD en partida ya no usa `filter` ni `backdrop-filter` (T02.6). |
 | Un efecto borra lo que se juega | Toda la luz de los efectos pasa por el limitador de la franja jugable; el guardián lo comprueba con luz sin límite en las 7 escenas a 620 horas (T03.1). Las capas Pixi que pintan luz en la franja usan colores ya bajados al techo y mezcla normal. |
 | Los efectos provocan una crisis fotosensible | Lo que late con el pulso cambia la luminancia menos de 0.08 (el umbral de destello es 0.10); el bombeo del cielo tiene tope según lo claro que esté; el destello del drop va suelto. Test sobre todas las escenas y horas (T03.1). |
+| Un efecto se ve sucio contra el cielo de alguna escena u hora | Los colores de los efectos se ponen a juego con el cielo de detrás y lo que pinta color en la franja jugable usa solo tonos que brillan en oscuro (§2.16). Test sobre todas las escenas y horas. |
 | Un efecto estropea una historia de autor | La historia declara qué permite (lista cerrada) y sus colores; el director lo cumple. Test: One Day entero con los efectos vetados a cero (T03.1). |
 | Los efectos se amontonan | Familias = huecos (un espectro y una firma por nivel) y un solo director. Cada efecto tiene nombre e interruptor en el panel dev (apagar, solo, intensidad, por qué no se ve). |
 | "Automático" pone un ambiente que no pega | Solo encajes claros (retratos de ≥ 2 condiciones, encaje y ventaja mínimos), medido con los oficiales y con 14 alteraciones de su análisis sin un solo fallo, y quien sube lo cambia (T02.5). |
@@ -785,7 +830,9 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 - **Reloj fijo** (atardecer siempre a las 2:00) y **ciclo proporcional**. El primero deja de día las canciones de menos de 2:00 y no sabe dónde está el clímax; el segundo mete una noche de 8 s en un clip de 40 s. El user eligió anclarlo a la música.
 - **Gaviotas en la Costa.** Por lo mismo que los pájaros al atardecer: vuelan como el ptero.
 - **Nubes y sol que laten** (las nubes encendidas por debajo con los graves, anillos del sol en los primeros tiempos). Propuesto en el diseño del T03; el user no lo eligió. Queda como idea: las nubes viven por encima de lo que se juega, así que no costaría legibilidad.
-- **Barras de LUZ de día detrás de las montañas.** Con el cielo claro no cabe luz detrás de lo que se juega; unas barras del mismo brillo que el cielo se probaron y solo lo ensuciaban (columnas pardas sobre el azul). De día son silueta oscura (T03.2).
+- **Barras de LUZ de día detrás de las montañas.** Con el cielo claro no cabe luz detrás de lo que se juega; unas barras del mismo brillo que el cielo se probaron y solo lo ensuciaban (columnas pardas sobre el azul). De día son silueta oscura (T03.2); desde el segundo playtest, del mismo tono vivo que de noche, en sombra.
+- **Barras de día con el color de las montañas y un punto del color del efecto** (T03.2). Un azul marino con un 25 % de granate es un morado pardo: "se ven grisáceas".
+- **La marca del pico de un ecualizador** (una raya que se queda un instante donde llegó cada barra y cae despacio). Probada en el segundo playtest: sueltas por la franja jugable eran rayas flotando a la altura a la que vuela el ptero.
 - **El espectro en la línea del suelo** (tramos que crecían hacia abajo con cada banda). Era lo único que se veía de día en la primera versión; en el playtest se leyó como un error ("las barras se ven debajo del suelo").
 - **Apagar las barras de día** (primera versión de la T03.2). Dejaba el día sin espectro y el user no sentía la música.
 - **Un bombeo que aclara el cielo.** De día era un destello y dentro de la franja jugable no cabía. Ahora oscurece entre golpes.
