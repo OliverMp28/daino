@@ -45,6 +45,12 @@
 // Ola 6c — activadores (anillos de salto): se colocan con los obstáculos y, en el
 // paso de física, el que toca el hitbox se aplica con las reglas del modo
 // (physics.applyTrigger), igual que en el simulador del charter.
+//
+// T03.1 — efectos: la sesión ya no decide qué efecto se ve. Cada fotograma le dice
+// al engine lo que sabe de la música (`engine.setMusic`: pulso, estructura,
+// velocidad, silencio de la historia) y el director de efectos (fx/director.js)
+// decide. Para lo que pinta ella (el destello, el golpe de cámara y la ola de un
+// drop, el rebote de los obstáculos) lee el nivel de cada efecto.
 
 import { Dino } from './entities/Dino.js';
 import { Obstacle } from './entities/Obstacle.js';
@@ -75,7 +81,11 @@ import {
     PHYSICS_STEP_S, MAX_PHYSICS_CATCHUP_S, DROP_FX, ON_BEAT, GEAR_FX, MODE_FX, FLY_JET, JUMP_RING_FX, DOUBLE_JUMP_FX,
 } from './config.js';
 import { request as apiRequest } from '../api/client.js';
+import { rgbToNumber } from './scenes/color.js';
 import { Graphics } from 'pixi.js';
+
+/** Niveles de los efectos si el engine no tiene director (pruebas con un engine de mentira). */
+const FX_ON = new Proxy({}, { get: () => 1 });
 
 export class GameSession {
     /**
@@ -301,9 +311,12 @@ export class GameSession {
         // El mundo scrollea a la velocidad de la canción; el fondo arranca con
         // la intensidad del primer tramo y el cielo a la hora del principio.
         this.engine.setWorldSpeed(this._speedPxS);
-        this.engine.setMusicState?.({ intensity: this._director.intensity, climax: 0, flash: 0 });
+        this.engine.setMusic?.({
+            pulse: 0, worldPulse: 0, accent: 0,
+            intensity: this._director.intensity, climax: 0, build: 0, calm: 0, hue: 0, flash: 0,
+            lines: 0, hush: 0, clearAbove: 0,
+        });
         this.engine.setSkyHour?.(this._sky.hourAt(0));
-        this.engine.setSpeedFx?.({ level: 0 });
 
         // Input. Las pulsaciones NO se aplican al leerse: se fechan en tiempo de
         // canción y cada paso de física aplica las suyas (ver inputTimeline.js).
@@ -500,11 +513,15 @@ export class GameSession {
      * momento en que ya no quedan obstáculos.
      */
     _tickStructure(songTime, shownTime, dt, groundY) {
+        const fx = this.engine.getFxLevels?.() ?? FX_ON;
         let pulse = 0;
         let phase = 0;
+        let accent = 0;
         if (songTime >= 0) {
             phase = this._beatClock.phaseAt(songTime);
-            pulse = Math.exp(-phase * 4.5) * (this._beatClock.isAccentAt(songTime) ? 1 : 0.7);
+            const onAccent = this._beatClock.isAccentAt(songTime);
+            pulse = Math.exp(-phase * 4.5) * (onAccent ? 1 : 0.7);
+            accent = onAccent ? pulse : 0;
         }
         // Subida hacia un acelerón: en sus compases previos el suelo y el fondo
         // laten también a contratiempo, cada vez más. Los obstáculos no: su
@@ -517,11 +534,11 @@ export class GameSession {
             const offbeat = Math.exp(-((phase * 2) % 1) * 4.5) * GEAR_FX.riserPulse;
             worldPulse = Math.max(pulse, offbeat * rise);
         }
-        this.engine.setBeatPulse(worldPulse);
+        const bounce = pulse * fx.obstacleBounce;
         const active = this.spawner.getActive();
-        for (let i = 0; i < active.length; i++) active[i].setBeat?.(pulse);
-        this._gates.setBeat(pulse);
-        this._tunnel.setBeat(pulse);
+        for (let i = 0; i < active.length; i++) active[i].setBeat?.(bounce);
+        this._gates.setBeat(bounce);
+        this._tunnel.setBeat(bounce);
         this._tickModeCue(shownTime);
 
         this._tickCaptions(shownTime);
@@ -535,9 +552,8 @@ export class GameSession {
         // previa al primer tiempo); en ese primer tiempo, un momento discreto
         // si allí no cae ya un drop o un lift.
         const ups = this._speedCues.update(shownTime);
-        const hush = this._storyHushAt(shownTime);
         for (let i = 0; i < ups.length; i++) {
-            if (hush < 0.5) this.engine.setSpeedFx?.({ burst: true });
+            this.engine.speedBurst?.();
             this.hud.bumpGear?.();
             if (!this._momentTimes.some((t) => Math.abs(t - ups[i].at) < 0.05)) this._gearMomentAt = ups[i].at;
         }
@@ -545,16 +561,6 @@ export class GameSession {
             this._gearMomentAt = Infinity;
             this._triggerMoment(groundY, GEAR_FX.strength);
         }
-        // Con el pasillo de un modo en pantalla, las líneas de velocidad se
-        // quedan por encima de él: una raya a la altura del techo se leería
-        // como un obstáculo.
-        // En un break (Ola 6c) el mundo contiene la respiración: sin líneas de velocidad.
-        // Tampoco en los instantes clave de una historia de autor (T02.6): el
-        // cielo es suyo.
-        this.engine.setSpeedFx?.({
-            level: this._speedCues.linesAt(shownTime) * (1 - this._director.calm) * (1 - hush),
-            clearAbove: this._corridorNear(shownTime) ? MODE_FX.linesClearPx : 0,
-        });
         this.hud.setGear?.(this._speedCues.gearAt(shownTime), { next: next?.gear ?? null, blink: ahead > 0 && phase < 0.5 });
 
         const climaxTarget = this._director.climax ? 1 : 0;
@@ -568,9 +574,9 @@ export class GameSession {
             const k = Math.max(0, 1 - this._dropT / DROP_FX.flashS);
             flash = k * k * this._momentStrength;
             const full = this._momentStrength >= 1;
-            if (this._dropOverlay && full) this._dropOverlay.alpha = DROP_FX.overlayAlpha * flash;
+            if (this._dropOverlay && full) this._dropOverlay.alpha = DROP_FX.overlayAlpha * flash * fx.dropFlash;
             if (full && !this.engine.reducedMotion) {
-                const kick = DROP_FX.kickPx * Math.max(0, 1 - this._dropT / DROP_FX.kickS);
+                const kick = DROP_FX.kickPx * fx.dropKick * Math.max(0, 1 - this._dropT / DROP_FX.kickS);
                 this._layers.gameLayer.position.y = kick;
                 this._layers.sceneryLayer.position.y = kick * 0.6;
             }
@@ -583,13 +589,27 @@ export class GameSession {
 
         this._skyHourNow = this._sky.hourAt(shownTime);
         this.engine.setSkyHour?.(this._skyHourNow);
-        this.engine.setMusicState?.({
+        // Lo que la partida sabe de la música en este fotograma. Qué efecto hace
+        // qué con ello lo decide el director (fx/director.js).
+        //   - Con el pasillo de un modo en pantalla, las líneas de velocidad se
+        //     quedan por encima de él: una raya a la altura del techo se leería como
+        //     un obstáculo.
+        //   - En un break (Ola 6c) el mundo contiene la respiración: sin líneas.
+        //   - `hush`: los instantes clave de una historia de autor (T02.6); su
+        //     escena dice qué efectos se apartan (fx/policy.js).
+        this.engine.setMusic?.({
+            pulse,
+            worldPulse,
+            accent,
             intensity: this._director.intensity,
             climax: this._climaxGlow,
             flash,
             build: this._director.build,
             calm: this._director.calm,
             hue: this._director.hue,
+            lines: this._speedCues.linesAt(shownTime) * (1 - this._director.calm),
+            hush: this._storyHushAt(shownTime),
+            clearAbove: this._corridorNear(shownTime) ? MODE_FX.linesClearPx : 0,
         });
         this.hud.setPhase?.(this._cleared ? 'cleared' : (this._director.climax ? 'climax' : ''));
 
@@ -686,10 +706,14 @@ export class GameSession {
         this._momentStrength = strength;
         this._momentColor = color;
         if (this.engine.reducedMotion) return;
+        // Cuánto se ve cada parte del momento lo dice su efecto (la escena, la
+        // preferencia del jugador y el panel dev: fx/director.js).
+        const fx = this.engine.getFxLevels?.() ?? FX_ON;
+        const colors = this.engine.getFxColors?.();
         // El destello cubre la PANTALLA (hudLayer, px); la ola recorre el MUNDO visible.
         const w = this._view().width;
         const full = strength >= 1;
-        if (full) {
+        if (full && fx.dropFlash > 0.05) {
             if (this._dropOverlay === undefined) {
                 this._dropOverlay = new Graphics();
                 this._dropOverlay.blendMode = 'add';
@@ -697,15 +721,18 @@ export class GameSession {
             }
             // Se redibuja en cada drop: la ventana puede haber cambiado de tamaño.
             this._dropOverlay.clear().rect(0, 0, window.innerWidth, window.innerHeight).fill(color);
-            this._dropOverlay.alpha = DROP_FX.overlayAlpha;
+            this._dropOverlay.alpha = DROP_FX.overlayAlpha * fx.dropFlash;
         }
-        const bursts = full ? DROP_FX.waveBursts : Math.ceil(DROP_FX.waveBursts / 2);
+        // La ola, en los dos colores de los efectos (los de la escena o los de la canción).
+        const warm = colors ? rgbToNumber(colors.warm) : 0xff5d7e;
+        const cool = colors ? rgbToNumber(colors.cool) : 0x8fe0ff;
+        const bursts = Math.round((full ? DROP_FX.waveBursts : Math.ceil(DROP_FX.waveBursts / 2)) * Math.min(1, fx.dropWave));
         for (let k = 1; k <= bursts; k++) {
             this._bursts.burst({
                 x: (w * k) / (bursts + 1),
                 y: groundY - 2,
                 count: 4,
-                color: k % 2 === 0 ? 0xff5d7e : 0x8fe0ff,
+                color: k % 2 === 0 ? warm : cool,
                 speedMin: 90,
                 speedMax: 280,
                 gravity: 420,
@@ -958,12 +985,10 @@ export class GameSession {
         this._finalSongTime = Math.max(0, this._physics.time ?? this.audioEngine.getSongTime());
 
         this.dino.setDead();
-        this.engine.setBeatPulse(0);
-        this.engine.setSpeedFx?.({ level: 0 });
         // Un drop a medias no se mezcla con la sacudida de la muerte.
         this._dropT = Infinity;
         if (this._dropOverlay) this._dropOverlay.alpha = 0;
-        this.engine.setMusicState?.({ flash: 0 });
+        this.engine.setMusic?.({ pulse: 0, worldPulse: 0, accent: 0, lines: 0, flash: 0 });
 
         // Silencio inmediato = el impacto se OYE (la canción muere contigo).
         try {
@@ -1022,8 +1047,7 @@ export class GameSession {
         // Arranca de la hora que se está viendo: al salir ganando desde la pausa
         // (finishCleared) la canción aún no ha terminado.
         if (reason === 'win') this._skyEpilogue = { ...this._sky.epilogue(this._skyHourNow), t: 0 };
-        this.engine.setBeatPulse(0);
-        this.engine.setSpeedFx?.({ level: 0, clearAbove: 0 });
+        this.engine.setMusic?.({ pulse: 0, worldPulse: 0, accent: 0, lines: 0, flash: 0, build: 0, hush: 0, clearAbove: 0 });
         this.hud.setControls?.(false);
         this.hud.setMode?.({ state: '', label: '', hint: '' });
         this.hud.setCaption?.('');

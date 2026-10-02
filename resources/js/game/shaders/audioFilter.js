@@ -4,7 +4,8 @@
 // PixiJS v8 strict:
 //   - GLSL ES 3.0 (in/out, texture(), out vec4 finalColor) — doc 09 §2.4.
 //   - Dos grupos de uniforms que no se mezclan (doc 11 §2.4):
-//       audioUniforms — los efectos: lo que reacciona a la música.
+//       audioUniforms — los efectos: cantidades ya calculadas (fx/skyAmounts.js),
+//                       sus dos colores y el limitador de la franja jugable (T03.1).
 //       skyUniforms   — el escenario: el cielo de la hora (scenes/skyModel.js).
 //     Se accede vía filter.resources.<grupo>.uniforms.X.
 //   - Texturas como propiedad directa de `resources` (NO dentro de un grupo).
@@ -32,7 +33,8 @@ export const FFT_BINS = 256;
  *     filter: Filter,
  *     fftBuffer: Uint8Array,
  *     fftSource: BufferImageSource,
- *     setUniforms: (u: { time?: number, rms?: number, bass?: number, mid?: number, high?: number, bpmPulse?: number }) => void,
+ *     setUniforms: (u: { time?: number, debugMode?: number, horizon?: number, frame?: number[], cell?: number, band?: number[] }) => void,
+ *     setFx: (amounts: { a: Float32Array, b: Float32Array, c: Float32Array }, colors: { warm: number[], cool: number[] }) => void,
  *     uploadFft: () => void,
  * }}
  */
@@ -53,35 +55,30 @@ export function createAudioFilter() {
         }),
         resources: {
             audioUniforms: {
-                uShaderMode: { value: 0.0, type: 'f32' },  // 0=idle, 1=reactive
+                uShaderMode: { value: 0.0, type: 'f32' },  // 0=idle, 1=hay música
                 uTime:       { value: 0.0, type: 'f32' },
-                uRMS:        { value: 0.0, type: 'f32' },
-                uBass:       { value: 0.0, type: 'f32' },
-                uMid:        { value: 0.0, type: 'f32' },
-                uHigh:       { value: 0.0, type: 'f32' },
-                uBpmPulse:   { value: 0.0, type: 'f32' },
                 uDebugMode:  { value: 0.0, type: 'f32' },
                 // Y del horizonte del CIELO en uv [0,1] (v=0 arriba): la línea del
                 // suelo, o más arriba si la escena lo sube (T02.2, la Costa: el mar
                 // llega hasta él). El engine la refresca en resize y al cambiar de
                 // escena.
                 uHorizon:    { value: 0.94, type: 'f32' },
-                // Y de la línea del SUELO en uv: donde se anclan los efectos (el
-                // ecualizador), que no cambian con la escena.
-                uGround:     { value: 0.94, type: 'f32' },
                 // Tamaño del frame en px CSS y px CSS por celda del arte (vista
                 // del mundo): el sol es redondo y las estrellas miden una celda
                 // en cualquier formato de pantalla.
                 uFrame:      { value: new Float32Array([1280, 720]), type: 'vec2<f32>' },
                 uCell:       { value: 4.0, type: 'f32' },
-                // Estructura de la canción (Ola 5): ver background.frag.
-                uIntensity:  { value: 0.0, type: 'f32' },
-                uClimax:     { value: 0.0, type: 'f32' },
-                uFlash:      { value: 0.0, type: 'f32' },
-                // Efectos del plan del charter (Ola 6c): ver background.frag.
-                uBuild:      { value: 0.0, type: 'f32' },
-                uCalm:       { value: 0.0, type: 'f32' },
-                uHue:        { value: 0.0, type: 'f32' },
+                // Efectos (T03.1): cantidades por hueco (fx/skyAmounts.js) y sus dos
+                // colores. Ver background.frag.
+                uFxA:        { value: new Float32Array(4), type: 'vec4<f32>' },
+                uFxB:        { value: new Float32Array([0, 0, 26, 0]), type: 'vec4<f32>' },
+                uFxC:        { value: new Float32Array(4), type: 'vec4<f32>' },
+                uFxWarm:     { value: new Float32Array([0.88, 0.22, 0.38]), type: 'vec3<f32>' },
+                uFxCool:     { value: new Float32Array([0.56, 0.88, 1.0]), type: 'vec3<f32>' },
+                // Limitador de la franja jugable (fx/limiter.js): uv de su techo,
+                // fundido por encima (uv) y techo de luminancia. El engine lo pone
+                // en resize.
+                uFxBand:     { value: new Float32Array([0.35, 0.09, 0.085]), type: 'vec3<f32>' },
             },
             // Cielo del escenario (T01): lo rellena `setSky` con el estado de
             // scenes/skyModel.js. Posiciones en fracción del cielo (0 arriba, 1
@@ -125,7 +122,7 @@ export function createAudioFilter() {
     // datos y el sample devuelve memoria sin inicializar.
     fftSource.update();
 
-    function setUniforms({ time, rms, bass, mid, high, bpmPulse, debugMode, horizon, ground, frame, cell, intensity, climax, flash, build, calm, hue }) {
+    function setUniforms({ time, debugMode, horizon, frame, cell, band }) {
         const u = filter.resources.audioUniforms.uniforms;
         if (frame     !== undefined) {
             u.uFrame[0] = frame[0];
@@ -133,27 +130,30 @@ export function createAudioFilter() {
         }
         if (cell      !== undefined) u.uCell      = cell;
         if (time      !== undefined) u.uTime      = time;
-        if (rms       !== undefined) u.uRMS       = rms;
-        if (bass      !== undefined) u.uBass      = bass;
-        if (mid       !== undefined) u.uMid       = mid;
-        if (high      !== undefined) u.uHigh      = high;
-        if (bpmPulse  !== undefined) u.uBpmPulse  = bpmPulse;
         if (debugMode !== undefined) u.uDebugMode = debugMode;
         if (horizon   !== undefined) u.uHorizon   = horizon;
-        if (ground    !== undefined) u.uGround    = ground;
-        if (intensity !== undefined) u.uIntensity = intensity;
-        if (climax    !== undefined) u.uClimax    = climax;
-        if (flash     !== undefined) u.uFlash     = flash;
-        if (build     !== undefined) u.uBuild     = build;
-        if (calm      !== undefined) u.uCalm      = calm;
-        if (hue       !== undefined) u.uHue       = hue;
+        if (band      !== undefined) u.uFxBand.set(band);
     }
 
     /**
-     * Cambia el modo del shader de forma declarativa. En idle el shader
-     * ignora todos los uniforms de audio; al pasar a reactive vuelven a
-     * leerse. Esto reemplaza el patrón frágil de "resetear cada band uniform
-     * a 0 en cada salida del juego".
+     * Las cantidades de los efectos del cielo y sus colores, cada fotograma
+     * (fx/skyAmounts.js y el director de efectos). Copia: sin asignaciones.
+     *
+     * @param {{ a: Float32Array, b: Float32Array, c: Float32Array }} amounts
+     * @param {{ warm: ArrayLike<number>, cool: ArrayLike<number> }} colors
+     */
+    function setFx(amounts, colors) {
+        const u = filter.resources.audioUniforms.uniforms;
+        u.uFxA.set(amounts.a);
+        u.uFxB.set(amounts.b);
+        u.uFxC.set(amounts.c);
+        u.uFxWarm.set(colors.warm);
+        u.uFxCool.set(colors.cool);
+    }
+
+    /**
+     * Con música o sin ella. Sin música (el menú) el sol respira por su cuenta
+     * y los efectos quedan a cero: el menú se ve idéntico al primer arranque.
      *
      * @param {'idle' | 'reactive'} mode
      */
@@ -161,21 +161,11 @@ export function createAudioFilter() {
         const u = filter.resources.audioUniforms.uniforms;
         u.uShaderMode = mode === 'reactive' ? 1.0 : 0.0;
         if (mode === 'idle') {
-            // Defensa adicional: limpiar los floats band y la textura FFT
-            // para que cualquier debug que mire los uniforms vea ceros, y
-            // para que el siguiente attach reactive arranque "desde cero"
-            // sin un primer frame con valores stale.
-            u.uRMS = 0;
-            u.uBass = 0;
-            u.uMid = 0;
-            u.uHigh = 0;
-            u.uBpmPulse = 0;
-            u.uIntensity = 0;
-            u.uClimax = 0;
-            u.uFlash = 0;
-            u.uBuild = 0;
-            u.uCalm = 0;
-            u.uHue = 0;
+            u.uFxA.fill(0);
+            u.uFxB[0] = 0;
+            u.uFxB[1] = 0;
+            u.uFxB[3] = 0;
+            u.uFxC.fill(0);
             fftBuffer.fill(0);
             fftSource.update();
         }
@@ -222,8 +212,8 @@ export function createAudioFilter() {
     }
 
     function uploadFft() {
-        // El consumidor llena fftBuffer con AnalyserNode.getByteFrequencyData.
-        // Marcar dirty para que Pixi suba la textura al GPU este frame.
+        // Solo el modo de depuración ?debug=fft: el engine llena fftBuffer con
+        // AnalyserNode.getByteFrequencyData y aquí se sube a la GPU.
         fftSource.update();
     }
 
@@ -252,5 +242,5 @@ export function createAudioFilter() {
         });
     }
 
-    return { filter, fftBuffer, fftSource, setUniforms, setMode, setSky, setSkyElement, uploadFft };
+    return { filter, fftBuffer, fftSource, setUniforms, setFx, setMode, setSky, setSkyElement, uploadFft };
 }

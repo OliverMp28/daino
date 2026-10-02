@@ -8,7 +8,13 @@
 // Settings) leen/escriben aquí — no hay variable global cacheada.
 
 const KEY_VOLUME = 'daino:volume';
+/**
+ * Antes de la T03.1, un interruptor "Reducir efectos visuales" ('true') que solo
+ * apagaba los relámpagos. Ya no se lee: quien lo tenía marcado se quedaba sin
+ * ningún efecto de la música sin haberlo pedido (playtest). Se borra al elegir.
+ */
 const KEY_REDUCE_EFFECTS = 'daino:reduce_effects';
+const KEY_FX_LEVEL = 'daino:fx_level';
 const KEY_SKIN = 'daino:skin';
 const KEY_QUALITY = 'daino:quality';
 const KEY_AUTO_RETRY = 'daino:auto_retry';
@@ -48,22 +54,36 @@ export function setVolume(v, audioEngine) {
     }
 }
 
-/** Evento en window cuando cambia "Reducir efectos visuales": `detail: { enabled }`. */
-export const REDUCE_EFFECTS_EVENT = 'daino:reduceeffectschange';
+/**
+ * "Efectos visuales" (T03.1): cuánto de los efectos de la música quiere el jugador.
+ * Las claves son las de FX_PREFS (game/fx/registry.js; un test vigila que
+ * coincidan: este módulo no importa código del juego).
+ *   full  Completos.
+ *   soft  Suaves: a media fuerza y sin nada que cambie la pantalla entera.
+ *   min   Mínimos: solo el pulso del suelo y las líneas de velocidad; tampoco los
+ *         relámpagos del escenario.
+ */
+export const FX_LEVEL_VALUES = Object.freeze(['full', 'soft', 'min']);
 
-/** Toggle "Reducir efectos visuales". Default false. */
-export function getReduceEffects() {
-    return localStorage.getItem(KEY_REDUCE_EFFECTS) === 'true';
+/** Evento en window cuando cambia: `detail: { level }`. */
+export const FX_LEVEL_EVENT = 'daino:fxlevelchange';
+
+/**
+ * Por defecto, Completos: los efectos son parte del juego. Solo cuenta lo que el
+ * jugador elija en este ajuste.
+ * @returns {'full'|'soft'|'min'}
+ */
+export function getFxLevel() {
+    const raw = safeGet(KEY_FX_LEVEL);
+    return FX_LEVEL_VALUES.includes(raw) ? raw : 'full';
 }
 
-export function setReduceEffects(enabled) {
-    if (enabled) {
-        localStorage.setItem(KEY_REDUCE_EFFECTS, 'true');
-    } else {
-        localStorage.removeItem(KEY_REDUCE_EFFECTS);
-    }
-    // T02.3: por ahora apaga los relámpagos del escenario (AppController → engine).
-    window.dispatchEvent(new CustomEvent(REDUCE_EFFECTS_EVENT, { detail: { enabled: Boolean(enabled) } }));
+/** @param {'full'|'soft'|'min'} level */
+export function setFxLevel(level) {
+    const safe = FX_LEVEL_VALUES.includes(level) ? level : 'full';
+    safeSet(KEY_FX_LEVEL, safe);
+    safeRemove(KEY_REDUCE_EFFECTS);
+    window.dispatchEvent(new CustomEvent(FX_LEVEL_EVENT, { detail: { level: safe } }));
 }
 
 /**

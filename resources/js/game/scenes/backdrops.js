@@ -19,6 +19,10 @@ import { ridgeHeights, ridgePoints } from '../entities/scenery/ridgeShape.js';
 import { skylineBuildings, skylineCells, skylineGapless } from '../entities/scenery/skylineShape.js';
 import { STORY_SOLID_MATERIALS, createStoryColors, shipVisibleHeight, storyColors } from '../entities/scenery/storyArt.js';
 import { ISLAND_LIFT, islandMaterialSpans, islandVisibleHeight } from '../entities/scenery/storyIsland.js';
+import { capColor } from '../fx/limiter.js';
+import { sceneFxPolicy } from '../fx/policy.js';
+import { FX_COLORS } from '../fx/registry.js';
+import { SPECTRUM_BARS } from '../fx/spectrum.js';
 import { relativeLuminance } from './color.js';
 import { seaColorAt } from './skyModel.js';
 
@@ -120,6 +124,32 @@ export const LAYER_BACKDROPS = Object.freeze({
             return best;
         },
     }),
+    /**
+     * Las barras del espectro (T03.2), detrás de la silueta de su anfitriona, hasta
+     * `maxRise` por encima de su punto más alto. De noche son luz: el color de los
+     * efectos (los de la escena si los fija, los de siempre si no) ya bajado al
+     * techo de la franja jugable (fx/limiter.js). De día son silueta: el color más
+     * oscuro del paisaje de la hora. Entre los dos, una mezcla. Aquí se mide el más claro
+     * de los tres, a plena opacidad. Otra paleta de efectos pasa por el mismo techo.
+     */
+    spectrum: (def, scene) => {
+        const host = scene.layers.find((l) => l.id === def.params.host);
+        if (host === undefined) throw new Error(`backdrops: la capa "${def.id}" (escena "${scene.id}") se apoya en "${def.params.host}", que no existe`);
+        const span = LAYER_BACKDROPS[host.type](host, scene);
+        if (span === null) throw new Error(`backdrops: "${def.params.host}" no tiene silueta en la que apoyar el espectro`);
+        const colors = sceneFxPolicy(scene).colors ?? FX_COLORS;
+        const capped = [colors.warm, colors.cool].map((c) => capColor(c, [0, 0, 0]));
+        const light = relativeLuminance(capped[0]) >= relativeLuminance(capped[1]) ? capped[0] : capped[1];
+        return {
+            from: Math.max(0, span.from),
+            to: span.to + (def.params.maxRise ?? SPECTRUM_BARS.maxRise),
+            solid: -Infinity,
+            colorAt: (state) => {
+                const silhouette = state.mountains[def.params.dayColor ?? 'near'];
+                return relativeLuminance(silhouette) > relativeLuminance(light) ? silhouette : light;
+            },
+        };
+    },
     /** Siempre por encima de lo que se juega (`clearancePx`, con su propio test). */
     clouds: () => null,
     /** Bajo la línea del suelo. */

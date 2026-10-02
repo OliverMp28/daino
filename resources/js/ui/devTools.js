@@ -21,6 +21,10 @@
 //   destello están donde toca) y "Recorrer la historia", que la cuenta entera en
 //   unos segundos al ritmo de su propio plan (con su cámara lenta).
 //
+//   Efectos (T03.1, devFxPanel.js) — cada efecto de la música con su nombre:
+//   apagarlo, verlo solo, subirle o bajarle la intensidad, y por qué no se ve
+//   cuando no se ve.
+//
 // El panel no se engancha a la sesión ni a AppController: lee `window.__daino`
 // (engine y sesión) cuando lo necesita, así que funciona a mitad de partida y
 // sobrevive a un reintento o a cambiar de nivel.
@@ -31,6 +35,7 @@
 import { SCENES, DEFAULT_SCENE, resolveScene, sceneCycle, sceneElements } from '../game/scenes/registry.js';
 import { SKY_PHASES } from '../game/scenes/skyModel.js';
 import { planSky } from '../game/scenes/skyClock.js';
+import { mountFxPanel } from './devFxPanel.js';
 
 const PANEL_ID = 'daino-devtools';
 
@@ -173,9 +178,6 @@ export function mountDevTools() {
     });
     panel.appendChild(tourBtn);
 
-    const fx = checkRow('Efectos del audio', true, (on) => window.__daino.engine?.setAudioFxEnabled?.(on));
-    fx.row.title = 'Apagado: se ve el escenario solo, sin lo que late con la música';
-    panel.appendChild(fx.row);
 
     // Escena (T02: cada nivel trae la suya; aquí se ve cualquiera sin jugar). Si
     // sus capas no están en el bundle, el engine las carga y la pone al llegar.
@@ -279,6 +281,9 @@ export function mountDevTools() {
     sceneSelect.addEventListener('change', () => renderStory(sceneSelect.value));
     panel.appendChild(storyBox);
 
+    // ---------- Efectos (T03.1) ----------
+    const fxPanel = mountFxPanel(panel, { el, checkRow });
+
     // Lectura: hora y fase del cielo, y el plan del nivel en curso.
     let readTimer = 0;
     function refresh() {
@@ -309,6 +314,7 @@ export function mountDevTools() {
         } else {
             planLine.textContent = 'Sin nivel en curso';
         }
+        fxPanel.refresh();
     }
 
     handle.addEventListener('click', () => {

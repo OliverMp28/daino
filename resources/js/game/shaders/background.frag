@@ -25,12 +25,25 @@
 //   Las posiciones del sol, la luna y el lucero llegan en FRACCIÓN DEL CIELO:
 //   y = 0 arriba, 1 en el horizonte (uHorizon las pasa a uv).
 //
-//   EFECTOS (audioUniforms) — lo que reacciona a la música: FFT (uFFT), bandas,
-//   pulso del beat y la estructura de la canción (Olas 5 y 6c). En idle (menú)
-//   uShaderMode = 0 y el shader no los lee. Los registrará la T03.1.
+//   EFECTOS (audioUniforms, T03.1) — lo que reacciona a la música. El shader no
+//   decide nada: recibe CANTIDADES ya calculadas (fx/skyAmounts.js: señales ×
+//   coeficientes × el nivel que da el director de efectos) y solo compone.
+//     uFxA  x tinte del clímax · y avivado de las estrellas · z radio extra del
+//           sol · w halo del sol
+//     uFxB  x brillo del horizonte · y línea fría del horizonte · z caída del
+//           brillo · w bombeo del cielo (cuánto se oscurece ahora: solo oscurece)
+//     uFxC  x destello · y calma del break · z, w libres
+//     uFxWarm/uFxCool   los dos colores de los efectos (de la escena o de la canción)
+//     uFxBand           x: uv del techo de la franja jugable · y: fundido del
+//                       limitador por encima (uv) · z: techo de luminancia
+//   Con todo a cero (el menú) el shader pinta el escenario y nada más.
 //
-// Recibe el FFT como textura 256x1 (sampler2D uFFT), no como uniforms
-// individuales — saturaría el bus uniform (doc 07 §D.2, doc 09 §2.4).
+//   LIMITADOR (fxLimit, espejo de fx/limiter.js): dentro de la franja jugable la
+//   luz de los efectos nunca sube el fondo por encima del techo: lo que se juega
+//   se lee siempre. Todo lo que SUMA luz pasa por él.
+//
+// El FFT (sampler2D uFFT, 256x1) ya solo lo lee el modo de depuración ?debug=fft:
+// el espectro se pinta en el paisaje (T03.2), no aquí.
 
 in vec2 vTextureCoord; // uv sobre la TEXTURA del pool (¡su 1.0 cae fuera de pantalla!)
 in vec2 vFrameCoord;   // uv [0,1] sobre el FRAME VISIBLE — usar este para todo
@@ -42,24 +55,18 @@ uniform sampler2D uTexture; // input del filtro (lo inyecta Pixi). Lo ignoramos
 uniform sampler2D uFFT;     // textura 256x1, formato r8unorm.
 
 // ---- Efectos (audioUniforms) ----
-uniform float uShaderMode;  // 0=idle, 1=reactive
+uniform float uShaderMode;  // 0=idle (el sol respira despacio), 1=hay música
 uniform float uTime;
-uniform float uRMS;
-uniform float uBass;
-uniform float uMid;
-uniform float uHigh;
-uniform float uBpmPulse;
-uniform float uDebugMode;   // 0=normal, 1=fft crudo, 2=uv coords, 3=uniforms
+uniform float uDebugMode;   // 0=normal, 1=fft crudo, 2=uv coords
 uniform float uHorizon;     // horizonte del cielo (T02.2: la Costa lo sube hasta la línea del mar)
-uniform float uGround;      // línea del suelo: donde se anclan los efectos
 uniform vec2  uFrame;       // tamaño del frame en px CSS
 uniform float uCell;        // px CSS por celda del arte (vista del mundo)
-uniform float uIntensity;
-uniform float uClimax;
-uniform float uFlash;
-uniform float uBuild;
-uniform float uCalm;
-uniform float uHue;
+uniform vec4  uFxA;
+uniform vec4  uFxB;
+uniform vec4  uFxC;
+uniform vec3  uFxWarm;
+uniform vec3  uFxCool;
+uniform vec3  uFxBand;
 
 // ---- Escenario (skyUniforms) ----
 uniform vec3  uSkyTop;
@@ -85,20 +92,24 @@ uniform float uVignette;
 uniform vec4  uShow0;
 uniform vec4  uShow1;
 
-// Paleta de los efectos — espejo de los tokens de @theme en main.css y de
-// assets/palette.js (P y C).
-const vec3 COLOR_BEAT = vec3(0.880, 0.220, 0.380);
-const vec3 COLOR_HIGH = vec3(0.560, 0.880, 1.000);
-
 // Forma del degradado del cielo: SKY_SHAPE de scenes/skyModel.js (mismos números).
 const float SKY_MID_AT = 0.5;
 const float SKY_HAZE_K = 14.0;
 
-// Gira un color alrededor del eje gris (conserva su brillo). a en radianes.
-vec3 hueShift(vec3 c, float a) {
-    const vec3 k = vec3(0.57735);
-    float ca = cos(a);
-    return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca);
+// Limitador de la franja jugable (espejo exacto de limitFx, fx/limiter.js).
+// `base`: lo que hay sin el efecto; `lit`: lo que habría con él; `w`: cuánto
+// actúa (1 en la franja jugable, 0 por encima). La luminancia se mide con un
+// sustituto sin potencias (Σ w·c²), que queda por encima de la real.
+float fxLuma(vec3 c) {
+    return dot(c * c, vec3(0.2126, 0.7152, 0.0722));
+}
+vec3 fxLimit(vec3 base, vec3 lit, float w) {
+    float lb = fxLuma(base);
+    float ll = fxLuma(lit);
+    float target = max(lb, uFxBand.z);
+    // Si con el efecto no se pasa del techo (o el efecto oscurece), entero.
+    float k = ll <= target ? 1.0 : (target - lb) / (ll - lb);
+    return mix(base, lit, 1.0 - w * (1.0 - k));
 }
 
 float hash21(vec2 p) {
@@ -140,32 +151,14 @@ void main(void) {
         finalColor = vec4(uv.x, uv.y, 0.0, 1.0);
         return;
     }
-    // Mode 3 — uniforms escalares como bandas verticales.
-    if (uDebugMode > 2.5) {
-        float v = 0.0;
-        if      (uv.x < 0.2) v = mod(uTime, 1.0);
-        else if (uv.x < 0.4) v = uRMS;
-        else if (uv.x < 0.6) v = uBass;
-        else if (uv.x < 0.8) v = uMid;
-        else                 v = uHigh;
-        finalColor = vec4(v, v * 0.5, 1.0 - v, 1.0);
-        return;
-    }
     // ---------- /DEBUG ----------
 
-    // Valores de los efectos, forzados a 0 en idle: el escenario jamás depende
-    // de uniforms de audio cuando no hay partida (invariante Bloque 6).
+    // Sin música (el menú) las cantidades de los efectos llegan a cero: el
+    // escenario jamás depende del audio (invariante Bloque 6). `reactive` solo
+    // decide si el sol respira por su cuenta.
     float reactive = step(0.5, uShaderMode);
-    float pulse = uBpmPulse * reactive;
-    float bass  = uBass * reactive;
-    float high  = uHigh * reactive;
-    float intensity = uIntensity * reactive;
-    float climax    = uClimax * reactive;
-    float flash     = uFlash * reactive;
-    float build = uBuild * reactive;
-    float calm  = uCalm * reactive;
-    vec3 beatCol = hueShift(COLOR_BEAT, uHue * reactive * 6.2831853);
-    vec3 highCol = hueShift(COLOR_HIGH, uHue * reactive * 6.2831853);
+    // Cuánto actúa el limitador: entero en la franja jugable, nada por encima.
+    float fxW = smoothstep(uFxBand.x - uFxBand.y, uFxBand.x, uv.y);
 
     vec2 px = uv * uFrame;
     // Unidad del sol y la luna: el alto de la pantalla (sin pasar de 0.62 del
@@ -185,8 +178,15 @@ void main(void) {
     // unidades; en la Costa, la línea del mar, a la vista).
     col += uHaze.rgb * uHaze.a * exp(-(1.0 - min(yf, 1.0)) * SKY_HAZE_K) * uShow1.z;
 
-    // (efecto) Tinte del clímax, más fuerte arriba y latiendo con el beat.
-    col += beatCol * climax * (0.035 + 0.05 * pulse) * (1.0 - toH);
+    // (efecto) Tinte del clímax, más fuerte arriba.
+    col = fxLimit(col, col + uFxWarm * uFxA.x * (1.0 - toH), fxW);
+
+    // (efecto) Bombeo del cielo: respira con el golpe, hacia abajo. Entre golpes se
+    // oscurece un poco y en el golpe vuelve a su brillo. Oscurecer nunca le quita
+    // contraste a lo que se juega, así que se ve también de día y no pasa por el
+    // limitador. Va ANTES de las estrellas, la luna y el sol: respira el cielo, no
+    // los astros (un sol que se apaga entre golpes se veía sucio).
+    col *= 1.0 - uFxB.w;
 
     // ---------- Estrellas ----------
     // Una estrella es UNA celda del arte, cuadrada, en una rejilla de 3 × 3 celdas
@@ -215,8 +215,8 @@ void main(void) {
             float visY = clamp(uStarVis * 1.8 - yf * 0.8 + 0.1, 0.0, 1.0);
             float appear = smoothstep(1.0 - visY, 1.12 - visY, bright * 0.85 + 0.15);
             float tw = 0.55 + 0.45 * sin(uTime * (1.5 + 3.0 * fract(n * 7.31)) + n * 41.0);
-            // (efecto) los agudos las avivan en partida.
-            col += vec3(0.85, 0.92, 1.0) * pix * appear * tw * (0.42 + 0.33 * bright) * (1.0 + high * 2.6);
+            // (efecto) estrellas vivas: titilan con los agudos y laten con el pulso.
+            col += vec3(0.85, 0.92, 1.0) * pix * appear * tw * (0.42 + 0.33 * bright) * (1.0 + uFxA.y);
         }
     }
 
@@ -327,14 +327,14 @@ void main(void) {
         // latir, su filo volvía a asomar cuando ya se había ocultado, justo en el
         // destello verde).
         float sunClear = clamp((uHorizon - sunPos.y) * uFrame.y / (uSunRadius * sunUnit), 0.0, 1.0);
-        float sunR = uSunRadius + sunClear * (pulse * (0.013 + 0.013 * intensity) + (1.0 - reactive) * breathe * 0.0055);
+        float sunR = uSunRadius + sunClear * (uFxA.z + (1.0 - reactive) * breathe * 0.0055);
         float sunRy = sunR * sunUnit / uFrame.y;   // radio en uv verticales (rendijas y degradado)
         // Primero el halo cercano y el resplandor ancho (escenario; uSunGlow ya
         // viene a 0 con el sol bajo el horizonte) y lo que late (efecto: graves,
         // pulso, drops); después el disco ENCIMA. Sumados sobre el disco lo
         // quemaban a blanco y se perdía su degradado (el dorado→rosa del ocaso).
         col += uSunGlow.rgb * (uSunHalo * exp(-d * 9.0) + uSunGlow.a * exp(-d * 3.2)) * uShow0.y;
-        col += uSunGlow.rgb * exp(-d * 9.0) * (bass * 0.22 + pulse * (0.06 + 0.10 * intensity) + 0.25 * flash);
+        col = fxLimit(col, col + uSunGlow.rgb * exp(-d * 9.0) * uFxA.w, fxW);
         if (uShow0.x > 0.5) {
             // OJO: smoothstep exige edge0 < edge1 (edges invertidos = undefined en
             // GLSL — en ANGLE/D3D devuelve 0 y el disco desaparece). Invertimos con 1-.
@@ -384,44 +384,20 @@ void main(void) {
 
     // ================== EFECTOS ==================
 
-    // ---------- Glow del horizonte ----------
+    // ---------- Brillo del horizonte ----------
     // Solo lo que late: la base del horizonte ya la pone la neblina de la paleta.
-    // Mientras dura el destello verde (T02.6), el horizonte es suyo: en One Day
-    // cae con el drop y con la orquesta entera, y este brillo rosa lo borraba.
+    // Una banda cálida y una línea fría pegada al horizonte. Lo que una escena no
+    // quiera en su horizonte (una historia de autor) lo veta ella: llega a cero.
     float hd = abs(uv.y - uHorizon);
-    float horizonGlow = exp(-hd * (26.0 - 8.0 * intensity)) * (1.0 - 0.9 * uSunFlash * uShow1.w);
-    col += beatCol * horizonGlow * (bass * 0.55 + pulse * (0.15 + 0.30 * intensity + 0.35 * build) + 0.45 * flash + 0.30 * build);
-    col += highCol * exp(-hd * 60.0) * (high * 0.35 + 0.25 * flash) * (1.0 - 0.9 * uSunFlash * uShow1.w);
+    vec3 lit = col + uFxWarm * exp(-hd * uFxB.z) * uFxB.x + uFxCool * exp(-hd * 60.0) * uFxB.y;
+    col = fxLimit(col, lit, fxW);
 
-    // ---------- Ecualizador pixel desde el suelo (solo partida) ----------
-    // Barras DISCRETAS con hueco entre ellas, 3 taps promediados por barra, altura
-    // contenida y alpha que se desvanece hacia la punta. Anclado a la línea del
-    // suelo en cualquier escena (la cordillera o el mar tapan buena parte: la
-    // T03.1 le da su propio plano, doc 11 §1.C).
-    if (uShaderMode > 0.5 && uv.y < uGround) {
-        const float BARS = 40.0;
-        float slot = floor(uv.x * BARS);
-        float cx = (slot + 0.5) / BARS;
-        float b0 = texture(uFFT, vec2(cx, 0.5)).r;
-        float b1 = texture(uFFT, vec2(cx - 1.0 / BARS, 0.5)).r;
-        float b2 = texture(uFFT, vec2(cx + 1.0 / BARS, 0.5)).r;
-        float bin = (b0 * 2.0 + b1 + b2) * 0.25;
-        // ² para que el silencio sea plano; más alto cuanto más empuja el tramo.
-        float h = bin * bin * (0.11 + 0.09 * intensity);
-        float top = uGround - h;
-        float gap = step(fract(uv.x * BARS), 0.68);   // 68% barra, 32% hueco
-        if (uv.y > top && h > 0.004) {
-            float t = (uGround - uv.y) / max(h, 1e-4);   // 0 en la base, 1 en la punta
-            vec3 barCol = mix(mix(beatCol, highCol, cx), beatCol, climax * 0.5);
-            col += barCol * gap * (1.0 - t) * (0.12 + 0.10 * intensity + bass * 0.10);
-        }
-    }
-
-    // ---------- Flash global al beat y destello de drop ----------
-    col *= 1.0 + pulse * (0.05 + 0.10 * intensity + 0.12 * build);
-    col += highCol * flash * 0.10;
+    // ---------- Destello de un momento (drop) ----------
+    // Dura décimas: no pasa por el limitador (fx/flashSafety.js).
+    col += uFxCool * uFxC.x;
 
     // Break: el color se apaga hacia un gris frío, sin llegar a negro.
+    float calm = uFxC.y;
     float luma = dot(col, vec3(0.299, 0.587, 0.114));
     col = mix(col, vec3(luma) * vec3(0.78, 0.84, 1.0), 0.6 * calm) * (1.0 - 0.22 * calm);
 

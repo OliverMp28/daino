@@ -20,7 +20,7 @@ import { isBridgeEmbedded } from '../iframe/bridge.js';
 import { renderAvatar } from './avatar.js';
 import {
     getVolume, setVolume,
-    getReduceEffects, setReduceEffects,
+    getFxLevel, setFxLevel,
     getSkin, setSkin,
     getQuality, setQuality,
     getAutoRetry, setAutoRetry,
@@ -439,26 +439,36 @@ export function openSettingsModal(opts = {}) {
     retryRow.appendChild(retryNote);
     body.appendChild(retryRow);
 
-    // ----- Reducir efectos visuales (placeholder funcional para Bloque 8) -----
+    // ----- Efectos visuales (T03.1): cuánto de lo que late con la música -----
     const fxRow = document.createElement('section');
     fxRow.className = 'daino-settings__row';
     const fxLabel = document.createElement('label');
     fxLabel.className = 'daino-settings__label';
     fxLabel.htmlFor = 'daino-settings-fx';
-    fxLabel.textContent = 'Reducir efectos visuales';
-    const fxToggle = document.createElement('input');
-    fxToggle.type = 'checkbox';
-    fxToggle.id = 'daino-settings-fx';
-    fxToggle.dataset.interactive = 'true';
-    fxToggle.checked = getReduceEffects();
-    fxToggle.addEventListener('change', () => {
-        setReduceEffects(fxToggle.checked);
+    fxLabel.textContent = 'Efectos visuales';
+    const fxSelect = document.createElement('select');
+    fxSelect.id = 'daino-settings-fx';
+    fxSelect.dataset.interactive = 'true';
+    fxSelect.className = 'daino-settings__select';
+    for (const [value, text] of [
+        ['full', 'Completos'],
+        ['soft', 'Suaves'],
+        ['min', 'Mínimos'],
+    ]) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = text;
+        fxSelect.appendChild(opt);
+    }
+    fxSelect.value = getFxLevel();
+    fxSelect.addEventListener('change', () => {
+        setFxLevel(fxSelect.value);
     });
     const fxNote = document.createElement('p');
     fxNote.className = 'daino-settings__hint';
-    fxNote.textContent = 'Apaga los destellos del escenario, como los relámpagos de la tormenta. Más efectos se sumarán aquí.';
+    fxNote.textContent = 'Suaves: los efectos de la música a media fuerza y sin destellos de pantalla. Mínimos: solo el pulso del suelo y las líneas de velocidad, sin relámpagos.';
     fxRow.appendChild(fxLabel);
-    fxRow.appendChild(fxToggle);
+    fxRow.appendChild(fxSelect);
     fxRow.appendChild(fxNote);
     body.appendChild(fxRow);
 

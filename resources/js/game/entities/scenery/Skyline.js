@@ -11,6 +11,11 @@
 //     propia: no se tiñen;
 //   - las luces rojas de las antenas, que parpadean de noche.
 //
+// Efecto 'spectrum' (T03.2): las ventanas bailan con la música. Cada escalón de
+// ventanas sigue una banda de lo que suena (de graves a agudos): se atenúan y
+// vuelven a su luz con cada golpe de su banda. Nunca brillan más que en el
+// escenario: la música las apaga y las enciende.
+//
 // Se carga bajo demanda con la escena.
 
 import { Container, Texture, TilingSprite } from 'pixi.js';
@@ -22,6 +27,8 @@ const BEACON_COLOR = '#ff4a5e';
 /** Parpadeo de las luces de las antenas (Hz) y cuánto se quedan encendidas. */
 const BEACON_HZ = 0.8;
 const BEACON_DUTY = 0.35;
+/** Cuánto se atenúan las ventanas de una banda en silencio, con el efecto a tope. */
+const WINDOW_FX_DEPTH = 0.65;
 
 /** Canvas de `w`×`h` píxeles (una celda cada uno) y lo que se dibuja en él. */
 function paint(w, h, draw) {
@@ -53,12 +60,17 @@ export function createSkylineLayer(def, view) {
     /** @type {Texture[]} */
     let textures = [];
     let periodW = 0;
+    /** Altura del tejado en cada celda del periodo (para quien se apoya en la silueta: heightAt). */
+    let roof = new Uint16Array(1);
     let lit = 0;
     let night = 0;
     let lastTint = -1;
     let windowsOn = true;
     let beaconsOn = true;
     let t = 0;
+    /** Las ventanas con la música: nivel del efecto y el de la banda de cada escalón. */
+    let fxLevel = 0;
+    const fxBands = new Float32Array(WINDOW_STEPS);
 
     function release() {
         container.removeChildren();
@@ -80,6 +92,8 @@ export function createSkylineLayer(def, view) {
         const buildings = skylineBuildings(cells, p);
         const rows = Math.max(...buildings.map((b) => b.top)) + 1;
         periodW = cells * PIXEL_SCALE;
+        roof = new Uint16Array(cells);
+        for (const b of buildings) roof.fill(b.h + (b.roof === 'step' ? 2 : 0), b.x, b.x + b.w);
         const top = (b) => rows - b.h;
 
         // Los edificios, en blanco (los tiñe la hora), con su remate.
@@ -135,7 +149,7 @@ export function createSkylineLayer(def, view) {
             // Cada escalón se enciende en su tramo: con `lit` 0.5, la mitad de las capas.
             const a = Math.max(0, Math.min(1, lit * WINDOW_STEPS - s));
             windows[s].visible = a > 0.01;
-            windows[s].alpha = a * p.windowAlpha;
+            windows[s].alpha = a * p.windowAlpha * (1 - WINDOW_FX_DEPTH * fxLevel * (1 - fxBands[s]));
         }
     }
 
@@ -178,6 +192,38 @@ export function createSkylineLayer(def, view) {
             // Las luces de las antenas, de noche: del crepúsculo a la primera luz.
             night = Math.max(0, Math.min(1, (1 - state.elev) / 7));
             applyBeacons();
+        },
+        /**
+         * Altura del tejado sobre el suelo en la x de pantalla `x` (unidades de
+         * mundo), con el scroll vigente. La usan las barras del espectro (T03.2).
+         */
+        heightAt(x) {
+            if (!body) return 0;
+            let local = (x - body.tilePosition.x) % periodW;
+            if (local < 0) local += periodW;
+            // El pie del edificio queda una celda bajo la línea del suelo.
+            return Math.max(0, roof[Math.floor(local / PIXEL_SCALE) % roof.length] - 1) * PIXEL_SCALE;
+        },
+        /** El tejado más bajo y el más alto, sobre el suelo. */
+        heightRange() {
+            let min = Infinity;
+            let max = 0;
+            for (let i = 0; i < roof.length; i++) {
+                if (roof[i] < min) min = roof[i];
+                if (roof[i] > max) max = roof[i];
+            }
+            return { min: Math.max(0, min - 1) * PIXEL_SCALE, max: Math.max(0, max - 1) * PIXEL_SCALE };
+        },
+        /**
+         * (efecto 'spectrum') Las ventanas con las bandas de lo que suena.
+         * @param {{ levels: Record<string, number>, spectrum: ReturnType<import('../../fx/spectrum.js').createSpectrum> }} fx
+         */
+        setFx(fx) {
+            const level = Math.min(1, fx.levels.spectrum);
+            if (level <= 0.004 && fxLevel === 0) return;
+            fxLevel = level <= 0.004 ? 0 : level;
+            if (fxLevel > 0) fx.spectrum.groups(WINDOW_STEPS, fxBands);
+            if (lit > 0.005) applyLights();
         },
         setVisible(id, on) {
             if (id === def.id) container.visible = on;

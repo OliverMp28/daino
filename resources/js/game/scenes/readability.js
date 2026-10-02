@@ -97,11 +97,17 @@ export function heightToSkyFrac(heightPx, viewHeight = WORLD_VIEW.targetHeight, 
 /**
  * Fallos de legibilidad de un estado del cielo. Vacío = todo se lee.
  *
+ * `opts.sky` (T03.1): el cielo CON efectos. Recibe el color del cielo a una altura
+ * y devuelve el que queda con ellos; el guardián mide ese (tests/js/fx-guard.test.mjs
+ * lo usa con el limitador de la franja jugable y con la calma del break). Las
+ * capas del escenario van delante del shader: los efectos del cielo no las tocan.
+ *
  * @param {ReturnType<import('./skyModel.js').createSkyState>} state
  * @param {import('./registry.js').SceneDef} scene
+ * @param {{ sky?: (rgb: number[], heightPx: number) => number[] }} [opts]
  * @returns {Array<{ subject: string, heightPx: number, backdrop: string, ratio: number, min: number }>}
  */
-export function checkReadability(state, scene) {
+export function checkReadability(state, scene, opts = {}) {
     const R = READABILITY_RULES;
     const rise = scene.horizonRise ?? 0;
     const spans = sceneBackdrops(scene);
@@ -112,7 +118,10 @@ export function checkReadability(state, scene) {
     for (const s of playSubjects()) {
         for (let h = s.from; h <= s.to; h += R.stepPx) {
             const backdrops = [];
-            if (h >= skyFrom) backdrops.push(['cielo', skyColorAt(state, heightToSkyFrac(h, undefined, rise), tmp).slice()]);
+            if (h >= skyFrom) {
+                const sky = skyColorAt(state, heightToSkyFrac(h, undefined, rise), tmp).slice();
+                backdrops.push(['cielo', opts.sky ? opts.sky(sky, h) : sky]);
+            }
             for (const b of spans) {
                 if (h >= b.from && h <= b.to) backdrops.push([b.id, Array.from(b.colorAt(state, h, tmp))]);
             }

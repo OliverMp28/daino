@@ -22,6 +22,14 @@
 // Por dentro, lugar y clima se componen: la lluvia es una capa que vale para la
 // Costa y para la Cordillera. A quien sube se le enseñan ambientes ya probados.
 //
+// T03 (doc 11): LA ESCENA MANDA SOBRE LOS EFECTOS de la música. Dice dónde vive su
+// espectro (una capa `spectrum` tras una silueta; el mar lo lleva en sus crestas
+// y la ciudad, además, en sus ventanas)
+// y, si hace falta, su política `fx` (fx/policy.js): qué efectos permite o veta,
+// cuánto los atenúa y de qué color van. Los ambientes no declaran nada: valen
+// todos. Una historia de autor es dueña de su horizonte, su sol y su mar, y lo
+// declara aquí; no hay casos especiales en el shader ni en la partida.
+//
 // Puro y sin Pixi: los tests validan el registro entero (paletas, ciclos, capas
 // y legibilidad de cada escena).
 
@@ -62,6 +70,8 @@ export const SCENE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
  * @property {number} starRotPerHour  Giro del cielo estrellado (radianes por hora).
  * @property {Array<{ from: number, to: number, x0: number, x1: number, y0: number, y1: number, fadeIn: number, fadeOut: number, size: number }>} luceros
  *   Lucero de la tarde y del alba: horas (continuas), recorrido y fundidos.
+ * @property {{ allow?: string[], deny?: string[], temper?: number | Record<string, number>, colors?: { warm: string, cool: string }, hush?: string[] }} [fx]
+ *   Política de efectos de la escena (T03.1, fx/policy.js). Sin ella, todos valen.
  * @property {object} [story]      Historia de autor ligada a la escena (stories/, T02.6).
  * @property {boolean} [greenFlash] El destello verde al ponerse y al salir el sol (T02.6).
  * @property {Array<{ type: string, id: string, label: string, color?: string, rim?: number, snowRim?: number, parts?: Array<{ id: string, label: string }>, params?: object }>} layers
@@ -115,6 +125,11 @@ const CLOUDS = { type: 'clouds', id: 'clouds', label: 'Nubes',
 const STORM_CLOUDS = { ...CLOUDS, params: { ...CLOUDS.params, count: 10 } };
 
 const GROUND = { type: 'ground', id: 'ground', label: 'Suelo' };
+
+// El espectro en el paisaje (T03.2): barras de luz que nacen de una silueta. La
+// capa va DETRÁS de su anfitriona (`host`), que la recorta.
+const RIDGE_SPECTRUM = { type: 'spectrum', id: 'spectrumBars', label: 'Barras del espectro', params: { host: 'mountainsFar' } };
+const CITY_SPECTRUM = { type: 'spectrum', id: 'spectrumBars', label: 'Barras del espectro', params: { host: 'cityFar' } };
 
 // La Costa (T02.2). Islas: una cordillera baja, a trozos, apoyada en la línea del
 // mar; las lejanas apenas se mueven. El faro, tan lejos que cruza la pantalla en
@@ -179,7 +194,7 @@ export const SCENES = deepFreeze({
         menuHour: 18.2,
         horizonRise: 0,
         ...SKY,
-        layers: [FAR_RIDGE, NEAR_RIDGE, CLOUDS, GROUND],
+        layers: [RIDGE_SPECTRUM, FAR_RIDGE, NEAR_RIDGE, CLOUDS, GROUND],
     },
     // La Costa (T02.2): el mar hasta un horizonte despejado. Sin cordillera
     // delante, el sol se pone en el agua a la vista y deja su reflejo; la luna
@@ -244,7 +259,7 @@ export const SCENES = deepFreeze({
             lightning: [[17.5, 0], [18.85, 0.35], [19.5, 1], [27, 0.7], [28.5, 0.15], [29.2, 0]],
         },
         ...SKY,
-        layers: [LIGHTNING, FAR_RIDGE, NEAR_RIDGE, STORM_CLOUDS, RAIN, GROUND],
+        layers: [LIGHTNING, RIDGE_SPECTRUM, FAR_RIDGE, NEAR_RIDGE, STORM_CLOUDS, RAIN, GROUND],
     },
     // Nieve (T02.3): la Cordillera nevada. El filo de las crestas es nieve a
     // cualquier hora; la nevada empieza suave, arrecia hacia el clímax y amaina
@@ -268,6 +283,7 @@ export const SCENES = deepFreeze({
         },
         ...SKY,
         layers: [
+            RIDGE_SPECTRUM,
             { ...FAR_RIDGE, snowRim: 0.9, parts: [{ id: 'ridgeSnow', label: 'Nieve de las crestas' }] },
             { ...NEAR_RIDGE, snowRim: 0.7, parts: [{ id: 'ridgeSnow', label: 'Nieve de las crestas' }] },
             CLOUDS,
@@ -296,6 +312,8 @@ export const SCENES = deepFreeze({
             // Los lejanos, pegados unos a otros: tapan el cielo de punta a punta
             // hasta el más bajo (el horizonte, con su neblina, no asoma cerca del
             // suelo, y el guardián lo sabe). Los cercanos dejan huecos.
+            // Detrás de ellos, el espectro: luz que sube de entre los tejados.
+            CITY_SPECTRUM,
             { type: 'skyline', id: 'cityFar', label: 'Edificios lejanos', color: 'far',
                 parts: [
                     { id: 'cityWindows', label: 'Ventanas' },
@@ -325,6 +343,20 @@ export const SCENES = deepFreeze({
         cycle: 'story',
         story: ONE_DAY,
         greenFlash: true,
+        // Los efectos, lo esencial y con sus colores (T03.1, decisión del user): late
+        // la línea del suelo, titilan las estrellas de la noche de la espera y el
+        // drop sigue teniendo su momento. Nada toca el horizonte, el sol, el mar ni
+        // el barco (ni brillo del horizonte, ni espectro, ni latido del sol, ni
+        // bombeo del cielo, ni motas sobre el agua), y todo va en el oro y el verde
+        // azulado de su paleta. Lo que late, suave (la noche de la espera es
+        // tranquila); el momento del drop, entero: cae en el destello verde. En sus
+        // instantes clave (el destello, los rótulos) el aire se aparta.
+        fx: {
+            allow: ['groundPulse', 'starPulse', 'dropFlash', 'dropKick', 'dropWave', 'breakCalm', 'speedLines'],
+            temper: { pulse: 0.6 },
+            colors: { warm: '#ffbe55', cool: '#62d6c4' },
+            hush: ['air'],
+        },
         // Sin partida (panel dev): la despedida, con el barco en el sol.
         menuHour: 18.7,
         sea: { deep: '#03222b' },

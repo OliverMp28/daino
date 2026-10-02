@@ -2,17 +2,22 @@
 // (scenes/registry.js) elige aquí su implementación. Una capa nueva es un módulo
 // con la misma forma y una entrada en este mapa:
 //
-//   create(def, { width, height, groundY, horizonRise, still }) → {
+//   create(def, { width, height, groundY, horizonRise, still, find }) → {
 //       container,                        Pixi, en unidades de mundo
 //       tick(dt, worldSpeed),             scroll y animación propia
 //       resize(width, height, groundY),
 //       light(skyState),                  color de la hora y arco (scenes/skyModel.js)
 //       setVisible(elementId, on),        interruptores del panel dev
-//       setPulse?(pulse, intensity),      efectos que laten (solo si los tiene)
+//       setFx?(fx),                       efectos (T03.1): niveles, colores, señales
+//                                         y espectro del fotograma (solo si pinta alguno)
+//       heightAt?(x), heightRange?(),     su silueta (si otra capa se apoya en ella)
 //       setDetail?(ratio),                presupuesto de render: lluvia y nieve
 //       setFlashes?(on),                  "Reducir efectos visuales": relámpagos
 //       dispose(),
 //   }
+//
+// `find(id)` da otra capa de la misma escena (las barras del espectro nacen de
+// la silueta de su anfitriona).
 //
 // Y su entrada en scenes/backdrops.js: qué pone detrás del juego, para el
 // guardián de legibilidad.
@@ -25,11 +30,13 @@
 import { createCloudLayer } from './Clouds.js';
 import { createGroundLayer } from './Ground.js';
 import { createRidgeLayer } from './Ridge.js';
+import { createSpectrumLayer } from './SilhouetteSpectrum.js';
 
 export const LAYER_TYPES = Object.freeze({
     ridge: createRidgeLayer,
     clouds: createCloudLayer,
     ground: createGroundLayer,
+    spectrum: createSpectrumLayer,
 });
 
 export const LAZY_LAYER_TYPES = Object.freeze({

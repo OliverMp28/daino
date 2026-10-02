@@ -1,19 +1,30 @@
 // Capa `ground` del escenario: la tira de suelo pixel art que scrollea 1:1 con
-// el mundo (los obstáculos van pegados a ella) y su filo de luz, que late con
-// el beat (efecto de la Ola 5: lo apaga el panel dev junto a los demás).
+// el mundo (los obstáculos van pegados a ella) y la luz que la música pone en él.
 //
 // La hora le da un tinte sutil: el suelo es oscuro a propósito, es el fondo de
 // contraste de todo lo que se juega.
 //
 // `params.sprite` elige la tira (T02.2: la arena de la Costa); la de siempre si
 // no se dice.
+//
+// Efecto 'groundPulse' (T03.1): la línea del suelo late con el beat. Es un filo de
+// luz sobre la línea y, bajo ella (donde no se juega nada), un resplandor de dos
+// celdas que lo hace leerse como luz y no como una raya.
+//
+// (En la T03.2 hubo aquí un "espectro del suelo": la línea partida en tramos que
+// crecían hacia abajo con cada banda. En el playtest se leyó como un error —
+// "las barras se ven debajo del suelo"— y se quitó. De día el espectro son las
+// barras tras la silueta, en el color de las montañas.)
 
 import { Container, Graphics, TilingSprite } from 'pixi.js';
 import { getTexture, spriteSize, PIXEL_SCALE } from '../../assets/pixelart.js';
 import { rgbToNumber } from '../../scenes/color.js';
 
-/** Color del filo de luz del suelo: el cian de la paleta (COLOR_HIGH del shader). */
-const GROUND_GLOW_COLOR = 0x8fe0ff;
+/**
+ * El pulso del suelo: opacidad del filo en el golpe con el tramo más tranquilo y
+ * cuánto sube con el más intenso; alto y fuerza del resplandor de debajo.
+ */
+const GROUND_PULSE = Object.freeze({ base: 0.22, intensity: 0.5, glowPx: 2 * PIXEL_SCALE, glow: 0.4 });
 
 /**
  * @param {{ id: string, params?: { sprite?: string } }} def
@@ -34,13 +45,16 @@ export function createGroundLayer(def, view) {
     container.addChild(strip, glow);
 
     let lastTint = -1;
+    let lastGlowTint = -1;
 
     function layout(width, groundY) {
         strip.width = width;
         // La fila 1 del tile (la línea E) cae exactamente en groundY; la fila 0
         // son los bultos que asoman por encima.
         strip.y = groundY - PIXEL_SCALE;
-        glow.clear().rect(0, groundY - 2, width, 3).fill(GROUND_GLOW_COLOR);
+        glow.clear()
+            .rect(0, groundY - 2, width, 3).fill(0xffffff)
+            .rect(0, groundY + 1, width, GROUND_PULSE.glowPx).fill({ color: 0xffffff, alpha: GROUND_PULSE.glow });
     }
 
     layout(view.width, view.groundY);
@@ -62,12 +76,17 @@ export function createGroundLayer(def, view) {
             }
         },
         /**
-         * (efecto, Ola 5) Pulso del beat sobre la línea del suelo.
-         * @param {number} pulse      [0,1], 1 en el golpe.
-         * @param {number} intensity  [0,1] intensidad del tramo.
+         * (efecto 'groundPulse') El pulso del beat en la línea del suelo, en el color
+         * frío de los efectos.
+         * @param {{ levels: Record<string, number>, colors: { cool: number[] }, signals: import('../../fx/signals.js').FxSignals }} fx
          */
-        setPulse(pulse, intensity) {
-            glow.alpha = pulse * (0.12 + 0.38 * intensity);
+        setFx(fx) {
+            const cool = rgbToNumber(fx.colors.cool);
+            if (cool !== lastGlowTint) {
+                glow.tint = cool;
+                lastGlowTint = cool;
+            }
+            glow.alpha = Math.min(1, fx.levels.groundPulse * fx.signals.beat.world * (GROUND_PULSE.base + GROUND_PULSE.intensity * fx.signals.song.intensity));
         },
         setVisible(id, on) {
             if (id === def.id) container.visible = on;

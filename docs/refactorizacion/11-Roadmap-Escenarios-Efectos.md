@@ -11,7 +11,7 @@
 >
 > **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
 >
-> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche), T02.5 (Automático por el carácter de la canción) y T02.6 (historias de autor y One Day) ✅; quedan las historias siguientes (T02.7+). T03 sin empezar.
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche), T02.5 (Automático por el carácter de la canción) y T02.6 (historias de autor y One Day) ✅; quedan las historias siguientes (T02.7+). T03 en curso: rediseñado con el user (§2.11-2.15 y §3, T03); T03.1 (cimientos y control) y T03.2 (el espectro en el paisaje y el pulso por astro) ✅; quedan la identidad por canción (T03.3) y el playtest (T03.4).
 
 ---
 
@@ -69,6 +69,8 @@ Verificado con capturas de What's Up Danger en 0:24 y 0:44 (bandas de niebla gri
 ### 1.C Las barras del ecualizador se esconden detrás de las montañas
 
 El user: "se ve bien, solo que a veces parece escondido". Es literal: las barras suben desde el horizonte `bin² × (0.11 + 0.09 · intensidad)` de la altura, 0.03-0.13 con la música típica y como mucho 0.20. La cordillera lejana tiene crestas de hasta ~81 unidades de 620 (0.13; se creía que 130: ver la T02.2) y **se dibuja encima** (el escenario va sobre el shader). Solo asoman por los valles. Es trabajo de la T03.1: el ecualizador necesita su propio plano, no el fondo del fondo. Desde la T02.2 las barras salen de la línea del suelo en cualquier escena (`uGround`): en la Costa el mar las tapa igual que la cordillera.
+
+**Resuelto en la T03.2**: el ecualizador ya no está en el shader. El espectro se pinta con el paisaje de cada escena (barras que nacen de la silueta de las crestas o de los tejados, el mar por bandas, la línea del suelo) y en bandas logarítmicas (repartido en lineal, la mitad derecha quedaba vacía).
 
 ### 1.D Legibilidad: los sprites están pensados para un cielo oscuro
 
@@ -150,6 +152,36 @@ Ni el chart, ni las marcas, ni los obstáculos. Por eso el autor de un nivel pue
 
 A eventos de la canción (`planSky(...).events`, el clímax, los drops, el final), nunca a segundos puestos a mano: sobrevive a un re-charteo y a un analizador nuevo. Nada con forma de obstáculo en el escenario (§6: los pájaros).
 
+### 2.11 Un efecto es una entrada de registro; el director decide cuánto (T03, con el user)
+
+Cada efecto tiene nombre, familia, plano, condición, coste y protección de lo que se juega (`fx/registry.js`). **Cuánto se ve en cada instante lo decide un solo sitio**, el director (`fx/director.js`), como producto de cinco capas, cada una con una sola responsabilidad:
+
+| Capa | Decide | Dónde vive |
+|---|---|---|
+| Escena | Dónde pueden vivir los efectos, su espectro propio y qué veta | `scene.fx` y sus capas (`scenes/registry.js`) |
+| Hora del cielo | Qué astro lleva el pulso (el sol de día, las estrellas de noche) y si hay sitio para la luz | `when` del efecto; el limitador |
+| Canción | Paleta, efecto firma y temperamento (T03.3) | `fx/casting.js`, `levels.fx_auto` |
+| Arco | Cuándo y cuánto: intro mínima, clímax máximo | intensidad del tramo (`songDirector`) |
+| Jugador y equipo | El máximo: Completos, Suaves o Mínimos; el tier bajo apaga los caros | `settings`, `RenderProfile` |
+
+Los pintores (el shader, las capas del escenario, las motas, las líneas, los momentos de la partida) solo leen el nivel de su efecto. **Familias = huecos**: un nivel lleva como mucho un efecto de espectro y una firma, así que no se amontonan por construcción. Los efectos son solo visuales: ni el chart ni el juego los leen.
+
+### 2.12 La franja jugable está protegida por un limitador
+
+Lo que se juega (colores neón sin contorno) se lee porque el fondo es oscuro, y de día el cielo ya está en el límite (§1.D). Los efectos son luz que se suma encima. En vez de vigilar la fórmula de cada uno, **toda la luz de los efectos pasa por un limitador** dentro de la franja jugable (del suelo a 364 unidades): nunca sube el fondo por encima de un techo de luminancia. Un efecto nuevo queda protegido sin hacer nada. Dentro de la franja, además, nada tiene forma de obstáculo ni se mueve como uno.
+
+### 2.13 La escena manda sobre los efectos
+
+Una escena puede declarar su política (`fx`: qué permite o veta, cuánto atenúa, de qué color van, qué se aparta en sus instantes clave). Los ambientes no declaran nada. Una historia de autor es dueña de su horizonte, su sol y su mar y lo declara: **sin casos especiales en el shader ni en la partida**. El color de los efectos nunca tiñe los sprites ni el escenario.
+
+### 2.14 Las luces se ven cuando oscurece; los efectos se hacen con el escenario
+
+Los efectos se construyen con piezas del propio paisaje (su silueta, su mar, sus estrellas, su suelo), no como capas encima. Y siguen al cielo: de día, cuando detrás de lo que se juega no cabe luz, la música se ve en lo que no la necesita (las barras del espectro son silueta oscura, el cielo respira oscureciéndose entre golpes, el filo de las crestas y la línea del suelo laten); al atardecer las barras se encienden, y de noche (que cae con el clímax, §2.1) son luz. La progresión sale sola de la canción. **La música tiene que sentirse a cualquier hora** (playtest): proteger lo que se juega no puede dejar el día sin efectos.
+
+### 2.15 Nada de pantalla destella más de tres veces por segundo
+
+Lo que late con el pulso (hasta 6 veces por segundo en una subida a contratiempo) no llega a ser un destello: su cambio de luminancia se queda por debajo del umbral de la WCAG 2.3.1, con margen. Los destellos de verdad (el del drop) van sueltos. Lo prueba un test.
+
 ---
 
 ## 3. Los trabajos y sus olas
@@ -170,9 +202,10 @@ A eventos de la canción (`planSky(...).events`, el clímax, los drops, el final
   - [x] T02.6 — Historias de autor, empezando por One Day (Sep 2026).
   - [ ] T02.7+ — Una ola por cada historia nueva.
 - [ ] **T03 — Efectos al ritmo de la música**: lo que reacciona a lo que suena.
-  - [ ] T03.1 — Registro de efectos con nombre, panel "Efectos" y ecualizador fuera de las montañas.
-  - [ ] T03.2 — Efectos nuevos, progresivos y repartidos por canción.
-  - [ ] T03.3 — Legibilidad y presupuesto de los efectos.
+  - [x] T03.1 — Cimientos y control: registro, director, limitador de la franja jugable, política por escena, ajuste del jugador y panel dev "Efectos" (Oct 2026).
+  - [x] T03.2 — El espectro en el paisaje y el pulso por astro (Oct 2026).
+  - [ ] T03.3 — Identidad por canción: paletas curadas, reparto y firmas (aurora, lluvia de estrellas en el clímax).
+  - [ ] T03.4 — Playtest humano y afinado; coste de cada efecto con GPU real.
 
 ---
 
@@ -575,24 +608,134 @@ Lo pedido: el sistema de historias de autor y la primera, **One Day** (Piratas d
 
 ### T03 — Efectos al ritmo de la música
 
-#### ⬜ T03.1 — Registro de efectos y panel "Efectos" (siguiente sesión de efectos)
+#### Diseño (con el user, Oct 2026)
 
-- Registro `EFFECTS` con id, etiqueta, qué señal lo mueve (bandas, FFT, pulso, estructura, tonalidad), qué capa pinta y su ganancia. Migrar lo que ya late: ecualizador, pulso del sol, glow de graves, estrellas por agudos, motas, línea del suelo, tinte del clímax, giro de tonalidad, destello del drop.
-- Panel dev: por efecto, encendido, **solo** (ver ese efecto sin los demás) e intensidad. Así el user puede decir "el ecualizador del horizonte, bájale intensidad".
-- **Sacar el ecualizador de detrás de las montañas** (§1.C): su propio plano entre crestas o sobre la cordillera.
+El user pidió planificarlo bien: escalable, controlable, agradable e inmersivo, que no estorbe a la vista, que no sea "un espagueti de efectos" (que aparezcan cuando tengan sentido y aporten) y que no dañe ni el escenario ni la jugabilidad; su ejemplo, One Day, cuyo escenario es una historia de autor.
 
-#### ⬜ T03.2 — Efectos nuevos, progresivos y repartidos por canción
+**Lo que había** (leído en el código antes de empezar):
+- Unos 14 efectos sin registro: fórmulas con constantes dentro de `background.frag`, la línea del suelo, las motas, las líneas de velocidad y los momentos de la `GameSession`.
+- Todos los niveles llevaban todos los efectos todo el tiempo; solo los modulaba la intensidad del tramo.
+- El único control era todo o nada (panel dev).
+- One Day se protegía con casos especiales en el shader (`1.0 - 0.9 * uSunFlash`) y en la partida (`_storyHushAt` para las líneas de velocidad). Cada historia nueva habría pedido más.
+- El ecualizador, detrás de las montañas y del mar, y con las barras en reparto lineal (§1.C).
+- El guardián de legibilidad medía el cielo sin efectos: el brillo del horizonte y el bombeo del cielo pintaban dentro de la franja jugable sin que nadie los midiera.
+- "Reducir efectos visuales" (AJUSTES) solo apagaba los relámpagos.
 
-Ideas del user y propuestas, a decidir en su sesión:
-- **Estrellas vivas**: las estrellas del escenario vibran con los golpes y en el clímax se alargan hacia el espectador (salto a la velocidad de la luz). Solo existen de noche, así que no aparecen en todos los niveles por construcción.
-- **Partículas de espectro**, como el legacy con p5.js: color según lo grave o agudo del sonido, nacidas en el horizonte y nunca en la franja jugable.
-- **Identidad de color por canción**: la tonalidad (analizador 2) fija el tono de los efectos. Mayor más cálido, menor más frío, rueda de quintas → rueda de color.
-- Anillos del sol en los primeros tiempos del clímax; aurora en tramos de calma nocturnos.
-- **Reparto**: qué efectos tiene un nivel lo decide el carácter de la canción (`EFFECT_CASTING`, como los modos), y se desbloquean con el arco (intro mínima, clímax máximo). Un nivel enseña 2-4 efectos, no todos.
+**Lo que eligió el user:**
+- Efectos nuevos: **espectro en el paisaje**, **estrellas vivas** y **aurora**. No eligió "nubes y sol que laten" (§6).
+- Color: **paletas curadas** por canción (frente a "siempre rosa y cian" y a "giro libre por tonalidad").
+- Historias: **lo esencial, con los colores de la escena**, declarado por la historia (frente a "ninguno" y a "todos, atenuados").
 
-#### ⬜ T03.3 — Legibilidad y presupuesto de los efectos
+El modelo y sus decisiones, en §2.11-2.15. Las olas sustituyen a las T03.1-T03.3 de antes, que no se habían empezado.
 
-El guardián de legibilidad también para los efectos (brillo máximo en la franja jugable), coste de cada efecto en `RenderProfile` (el tier bajo apaga los caros) y efectos apagados con `prefers-reduced-motion`, como hoy.
+#### ✅ T03.1 — Cimientos y control (Oct 2026)
+
+##### Qué se construyó
+
+- **Núcleo puro `resources/js/game/fx/`** (sin Pixi, probado en Node):
+  - `registry.js`: `FX` (17 efectos con nombre: los de siempre, migrados, más el espectro y el filo de las crestas), `FX_FAMILIES` (pulso, espectro, firma, aire, momentos, tono, juego), `FX_PREFS` (lo que elige el jugador), `FX_COLORS` (el rosa y el cian de siempre).
+  - `signals.js`: un objeto por fotograma con todo a lo que un efecto puede reaccionar: lo que suena (graves, medios, agudos, RMS), el pulso (con el contratiempo de las subidas y el acento del primer tiempo), la estructura (intensidad, clímax, subida, break, tonalidad, destello), la velocidad, el cielo (noche, estrellas, sol, lluvia o nieve, lo más claro del cielo) y el silencio de una historia.
+  - `director.js`: el nivel de cada efecto = escena × jugador × equipo × reparto × hora (`when`) × arco (`arc`) × historia (`hush`) × panel dev, con fundido (nada aparece ni desaparece de golpe). Guarda por qué un efecto no se ve. Da también los dos colores de los efectos (los de la escena si los fija; si no, los de la canción girados por sus cambios de tonalidad: el giro que hacía el shader, ahora en JS).
+  - `policy.js`: la política `fx` de una escena (`allow`, `deny`, `temper` para todo o por familia, `colors`, `hush`).
+  - `limiter.js`: el limitador de la franja jugable (§2.12). Mide la luminancia con un sustituto sin potencias (Σ w·c²) que queda por encima de la real; es convexo, así que mezclar hacia el fondo nunca se pasa del techo (0.085; el fondo más claro que aún deja leer al ptero y a los cristales afilados tiene 0.092 de luminancia real).
+  - `skyAmounts.js`: cuánto pone cada efecto del cielo según las señales, en una tabla (`SKY_FX`).
+  - `flashSafety.js`: el bombeo máximo para el cielo de cada hora.
+- **El shader solo compone.** `background.frag` ya no recibe graves, pulso ni intensidad: recibe cantidades ya calculadas (`uFxA/B/C`), dos colores (`uFxWarm/uFxCool`) y el limitador (`uFxBand`, función `fxLimit`). Afinar un efecto es cambiar un número de `SKY_FX`.
+- **El engine es dueño de las señales y del director.** Cada fotograma: señales → director → pintores. `setMusic(frame)` sustituye a `setBeatPulse`, `setMusicState` y `setSpeedFx`; nuevos `speedBurst`, `setFxPref`, `setFxOverrides`, `getFx`, `getFxLevels`, `getFxColors`. Las capas del escenario reciben `setFx(fx)` (antes `setPulse`).
+- **La partida solo informa.** `GameSession` llena un fotograma de música; el destello, el golpe de cámara y la ola de un drop, y el rebote de los obstáculos, leen el nivel de su efecto. La ola usa los dos colores de los efectos.
+- **One Day, por política** (`scenes/registry.js`): `allow` = pulso del suelo, estrellas vivas, los tres momentos del drop, calma del break y líneas de velocidad; lo que late, a 0.6; colores oro y verde azulado; el aire se aparta en sus instantes clave. Se quitaron los casos especiales del shader y de la partida.
+- **El jugador**: "Efectos visuales: Completos · Suaves · Mínimos" en AJUSTES sustituye al interruptor. Por defecto, Completos (el interruptor antiguo ya no se lee: ver los ajustes del playtest). Suaves: a 0.55 y sin nada que cambie la pantalla entera (bombeo, destello y golpe de cámara). Mínimos: solo el pulso del suelo y las líneas de velocidad, y sin relámpagos. Con `prefers-reduced-motion`, Mínimos.
+- **El equipo**: cada tier de calidad dice hasta qué coste pinta (`fxCost` en `RenderProfile`). Hoy todos los efectos son baratos; la aurora (T03.3) será cara.
+- **Panel dev "Efectos"** (`ui/devFxPanel.js`): por familia y por efecto, encendido, "solo", intensidad de 0 a 2, su nivel en vivo y por qué no se ve; el maestro, la preferencia del jugador simulada y las señales en vivo.
+
+##### Lo que cambia a la vista
+
+- **De día, el brillo del horizonte y el tinte del clímax ya no aclaran la franja jugable.** Medido: de día el cielo de la franja está en 0.075-0.095 de luminancia frente a un máximo de 0.092; no cabía luz. En la Costa el brillo rosa caía justo a la altura del ptero. De noche y al atardecer se ven como antes, hasta el techo.
+- **El bombeo del cielo respira hacia abajo** (desde el playtest): entre golpes el cielo se oscurece y en el golpe vuelve a su brillo. Antes lo aclaraba ×1.27: de día un golpe subía la luminancia de lo más claro del cielo 0.13 (el umbral de destello es 0.10) y dentro de la franja jugable no cabía. Oscurecer se ve a cualquier hora y nunca quita contraste.
+- **One Day**: sin brillo del horizonte, latido del sol, bombeo, tinte, motas ni espectro; el pulso del suelo y la ola del drop, en sus colores.
+
+##### En qué se desvió del plan
+
+- **Un limitador en vez de un techo de brillo por efecto** (`ceilings.js` no existe; §6).
+- **El shader recibe cantidades, no ganancias**: así las fórmulas viven en JS y las puede usar el test de destellos.
+- **`temper` por familia**: con un solo número, el drop de One Day, que cae en el destello verde, quedaba al 60 %.
+- El modo `?debug=uniforms` del shader desaparece (las señales se ven en el panel dev); `uFFT` solo lo usa `?debug=fft`.
+
+##### Verificación — hecha, con medidas reales
+
+- **Tests** (35 nuevos, 400 JS en verde; PHP y Python sin tocar):
+  - `fx-registry.test.mjs` (9): cada efecto con nombre, familia, plano, coste y protección; huecos; preferencias (las de `settings.js` son las del registro); tiers; la política de cada escena; sitio para el espectro en cada ambiente; el shader sin señales del audio y con `fxLimit` donde se suma luz; las cantidades del cielo iguales a las fórmulas de antes.
+  - `fx-director.test.mjs` (12): por defecto todo a 1 (mover el control no cambia el aspecto); sin partida; fundidos; preferencias; tier; panel dev; arco; lluvia; silencio de una historia; colores; **One Day entero con su chart horneado: los ocho efectos vetados, a cero en cada instante**.
+  - `fx-guard.test.mjs` (7): el techo cabe bajo lo que necesita lo más difícil de leer; el limitador con 20 000 colores al azar; **el guardián con luz sin límite en las 7 escenas a 620 horas, sin un fallo**; la calma del break; los colores de las barras; **destellos: el golpe cambia la luminancia menos de 0.10 en cualquier escena y hora**; los drops de los oficiales, a más de 1 s.
+- **E2E** (Chrome con la GPU real, por CDP):
+  - One Day hasta la noche: los efectos vetados, a cero toda la partida (medido cada fotograma); el destello verde con su rayo y el horizonte limpio; sin errores.
+  - Panel "Efectos": 16 filas; "solo" deja uno; intensidad 2; el motivo ("el sol no está en el cielo") a la vista. Suaves y Mínimos, en vivo.
+  - Con reduced motion emulado: se juega, con los efectos en Mínimos; sin errores.
+- **Bundle**: chunk principal 92.3 KB gzip (86.9 antes; +5.4), Pixi 140.7.
+
+##### Limitaciones
+
+- El limitador y el sustituto de luminancia son conservadores: de noche la luz de los efectos en la franja jugable no pasa de 0.07 de luminancia real aunque cupiera algo más.
+- El halo del sol con los graves pasa por el limitador: al atardecer, con el sol dentro de la franja, casi no late.
+- Los números de la calma del break están repetidos en el shader y en `skyAmounts.js` (un test vigila que coincidan).
+
+#### ✅ T03.2 — El espectro en el paisaje y el pulso por astro (Oct 2026)
+
+##### Qué se construyó
+
+- **`fx/spectrum.js`** (puro): 24 barras en bandas **logarítmicas** (45 Hz-11 kHz) desde los 1024 bins nativos del AnalyserNode. Cada barra se mide contra sí misma: lleva su suelo (lo que suena de fondo en su banda) y su techo (su pico reciente) y enseña dónde está entre los dos. Los bytes del analizador van en decibelios y suavizados: a todo volumen quedan casi todos arriba y quietos; así se ve lo que se mueve. Sube al instante, cae suave y el silencio es plano.
+- **Barras tras la silueta** (`entities/scenery/SilhouetteSpectrum.js`, tipo de capa `spectrum`): 36 barras detrás de la capa anfitriona, que las recorta: asoman justo por encima de la cresta que tienen delante. Anfitrionas: las montañas lejanas (Cordillera, Tormenta, Nieve) y los edificios lejanos (Ciudad), que exponen su silueta (`heightAt`). **De noche son luz** (de cálido, los graves, a azul, los agudos, en escalones); **de día son silueta** (el color más oscuro del paisaje a esa hora, con un punto del color del efecto); el atardecer las va encendiendo.
+- **El mar por bandas** (`Sea.js`): cada fila de crestas se aviva con una banda, los graves en la orilla y los agudos en el horizonte (Costa y Lluvia).
+- **Las ventanas de la ciudad** (`Skyline.js`): cada escalón de ventanas sigue una banda; se atenúan y vuelven a su luz con cada golpe (nunca más brillantes que en el escenario).
+- **El filo de las crestas** (`Ridge.js`, efecto `ridgePulse`): el filo de luz del escenario se enciende con los graves y el pulso. Las montañas laten, de día y de noche.
+- **Estrellas vivas** (shader, efecto `starPulse`): de noche laten con el pulso, más en el primer tiempo, y titilan con los agudos como antes.
+- El ecualizador del shader, fuera (tres lecturas de textura menos por píxel).
+
+##### En qué se desvió del plan
+
+- **De día las barras son silueta, no luz**: no cabe luz detrás de lo que se juega, y pintadas como tinte del mismo brillo que el cielo lo ensuciaban (§6).
+- Las ventanas de la ciudad y el filo de las crestas no estaban en el plan: salieron del playtest.
+- **Mezcla normal con un color ya limitado**, no aditiva: con la aditiva había que saber qué había sumado ya el shader debajo. Así es seguro por construcción.
+- **El extremo frío de las barras es azul, no cian**: bajo el mismo techo de luminancia, el cian es un gris verdoso.
+- Las estrellas no se abren en cruz (§6).
+
+##### Verificación — hecha, con medidas reales
+
+- **Tests**: `spectrum.test.mjs` (6): bandas sin huecos ni solapes y 1 kHz hacia la mitad; silencio plano; un golpe levanta su barra y no las demás; sube al instante y cae suave; grupos e interpolación; las bandas en vivo iguales con 1024 bins que con 256. El guardián recorre las escenas con las barras como fondo, de día (silueta) y de noche (luz) (400 JS en total).
+- **E2E** (Chrome con la GPU real): Running With the Wolves (Cordillera), Mi Fiesta (Ciudad) y HOPE (Costa), con capturas de día, al atardecer, de noche y al alba. Las barras tienen de media 0.5 de nivel y 0.3 de desviación en toda la banda (antes, la mitad derecha vacía). **59.5-60 FPS** en las tres. El bot de toques gana What's Up Danger (Extremo, en la Ciudad de noche, con vuelo y antigravedad) al 100 % a 59.9 FPS (p99 17.4 ms), sin errores de consola. Dawn of Faith en la Tormenta: las barras tras las crestas bajo la lluvia, y las motas fuera.
+- **Coste** (antes de los ajustes del playtest), encendiendo y apagando dentro de la misma partida (Mi Fiesta, 6 s cada medida, cuatro rondas): con todo encendido, 18.8 % del hilo principal; sin el espectro, 17.1 %; sin ningún efecto, 17.0 % (medias de 4 medidas, con ±2 puntos de ruido entre ellas; fotogramas p95 16.9 ms en los tres casos). Una primera versión ocultaba con `visible` cada barra en silencio y costaba entre 0.5 y 1.5 ms más por fotograma: en Pixi v8 cambiar `visible` rehace las instrucciones de dibujo de la escena. Ahora se quedan transparentes.
+
+##### Limitaciones
+
+- De día el espectro es más discreto que de noche por construcción: silueta oscura sobre un cielo azul, no luz.
+- Con reduced motion o "Mínimos" no hay espectro.
+- Los números, por si el siguiente playtest pide más o menos: las barras, `SPECTRUM_BARS` y `SPECTRUM_RULES`; el mar, `CREST_FX`; las ventanas, `WINDOW_FX_DEPTH`; el filo de las crestas, `RIDGE_PULSE`; el suelo, `GROUND_PULSE`; el cielo, `SKY_FX`.
+
+##### Ajustes tras el primer playtest (Oct 2026)
+
+El user jugó y dijo tres cosas: "parece que todos los niveles están con los efectos al mínimo: cuando lo pongo en Suaves o Completos recién los veo"; "las barras que se mueven con la música se ven debajo del suelo"; y "los efectos no se sienten tanto aún: **debe sentirse la música**; en What's Up Danger tampoco se nota".
+
+- **Los efectos al mínimo sin haberlo pedido.** Por defecto eran Completos (comprobado con un perfil limpio), pero la preferencia heredaba el interruptor antiguo "Reducir efectos visuales", que solo apagaba los relámpagos: quien lo tenía marcado (lo más probable en el navegador del user) se quedaba sin ningún efecto de la música. Ya no se lee: por defecto, Completos, y solo cuenta lo que se elija en el ajuste nuevo. Test con la clave antigua puesta.
+- **El espectro del suelo, fuera.** Los tramos que crecían bajo la línea se leían como un error de dibujo, no como un efecto. La línea del suelo se queda con su pulso, más marcado y con un resplandor de dos celdas debajo.
+- **De día no se sentía la música**, y era por diseño: el limitador quitaba de la franja jugable toda la luz de los efectos y las barras se apagaban con el cielo claro. Proteger lo que se juega no puede dejar el día sin efectos, así que de día la música va en lo que no necesita sumar luz:
+  - **Las barras, de día, son silueta**: el color más oscuro del paisaje (el de las montañas cercanas) con un punto del color del efecto. Se ven a lo ancho de toda la pantalla, y más altas (`maxRise` 72 → 104).
+  - **El cielo respira hacia abajo**: el bombeo ya no aclara el cielo en el golpe (no cabía de día y era un destello); lo oscurece entre golpes (9-23 % según el tramo) y lo devuelve a su brillo en el golpe. Va antes de las estrellas, la luna y el sol: respira el cielo, no los astros (el sol apagándose entre golpes se veía sucio).
+  - **El filo de las crestas late** con los graves y el pulso (efecto nuevo `ridgePulse`).
+  - **El sol late más** (radio y halo: de día está por encima de la franja jugable).
+- **En la Ciudad no se sentía** (What's Up Danger): las barras apenas asomaban sobre los edificios lejanos. Ahora suben más y **las ventanas bailan** con las bandas.
+- **Verificación**: 400 JS en verde (el guardián con las barras de día y de noche, los destellos con el bombeo nuevo: el golpe cambia la luminancia menos de 0.10 a cualquier hora). E2E con la GPU real: capturas seguidas de Running With the Wolves de día (las barras oscuras a lo ancho, el filo de las crestas encendido, el sol entero) y de noche, y de What's Up Danger (barras de luz sobre los tejados, ventanas por grupos). El bot de toques vuelve a ganar What's Up Danger al 100 % a 59.7 FPS (p99 17.4 ms, un fotograma suelto de 167 ms), sin errores. Coste con los ajustes (Mi Fiesta, 6 s cada medida, cuatro rondas, con la máquina más cargada que en la medida anterior): con todo encendido, 26.8 % del hilo principal; sin el espectro, 25.6 %; sin ningún efecto, 25.0 %; fotogramas p95 16.9-17.0 ms en los tres casos.
+
+#### ⬜ T03.3 — Identidad por canción
+
+- **Paletas curadas** (`fx/palettes.js`): un puñado de dúos de color probados (neón, brasa, hielo, ultravioleta, oro…); la tonalidad y el ánimo de la canción eligen uno. Cada paleta pasa el guardián.
+- **Reparto** (`fx/casting.js`, como `sceneCasting.js`): retratos por efecto firma a partir de los rasgos de la canción (`songTraits.js`), la paleta y un temperamento (una balada, más suave). Se calcula con el análisis del servidor en `chartFromAnalysis` (`fxAuto`) y se guarda en `levels.fx_auto` (migración `014`, worker, horneados, seeder y `cast-scenes`). No toca el chart: un nivel público también lo recibe. Sin propuesta (canción local, análisis del navegador), los colores y efectos de siempre. El autor no elige.
+- **Firmas**: **aurora** (cortinas de luz en lo alto del cielo nocturno, en canciones tranquilas o cristalinas; cara: fuera en calidad baja) y **lluvia de estrellas** en el clímax (las estrellas fugaces del escenario, en tandas con los primeros tiempos). Una por nivel.
+- **Motas por banda**: cada grupo de motas baila con su banda.
+
+#### ⬜ T03.4 — Playtest y afinado
+
+¿Se nota la música en la pantalla sin distraer?, ¿las barras de noche se quieren más?, ¿el suelo de día molesta o acompaña?, ¿One Day se siente limpio? El panel "Efectos" deja apagar, ver solo o subir cada efecto mientras se juega. Coste de cada efecto medido con la GPU real (con "solo"), y `compress` del shader en build (sus comentarios viajan en el bundle).
+
 
 ---
 
@@ -602,11 +745,11 @@ El guardián de legibilidad también para los efectos (brillo máximo en la fran
 T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.3 (clima) ─┐
                     │                    │                T02.4 (ciudad) ─┴─► T02.5 (automático)
                     │                    └──────────────────────────────────► T02.6 (historias, One Day) ──► T02.7+
-                    └─► T03 (efectos): T03.1 ──► T03.2 ──► T03.3
+                    └─► T03 (efectos): T03.1 ──► T03.2 ──► T03.3 ──► T03.4
 ```
 
 - El T01 va primero porque separa escenario y efectos (§1.F): la T03.1 registra efectos sobre un cielo que ya no los necesita.
-- T02 y T03 no dependen entre sí: se pueden hacer en cualquier orden. El T02 necesita el T01 (registro de escenas, eventos del cielo). La T03.2 necesita la T03.1 (registro) y aprovecha el T01 (estrellas, luna y hora como lienzo).
+- T02 y T03 no dependen entre sí: se pueden hacer en cualquier orden. El T02 necesita el T01 (registro de escenas, eventos del cielo). La T03.2 necesita la T03.1 (registro y director) y aprovecha el T01 y el T02 (estrellas, hora y las siluetas y el mar de cada escena como lienzo). La T03.3 necesita las dos (un reparto necesita un registro y huecos donde repartir) y el análisis del servidor (como el T02.5).
 - Dentro del T02: el automático (T02.5) necesita varios ambientes entre los que elegir; One Day (T02.6) necesita la Costa y, para hornearse, su MP3. T02.3 y T02.4 no dependen entre sí.
 
 ---
@@ -625,6 +768,10 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 | Los relámpagos provocan una crisis fotosensible | Como mucho 2 destellos por rayo y ≥ 1.4 s entre rayos: nunca más de 3 destellos en un segundo (WCAG 2.3.1; lo prueba un test sobre 30 minutos de tormenta a tope). Apagados con reduced motion y con "Reducir efectos visuales" (AJUSTES). El destello solo aclara el cielo detrás de las montañas (alfa 0.2), no la pantalla (T02.3). |
 | La lluvia o la nieve tapan el juego o cuestan FPS | Gotas de media celda y tenues, detrás del juego; cuántas caen lo multiplica el presupuesto de render (`setDetail`: el tier bajo y los modales, menos). Medido: 60 FPS con la tormenta a tope (T02.3). |
 | Una historia da tirones justo en su momento clave | Medido con la GPU real: los tirones del drop de One Day venían de los filtros CSS del HUD, no de la escena; el HUD en partida ya no usa `filter` ni `backdrop-filter` (T02.6). |
+| Un efecto borra lo que se juega | Toda la luz de los efectos pasa por el limitador de la franja jugable; el guardián lo comprueba con luz sin límite en las 7 escenas a 620 horas (T03.1). Las capas Pixi que pintan luz en la franja usan colores ya bajados al techo y mezcla normal. |
+| Los efectos provocan una crisis fotosensible | Lo que late con el pulso cambia la luminancia menos de 0.08 (el umbral de destello es 0.10); el bombeo del cielo tiene tope según lo claro que esté; el destello del drop va suelto. Test sobre todas las escenas y horas (T03.1). |
+| Un efecto estropea una historia de autor | La historia declara qué permite (lista cerrada) y sus colores; el director lo cumple. Test: One Day entero con los efectos vetados a cero (T03.1). |
+| Los efectos se amontonan | Familias = huecos (un espectro y una firma por nivel) y un solo director. Cada efecto tiene nombre e interruptor en el panel dev (apagar, solo, intensidad, por qué no se ve). |
 | "Automático" pone un ambiente que no pega | Solo encajes claros (retratos de ≥ 2 condiciones, encaje y ventaja mínimos), medido con los oficiales y con 14 alteraciones de su análisis sin un solo fallo, y quien sube lo cambia (T02.5). |
 
 ---
@@ -637,6 +784,15 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 - **Día claro con contorno de 1 píxel en los sprites.** Posible, pero cambia el aspecto de todos los personajes y obstáculos; el user eligió el día azul intenso.
 - **Reloj fijo** (atardecer siempre a las 2:00) y **ciclo proporcional**. El primero deja de día las canciones de menos de 2:00 y no sabe dónde está el clímax; el segundo mete una noche de 8 s en un clip de 40 s. El user eligió anclarlo a la música.
 - **Gaviotas en la Costa.** Por lo mismo que los pájaros al atardecer: vuelan como el ptero.
+- **Nubes y sol que laten** (las nubes encendidas por debajo con los graves, anillos del sol en los primeros tiempos). Propuesto en el diseño del T03; el user no lo eligió. Queda como idea: las nubes viven por encima de lo que se juega, así que no costaría legibilidad.
+- **Barras de LUZ de día detrás de las montañas.** Con el cielo claro no cabe luz detrás de lo que se juega; unas barras del mismo brillo que el cielo se probaron y solo lo ensuciaban (columnas pardas sobre el azul). De día son silueta oscura (T03.2).
+- **El espectro en la línea del suelo** (tramos que crecían hacia abajo con cada banda). Era lo único que se veía de día en la primera versión; en el playtest se leyó como un error ("las barras se ven debajo del suelo").
+- **Apagar las barras de día** (primera versión de la T03.2). Dejaba el día sin espectro y el user no sentía la música.
+- **Un bombeo que aclara el cielo.** De día era un destello y dentro de la franja jugable no cabía. Ahora oscurece entre golpes.
+- **Heredar el interruptor "Reducir efectos visuales" como Mínimos.** Dejaba sin efectos a quien solo había querido quitar los relámpagos.
+- **Un techo de brillo por efecto** (lo que decía el plan de la T03.1). Obligaba a repetir en JS la fórmula de cada efecto del shader y a recordar hacerlo con cada efecto nuevo. El limitador protege a todos a la vez.
+- **Estrellas que se abren en cruz en el primer tiempo.** Cada estrella vive en su celda de 3 × 3 con la posición al azar: una cruz se recortaba en el borde de la celda. Laten en brillo.
+- **Estrellas que se alargan en el clímax** ("salto a la velocidad de la luz"). Dirían lo mismo que las líneas de velocidad, que ya están en el clímax. En su lugar, la lluvia de estrellas (T03.3).
 - **Que quien sube suba imágenes o dibuje su escenario.** Moderación, derechos, un estilo que no casa con el pixel art y nada que garantice la legibilidad (T02).
 - **Elegir el escenario por el título, la letra o con IA.** Sin modelos pesados en un servidor pequeño, con derechos de por medio y sin fiabilidad (T02).
 - **Historias de autor en el inventario de ambientes.** Pierden su sentido: la historia de One Day es de One Day (T02, decisión del user).

@@ -37,6 +37,9 @@ export function createScenery(viewport, scene, opts = {}) {
 
     /** Capas montadas (la forma de cada una: entities/scenery/index.js). */
     let layers = [];
+    /** Las mismas por su id: una capa puede apoyarse en otra (las barras del espectro, en su silueta). */
+    const byId = new Map();
+    const find = (id) => byId.get(id) ?? null;
     /** Elementos apagados desde el panel dev: sobreviven a un cambio de escena. */
     const hidden = new Set();
     let lastState = null;
@@ -68,11 +71,14 @@ export function createScenery(viewport, scene, opts = {}) {
      */
     function build(sceneDef) {
         for (const l of layers) l.dispose();
+        byId.clear();
         horizonRise = sceneDef.horizonRise ?? 0;
         layers = sceneDef.layers.map((def) => {
             const create = layerFactory(def.type);
             if (!create) throw new Error(`Scenery: la capa "${def.type}" de la escena "${sceneDef.id}" no está cargada`);
-            return create(def, { width: W, height: H, groundY, horizonRise, still });
+            const layer = create(def, { width: W, height: H, groundY, horizonRise, still, find });
+            byId.set(def.id, layer);
+            return layer;
         });
         layers.forEach((l, i) => container.addChildAt(l.container, i));
         for (const id of hidden) for (const l of layers) l.setVisible(id, false);
@@ -163,13 +169,13 @@ export function createScenery(viewport, scene, opts = {}) {
         },
 
         /**
-         * (efecto, Ola 5) Pulso del beat sobre las capas que lo tienen (la línea
-         * del suelo).
-         * @param {number} pulse      [0,1], 1 en el golpe.
-         * @param {number} intensity  [0,1] intensidad del tramo.
+         * (efectos, T03.1) El fotograma de los efectos para las capas que pintan
+         * alguno: el pulso del suelo, el espectro en la silueta o en el mar. Cada
+         * capa lee el nivel de SU efecto (lo decide el director, fx/director.js).
+         * @param {{ levels: Record<string, number>, colors: { warm: number[], cool: number[] }, signals: import('../fx/signals.js').FxSignals, spectrum: ReturnType<import('../fx/spectrum.js').createSpectrum> }} fx
          */
-        setPulse(pulse, intensity) {
-            for (let i = 0; i < layers.length; i++) layers[i].setPulse?.(pulse, intensity);
+        setFx(fx) {
+            for (let i = 0; i < layers.length; i++) layers[i].setFx?.(fx);
         },
     };
 }

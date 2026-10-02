@@ -9,6 +9,11 @@
 //     astro que titilan, cortos en el horizonte y anchos cerca de la orilla. El
 //     del sol se alarga y se enciende con el sol bajo y se apaga cuando se pone.
 //
+// Efecto 'spectrum' (T03.2): el mar por bandas. Cada fila de crestas se aviva con
+// una banda de lo que suena: los graves en la orilla, los agudos en el horizonte.
+// Son los mismos guiones de luz de siempre (finos, como las estrellas), más
+// encendidos: el mar no cambia de color, respira con la música.
+//
 // Es una capa Pixi y no parte del shader: el mar se sigue viendo con
 // prefers-reduced-motion (sin shader) y su color es el que mide el guardián de
 // legibilidad (scenes/backdrops.js). Se carga bajo demanda con la escena.
@@ -27,6 +32,9 @@ const CREST_FRAME_S = 0.75;
 const GLINT_ROWS = 18;
 const GLINT_FRAME_S = 0.14;
 const GLINT_SHOWN = 0.8;
+
+/** El mar por bandas (T03.2): cuánto se aviva una fila de crestas con su banda a tope y cuánta luz gana. */
+const CREST_FX = Object.freeze({ boost: 1.3, add: 0.3 });
 
 /** Distancia (0 horizonte … 1 orilla) de lo que ocupa la fracción `f` del mar en pantalla. */
 const depthAt = (f, k) => Math.pow(f, k);
@@ -127,10 +135,24 @@ export function createSeaLayer(def, view) {
     let crestsOn = true;
     let glintOn = view.still !== true;
     const tmp = [0, 0, 0];
+    /** El mar por bandas: nivel del efecto y el nivel de cada fila (de la orilla al horizonte). */
+    let fxLevel = 0;
+    const fxBands = new Float32Array(crestRows);
 
     function applyCrests() {
         const amt = crestsOn ? crestAmt : 0;
-        crestsBox.visible = amt > 0;
+        const fx = crestsOn ? fxLevel : 0;
+        crestsBox.visible = amt > 0 || fx > 0.004;
+        if (fx > 0.004) {
+            // Fila j: 0 el horizonte (agudos) … la última, la orilla (graves).
+            for (let j = 0; j < crests.length; j++) {
+                const c = crests[j];
+                const band = fxBands[crests.length - 1 - j] * fx;
+                c.s.alpha = Math.min(1, amt * (0.45 + 0.55 * c.depth) * (1 + CREST_FX.boost * band) + CREST_FX.add * band);
+            }
+            crestApplied = -1;
+            return;
+        }
         if (amt === crestApplied) return;
         for (const c of crests) c.s.alpha = amt * (0.45 + 0.55 * c.depth);
         crestApplied = amt;
@@ -246,6 +268,17 @@ export function createSeaLayer(def, view) {
             applyCrests();
             setGlint(sunGlint, state.sea.sunGlint, state.sun.pos[0]);
             setGlint(moonGlint, state.sea.moonGlint, state.moon.pos[0]);
+        },
+        /**
+         * (efecto 'spectrum') El mar por bandas.
+         * @param {{ levels: Record<string, number>, spectrum: ReturnType<import('../../fx/spectrum.js').createSpectrum> }} fx
+         */
+        setFx(fx) {
+            const level = fx.levels.spectrum;
+            if (level <= 0.004 && fxLevel <= 0.004) return;
+            fxLevel = level;
+            if (level > 0.004) fx.spectrum.groups(crestRows, fxBands);
+            applyCrests();
         },
         setVisible(id, on) {
             if (id === def.id) container.visible = on;

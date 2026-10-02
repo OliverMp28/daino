@@ -35,6 +35,7 @@
  * @property {number} filterResolution  Multiplicador sobre la resolución de la app.
  * @property {number} particleRatio     Fracción del pool de motas que se anima [0,1].
  * @property {boolean} sceneryAnimated  Si el scenery avanza este frame.
+ * @property {'cheap'|'mid'|'heavy'} fxCost  Hasta qué coste se pintan los efectos (fx/registry.js).
  */
 
 /**
@@ -110,12 +111,15 @@ export const RENDER_PROFILES = Object.freeze({
  * el presupuesto del estado, así que la relación entre estados se mantiene:
  * "Baja" sigue dando más a PLAYING que a MENU.
  *
- * @type {Record<string, { label: string, resolutionScale: number, particleScale: number, fpsCap: number }>}
+ * `fxCost` (T03.1): el efecto más caro que se pinta en ese tier (cada efecto
+ * declara su coste en fx/registry.js). El tier bajo se queda con los baratos.
+ *
+ * @type {Record<string, { label: string, resolutionScale: number, particleScale: number, fpsCap: number, fxCost: 'cheap'|'mid'|'heavy' }>}
  */
 export const QUALITY_TIERS = Object.freeze({
-    high:   Object.freeze({ label: 'Alta',  resolutionScale: 1,    particleScale: 1,   fpsCap: 0 }),
-    medium: Object.freeze({ label: 'Media', resolutionScale: 0.7,  particleScale: 0.6, fpsCap: 60 }),
-    low:    Object.freeze({ label: 'Baja',  resolutionScale: 0.45, particleScale: 0.25, fpsCap: 30 }),
+    high:   Object.freeze({ label: 'Alta',  resolutionScale: 1,    particleScale: 1,   fpsCap: 0,  fxCost: 'heavy' }),
+    medium: Object.freeze({ label: 'Media', resolutionScale: 0.7,  particleScale: 0.6, fpsCap: 60, fxCost: 'mid' }),
+    low:    Object.freeze({ label: 'Baja',  resolutionScale: 0.45, particleScale: 0.25, fpsCap: 30, fxCost: 'cheap' }),
 });
 
 /** Orden de degradación del tier adaptativo, de mejor a peor. */
@@ -150,5 +154,6 @@ export function resolveBudget(name, tier = 'high') {
         filterResolution: base.filterResolution * q.resolutionScale,
         particleRatio: base.particleRatio * q.particleScale,
         sceneryAnimated: base.sceneryAnimated,
+        fxCost: q.fxCost,
     };
 }

@@ -15,9 +15,8 @@
 //     el body muestra el degradado CSS y el canvas pinta la escena quieta.
 //
 // API para el resto del módulo: attachAudio/detachAudio, getLayers, getTicker,
-// getView (vista del mundo), setWorldSpeed (scroll del scenery), setBeatPulse
-// (uniform uBpmPulse del shader — GameSession lo calcula del BPM detectado +
-// audioTime), setSpeedFx (líneas de velocidad).
+// getView (vista del mundo), setWorldSpeed (scroll del scenery), setMusic (lo que
+// la partida sabe de la música en este fotograma) y los efectos (ver abajo).
 //
 // Tamaños de pantalla (Sep 2026): scenery, líneas de velocidad, juego y motas
 // cuelgan de `worldRoot`, escalado por la vista del mundo (systems/worldView.js):
@@ -30,6 +29,12 @@
 // menú usa la de la escena; cada frame en que cambia, scenes/skyModel.js la
 // convierte en el cielo del shader y el color de las capas del escenario.
 // `setAudioFxEnabled(false)` (panel dev) deja ver el escenario sin los efectos.
+//
+// Efectos (T03.1): el engine es dueño de las SEÑALES (fx/signals.js: lo que suena,
+// lo que empuja la partida con `setMusic`, la hora del cielo) y del DIRECTOR
+// (fx/director.js), que decide cuánto se ve cada efecto. Cada fotograma: señales →
+// director → pintores (el shader con fx/skyAmounts.js, las capas del escenario,
+// las motas y las líneas de velocidad). Nada más decide si un efecto se ve.
 //
 // Escena por nivel (T02): AppController carga la escena del nivel
 // (`loadScene`, que descarga sus capas si no van en el bundle) y la pone al
@@ -46,6 +51,12 @@ import {
 
 import { createAudioFilter, FFT_BINS } from './shaders/audioFilter.js';
 import { computeBands } from './audio/features.js';
+import { createFxDirector } from './fx/director.js';
+import { FX_LIMIT } from './fx/limiter.js';
+import { DEFAULT_FX_PREF, FX_COSTS } from './fx/registry.js';
+import { applyMusicFrame, clearMusicSignals, createFxSignals, readSkySignals } from './fx/signals.js';
+import { createSkyAmounts, skyAmounts } from './fx/skyAmounts.js';
+import { createSpectrum } from './fx/spectrum.js';
 import { createParticleLayer } from './entities/ParticleLayer.js';
 import { createScenery } from './entities/Scenery.js';
 import { layerTypesReady, loadLayerTypes } from './entities/scenery/index.js';
@@ -78,7 +89,18 @@ let speedLines = null;     // líneas de velocidad (null con reduced motion)
 let isPaused = false;
 let timeAccum = 0;         // segundos desde init — siempre avanza salvo pausa
 let worldSpeed = SCENERY.menuSpeed;  // px/s del scroll del scenery
-let musicIntensity = 0;    // intensidad del tramo de la canción (Ola 5), 0 en el menú
+
+// --- Efectos (T03.1) ---
+/** Bins nativos del AnalyserNode (fftSize 2048): de ellos sale el espectro en barras. */
+const NATIVE_BINS = 1024;
+const fxSignals = createFxSignals();
+const fxDirector = createFxDirector();
+const fxAmounts = createSkyAmounts();
+const spectrum = createSpectrum({ bins: NATIVE_BINS });
+/** Lo que reciben los pintores del escenario cada fotograma (el mismo objeto: no guardarlo). */
+const fxFrame = { levels: fxDirector.levels, colors: fxDirector.colors, signals: fxSignals, spectrum };
+/** Preferencia del jugador ("Efectos visuales" de AJUSTES); con reduced motion, la mínima. */
+let fxPref = DEFAULT_FX_PREF;
 
 // --- Escenario (T01) ---
 let scene = resolveScene(DEFAULT_SCENE);
@@ -190,7 +212,17 @@ export async function startEngine(mountTarget = document.body) {
         if (audioFilter) {
             // uFrame y uCell: el sol es un círculo y las estrellas son celdas del
             // arte en cualquier formato (antes se estiraban con la pantalla).
-            audioFilter.setUniforms({ frame: [w, h], cell: next.cellPx });
+            // uFxBand: dónde acaba la franja jugable en pantalla (el limitador de
+            // los efectos, fx/limiter.js).
+            audioFilter.setUniforms({
+                frame: [w, h],
+                cell: next.cellPx,
+                band: [
+                    (next.screenGroundY - FX_LIMIT.playTopPx * next.scale) / h,
+                    (FX_LIMIT.softPx * next.scale) / h,
+                    FX_LIMIT.cap,
+                ],
+            });
         }
         applyHorizon();
         worldRoot.scale.set(next.scale);
@@ -213,6 +245,7 @@ export async function startEngine(mountTarget = document.body) {
 
     // Presupuesto inicial (MENU). Se aplica DESPUÉS de crear el filtro y la
     // capa de partículas: `applyBudget` toca ambos.
+    fxDirector.configure({ scene, pref: REDUCED_MOTION ? 'min' : fxPref });
     applyBudget();
     watchModals();
 
@@ -296,6 +329,8 @@ function applyBudget() {
     speedLines?.setActiveRatio(budget.particleRatio);
     // La lluvia y la nieve del escenario (T02.3), con el mismo presupuesto.
     scenery?.setDetail(budget.particleRatio);
+    // Efectos (T03.1): el tier de calidad dice hasta qué coste se pintan.
+    fxDirector.configure({ costRank: FX_COSTS.indexOf(budget.fxCost) });
 }
 
 /**
@@ -390,9 +425,6 @@ function tick(ticker) {
 
     monitorPerformance(ticker.deltaMS);
 
-    // Energía de la canción para partículas (0 en idle/menú).
-    let rms = 0;
-
     // Scenery: vivo salvo reduced motion o presupuesto que lo congele
     // (LOADING, PAUSED, modal abierto).
     if (!REDUCED_MOTION && budget.sceneryAnimated) {
@@ -401,32 +433,39 @@ function tick(ticker) {
     }
     updateSky();
 
+    // ---------- Efectos (T03.1): señales → director → pintores ----------
+    // Lo que suena ahora. Sin audio (el menú) las señales de la música están a
+    // cero y el director deja a cero todo lo que no es ambiente.
+    if (audio !== null) {
+        const bytes = audio.getFrequencyData(NATIVE_BINS);
+        computeBands(bytes, fxSignals.live);
+        fxSignals.live.rms = audio.getRMS();
+        spectrum.update(bytes, dt);
+        if (DEBUG_MODE === 1 && audioFilter) {
+            audioFilter.fftBuffer.set(audio.getFrequencyData(FFT_BINS));
+            audioFilter.uploadFft();
+        }
+    }
+    fxDirector.update(fxSignals, dt);
+    const levels = fxDirector.levels;
+
     if (audioFilter) {
         // uTime y uDebugMode se actualizan SIEMPRE — alimentan la escena idle
         // (estrellas, respiración del sol) y los modos ?debug=N.
         audioFilter.setUniforms({ time: timeAccum, debugMode: DEBUG_MODE });
-
-        // FFT/bands solo cuando hay audio atachado. En idle el shader fuerza
-        // a 0 los reactivos vía uShaderMode (branch GLSL).
-        if (audio !== null && fxEnabled) {
-            const fftSlice = audio.getFrequencyData(FFT_BINS);
-            audioFilter.fftBuffer.set(fftSlice);
-            audioFilter.uploadFft();
-
-            const bands = computeBands(fftSlice);
-            rms = audio.getRMS();
-            audioFilter.setUniforms({
-                rms,
-                bass: bands.bass,
-                mid: bands.mid,
-                high: bands.high,
-            });
-        }
+        audioFilter.setFx(skyAmounts(levels, fxSignals, fxAmounts), fxDirector.colors);
     }
+    scenery.setFx(fxFrame);
+    speedLines?.setLevel(fxSignals.speed.lines * levels.speedLines);
 
     // Las motas suben con la energía de lo que suena y más en los tramos que
-    // empujan: en una estrofa flotan, en el clímax vuelan.
-    if (particleLayer.tick) particleLayer.tick(dt, rms * (0.6 + 0.9 * musicIntensity));
+    // empujan: en una estrofa flotan, en el clímax vuelan. Su nivel dice cuánto
+    // se ven (con lluvia o nieve, o si la escena no las quiere, se van).
+    if (particleLayer.tick) {
+        particleLayer.alpha = Math.min(1, levels.motes);
+        particleLayer.visible = levels.motes > 0.004;
+        if (particleLayer.visible) particleLayer.tick(dt, fxSignals.live.rms * (0.6 + 0.9 * fxSignals.song.intensity));
+    }
 }
 
 // --------------------------- Escenario (T01) ---------------------------
@@ -456,6 +495,9 @@ function updateSky() {
         skyStateAt(hour, scene, skyState);
         if (audioFilter) audioFilter.setSky(skyState);
         scenery.light(skyState);
+        // El cielo también es una señal de los efectos: el sol late si hay sol,
+        // las estrellas si es de noche, las motas se van si llueve.
+        readSkySignals(skyState, scene, fxSignals, view?.height);
         cssSkyPending = audioFilter === null;
     }
     // Sin shader, el cielo es el degradado CSS del body: como mucho 2 veces por
@@ -481,14 +523,13 @@ export function setSkyHour(hour) {
 
 /**
  * Horizonte del cielo de la escena en pantalla (T02.2): uv del shader (uHorizon)
- * y variable CSS del degradado de reduced motion. La línea del suelo (uGround)
- * es la de los efectos, que no cambian con la escena. En la Cordillera coinciden.
+ * y variable CSS del degradado de reduced motion.
  */
 function applyHorizon() {
     if (!view) return;
     const h = view.screenHeight;
     const skyY = view.screenGroundY - (scene.horizonRise ?? 0) * view.scale;
-    audioFilter?.setUniforms({ horizon: skyY / h, ground: view.screenGroundY / h });
+    audioFilter?.setUniforms({ horizon: skyY / h });
     document.documentElement.style.setProperty('--daino-sky-horizon-offset', `${(h - skyY).toFixed(1)}px`);
 }
 
@@ -539,15 +580,8 @@ function applyScene(next) {
     scenery?.setScene(scene);
     applyHorizon();
     skyDirty = true;
-}
-
-/**
- * Destellos del escenario sí/no (T02.3: los relámpagos de la Tormenta). Lo
- * decide "Reducir efectos visuales" de AJUSTES; con reduced motion nunca hay.
- * @param {boolean} on
- */
-export function setSceneryFlashes(on) {
-    scenery?.setFlashes(on);
+    // La escena manda sobre los efectos (su política `fx`, fx/policy.js).
+    fxDirector.configure({ scene });
 }
 
 /** Enciende o apaga un elemento del escenario por su id (panel dev). */
@@ -559,41 +593,58 @@ export function setSkyElementVisible(id, visible) {
 
 /**
  * Efectos de la música sí/no (panel dev): sin ellos se ve el escenario solo, con
- * su hora. Apaga lo que late en el shader, la línea del suelo, las líneas de
- * velocidad y la energía de las motas.
+ * su hora. Es el maestro del director: todos los niveles a cero.
  */
 export function setAudioFxEnabled(enabled) {
     fxEnabled = enabled;
-    if (!enabled) {
-        audioFilter?.setMode('idle');
-        scenery?.setPulse(0, 0);
-        speedLines?.setLevel(0);
-        musicIntensity = 0;
-    } else if (audio !== null) {
-        audioFilter?.setMode('reactive');
-    }
+    fxDirector.setOverrides({ master: enabled });
 }
 
 /**
- * Conecta un AudioEngine al ticker. Llamar tras el primer drop de MP3.
- * Idempotente — reemplaza el audio anterior si lo había. Pone el shader en
- * modo reactive: el branch GLSL pasa a leer FFT/bands/BPM en cada frame.
+ * Preferencia del jugador para los efectos ("Efectos visuales" de AJUSTES):
+ * 'full' | 'soft' | 'min' (fx/registry.js, FX_PREFS). Con reduced motion manda
+ * la mínima. También decide los destellos del escenario (los relámpagos): solo
+ * se apagan con la mínima.
+ *
+ * @param {string} pref
+ */
+export function setFxPref(pref) {
+    fxPref = pref;
+    fxDirector.configure({ pref: REDUCED_MOTION ? 'min' : pref });
+    scenery?.setFlashes(pref !== 'min');
+}
+
+/**
+ * Panel dev "Efectos": apagar, ver solo uno o cambiar la intensidad de un efecto
+ * (fx/director.js, setOverrides).
+ */
+export function setFxOverrides(overrides) {
+    fxDirector.setOverrides(overrides);
+}
+
+/**
+ * Conecta un AudioEngine al ticker. Idempotente — reemplaza el audio anterior si
+ * lo había. Desde aquí hay partida: las señales en vivo se leen cada fotograma.
  */
 export function attachAudio(audioEngine) {
     audio = audioEngine;
-    if (audioFilter) audioFilter.setMode(fxEnabled ? 'reactive' : 'idle');
+    fxSignals.playing = true;
+    if (audioFilter) audioFilter.setMode('reactive');
 }
 
 /**
- * Desconecta el audio y vuelve el shader a idle (el branch GLSL fuerza los
- * reactivos a 0 — el menú se ve idéntico al primer load, sin contaminación).
+ * Desconecta el audio: las señales de la música a cero y los efectos fuera sin
+ * fundido (el menú se ve idéntico al primer load, sin contaminación).
  */
 export function detachAudio() {
     audio = null;
-    musicIntensity = 0;
+    clearMusicSignals(fxSignals);
+    fxDirector.reset();
+    spectrum.reset();
     if (audioFilter) audioFilter.setMode('idle');
-    if (scenery) scenery.setPulse(0, 0);
+    scenery?.setFx(fxFrame);
     speedLines?.setLevel(0);
+    speedLines?.setClearance(0);
 }
 
 /**
@@ -628,50 +679,27 @@ export function setAmbientDinoSkin(skinId) {
 }
 
 /**
- * Pulso de beat [0,1] para el shader (uBpmPulse). GameSession lo calcula
- * cada frame como exp-decay de la fase del beat (BPM detectado + audioTime).
+ * Lo que la partida sabe de la música en este fotograma (fx/signals.js): el pulso
+ * (`pulse`, `worldPulse` con el contratiempo de las subidas, `accent` en el
+ * primer tiempo), la estructura (`intensity`, `climax`, `build`, `calm`,
+ * `hue`, `flash`), las líneas de velocidad que pide el nivel (`lines`) y el
+ * silencio de una historia (`hush`). Solo cambian las claves que se pasan. El
+ * director decide qué hace cada efecto con ello.
+ *
+ * `clearAbove` (Ola 6a) no es una señal sino geometría: sube la franja libre de
+ * líneas de velocidad mientras el pasillo de un modo está en pantalla (una raya
+ * a la altura del techo se leería como un obstáculo). 0 vuelve a la de siempre.
+ *
+ * @param {Parameters<typeof applyMusicFrame>[1] & { clearAbove?: number }} frame
  */
-export function setBeatPulse(v) {
-    if (!fxEnabled) return;
-    if (audioFilter) audioFilter.setUniforms({ bpmPulse: v });
-    if (scenery) scenery.setPulse(v, musicIntensity);
+export function setMusic(frame) {
+    applyMusicFrame(fxSignals, frame);
+    if (frame.clearAbove !== undefined) speedLines?.setClearance(frame.clearAbove);
 }
 
-/**
- * Estado de la estructura de la canción (Ola 5). GameSession lo empuja cada
- * frame desde su director: intensidad del tramo, si es el clímax y el destello
- * de un drop; y (Ola 6c) la subida hacia un drop, la calma de un break y el
- * giro de color de los cambios de tonalidad. (El sol ya no se pone con el
- * progreso: lo lleva la hora del cielo, setSkyHour.)
- *
- * @param {{ intensity?: number, climax?: number, flash?: number, build?: number, calm?: number, hue?: number }} s
- */
-export function setMusicState(s) {
-    if (!fxEnabled) return;
-    if (s.intensity !== undefined) musicIntensity = s.intensity;
-    if (audioFilter) audioFilter.setUniforms(s);
-}
-
-/**
- * Velocidad que se VE (afinado de velocidad): intensidad [0,1] de las líneas
- * de velocidad y, en un acelerón, su ráfaga. GameSession lo empuja desde
- * `systems/speedCues.js`. Sin efecto con reduced motion.
- *
- * `clearAbove` (Ola 6a) sube la franja libre sobre el suelo mientras el pasillo
- * de un modo está en pantalla: una raya a la altura del techo se leería como un
- * obstáculo. 0 vuelve a la de siempre.
- *
- * @param {{ level?: number, burst?: boolean, clearAbove?: number }} s
- */
-export function setSpeedFx(s) {
-    if (!speedLines) return;
-    if (!fxEnabled) {
-        if (s.clearAbove !== undefined) speedLines.setClearance(s.clearAbove);
-        return;
-    }
-    if (s.level !== undefined) speedLines.setLevel(s.level);
-    if (s.clearAbove !== undefined) speedLines.setClearance(s.clearAbove);
-    if (s.burst) speedLines.burst();
+/** Ráfaga de líneas de velocidad en un acelerón, si el efecto se está viendo. */
+export function speedBurst() {
+    if (fxDirector.levels.speedLines > 0.5) speedLines?.burst();
 }
 
 function getApi() {
@@ -680,9 +708,15 @@ function getApi() {
         attachAudio,
         detachAudio,
         setWorldSpeed,
-        setBeatPulse,
-        setMusicState,
-        setSpeedFx,
+        setMusic,
+        speedBurst,
+        setFxPref,
+        setFxOverrides,
+        // Efectos (T03.1): niveles y colores que leen los pintores de la partida
+        // (objetos vivos: no guardarlos), y todo junto para el panel dev.
+        getFxLevels: () => fxDirector.levels,
+        getFxColors: () => fxDirector.colors,
+        getFx: () => ({ levels: fxDirector.levels, colors: fxDirector.colors, signals: fxSignals, spectrum, reasonOf: fxDirector.reasonOf, pref: fxPref }),
         setRenderPaused,
         setRenderProfile,
         setQualityTier,
@@ -692,7 +726,6 @@ function getApi() {
         setSkyHour,
         loadScene,
         setScene,
-        setSceneryFlashes,
         setSkyElementVisible,
         setAudioFxEnabled,
         // Escenario vigente y su hora (lo lee la GameSession para su plan y el

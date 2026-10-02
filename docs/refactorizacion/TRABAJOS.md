@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | **T01** | Escenario vivo: el cielo cuenta la canción (día → atardecer → noche con luna → amanecer) | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T01.1 ✅ niebla fuera · T01.2 ✅ ciclo del cielo · T01.3 ✅ luna · T01.4 ⬜ playtest | En curso (falta el playtest) |
 | **T02** | Escenas con personalidad e historia: ambientes que elige quien sube (Cordillera, Costa, Lluvia, Tormenta, Nieve, Ciudad de noche), su arco con la canción e historias de autor para oficiales (One Day: mar, barco y destello verde) | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T02.1 ✅ escena por nivel · T02.2 ✅ la Costa · T02.3 ✅ lluvia, tormenta y nieve · T02.4 ✅ ciudad de noche · T02.5 ✅ automático · T02.6 ✅ historias y One Day · T02.7+ ⬜ más historias | En curso (quedan más historias) |
-| **T03** | Efectos visuales al ritmo de la música (registro con nombre, panel "Efectos", reparto por canción) | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T03.1-T03.3 ⬜ | Pendiente |
+| **T03** | Efectos visuales al ritmo de la música: registro con nombre, un director que decide cuánto se ve cada uno, limitador que protege lo que se juega, la escena manda (One Day declara los suyos), el espectro en el paisaje y reparto por canción | [doc 11](11-Roadmap-Escenarios-Efectos.md) | T03.1 ✅ cimientos y control · T03.2 ✅ espectro en el paisaje y pulso por astro · T03.3 ⬜ identidad por canción (paletas, reparto, aurora) · T03.4 ⬜ playtest | En curso |
 
 ## Series anteriores (no se renumeran)
 

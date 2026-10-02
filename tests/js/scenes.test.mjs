@@ -160,7 +160,7 @@ test('el reflejo del sol: largo con el sol bajo, apagado cuando se ha puesto; el
 });
 
 test('las islas: sueltas, con los huecos en rachas; la cordillera de siempre no cambia', () => {
-    const far = SCENES.mountains.layers[0].params;
+    const far = SCENES.mountains.layers.find((l) => l.id === 'mountainsFar').params;
     const heights = ridgeHeights(40, far);
     heights.forEach((h, i) => assert.ok(h >= far.baseRise && h <= far.baseRise + far.jag, `punto ${i}`));
 

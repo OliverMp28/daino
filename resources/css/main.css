@@ -3179,6 +3179,78 @@ dialog.daino-rotate p { margin: 0 0 1.2rem; line-height: 1.45; color: color-mix(
 
 .daino-devtools__story .daino-devtools__button { text-align: left; }
 
+/* Efectos (T03.1): una fila por efecto con su interruptor, "solo", intensidad,
+   nivel en vivo y el motivo cuando no se ve. */
+.daino-devtools__fx {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
+    padding-top: 0.2rem;
+    border-top: 1px solid color-mix(in oklch, var(--color-daino-fg) 10%, transparent);
+}
+
+.daino-devtools__fx-family {
+    margin: 0.25rem 0 0;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: color-mix(in oklch, var(--color-daino-high) 70%, transparent);
+}
+
+.daino-devtools__fx-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    column-gap: 0.35rem;
+    row-gap: 0.1rem;
+}
+
+.daino-devtools__fx-row .daino-devtools__row { font-size: 0.76rem; }
+.daino-devtools__fx-row input[type="range"] { width: 100%; min-width: 0; accent-color: var(--color-daino-beat); }
+
+.daino-devtools__solo {
+    font: inherit;
+    font-size: 0.62rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 0.3rem;
+    border: 1px solid color-mix(in oklch, var(--color-daino-fg) 22%, transparent);
+    background: transparent;
+    color: color-mix(in oklch, var(--color-daino-fg) 70%, transparent);
+    cursor: pointer;
+}
+
+.daino-devtools__solo[data-on="true"] {
+    border-color: var(--color-daino-beat);
+    background: color-mix(in oklch, var(--color-daino-beat) 30%, transparent);
+    color: var(--color-daino-fg);
+}
+
+.daino-devtools__meter {
+    display: block;
+    width: 2.6rem;
+    height: 0.3rem;
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--color-daino-fg) 12%, transparent);
+    overflow: hidden;
+}
+
+.daino-devtools__meter i {
+    display: block;
+    width: 0;
+    height: 100%;
+    background: var(--color-daino-high);
+}
+
+.daino-devtools__why {
+    grid-column: 1 / -1;
+    margin: 0;
+    font-size: 0.64rem;
+    color: color-mix(in oklch, var(--color-daino-fg) 50%, transparent);
+}
+
+.daino-devtools__why:empty { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
     .daino-devtools__handle { transition: none; }
 }
