@@ -149,7 +149,8 @@ export function toSimModes(events) {
  *        Velocidad constante o perfil de velocidad del nivel (Ola 5).
  * @param {{ dt?: number, pressOffset?: (index: number) => number, modes?: Array<{ t: number, mode: string }>,
  *           holds?: Array<{ t: number, until: number }>, course?: ReturnType<typeof createFlightCourse> | null,
- *           triggers?: SimObstacle[], flightPlayer?: object | null, tapS?: number | null }} [opts]
+ *           triggers?: SimObstacle[], flightPlayer?: object | null, tapS?: number | null | ((index: number) => number | null),
+ *           minSpeedPxS?: number }} [opts]
  *        `pressOffset(i)` desplaza la pulsación del obstáculo i (segundos;
  *        negativo = se adelanta). Por defecto 0: jugador perfecto.
  *        `modes`: cambios de modo del nivel en orden (toSimModes). Sin ellos, se corre.
@@ -158,7 +159,13 @@ export function toSimModes(events) {
  *        `triggers` (Ola 6c): activadores del nivel (toSimTriggers).
  *        `flightPlayer`: cómo vuela el jugador virtual (virtualPlayer.FLIGHT_PLAYER por
  *        defecto: corrige mirando el túnel; null: a ciegas).
- *        `tapS`: saltar y agacharse con toques de esa duración en vez de mantener.
+ *        `tapS`: saltar y agacharse con toques de esa duración (por defecto el salto
+ *        es el arco base y el agachado se mantiene hasta que pasa); una función da
+ *        el gesto de cada obstáculo (virtualPlayer.js).
+ *        `minSpeedPxS`: la velocidad más lenta del trozo que se simula, si quien llama
+ *        la sabe (por defecto, la del nivel entero): de ella sale cuánto antes y
+ *        después de cada cruce se mira, y con la del principio de una canción un
+ *        trozo de su clímax se simulaba el doble de largo.
  * @returns {{ ok: true } | { ok: false, index: number, t: number, atSongTime: number }}
  */
 export function simulateRun(obstacles, speed, opts = {}) {
@@ -192,7 +199,7 @@ export function simulateRun(obstacles, speed, opts = {}) {
     // cruzan en ±(margen) segundos. Dos punteros sobre la lista ordenada — el
     // coste por paso es O(obstáculos cercanos), no O(total). Con la velocidad
     // más baja del perfil, la ventana más holgada.
-    const reachS = 400 / profile.minSpeed;
+    const reachS = 400 / (opts.minSpeedPxS ?? profile.minSpeed);
     let lo = 0;
     let hi = 0;
 
@@ -404,6 +411,7 @@ export function validateChart(chart, opts = {}) {
 
 /** Resolución del barrido de `timingMarginsS`: 5 ms, por debajo de un frame. */
 const WINDOW_SCAN_STEP_S = 0.005;
+const WINDOW_SCAN_COARSE_S = 0.04;
 const WINDOW_SCAN_MAX_S = 0.5;
 const marginCache = new Map();
 const NO_MARGIN = Object.freeze({ early: 0, late: 0 });
@@ -442,18 +450,22 @@ export function timingWindowS(kind, speedPxS) {
  * (`early`) y retrasar (`late`) la pulsación de una acción aislada. Un
  * obstáculo exige tanta precisión como su lado más estrecho.
  *
+ * Con `holdS`, los de quien mantiene el salto ese tiempo (más alto y más largo:
+ * perdona pulsar pronto). Solo cambia algo en los saltos de correr.
+ *
  * @param {string} kind
  * @param {number} speedPxS
+ * @param {number} [holdS]
  * @returns {{ early: number, late: number }}  0 y 0 si ni la pulsación exacta sobrevive.
  */
-export function timingMarginsS(kind, speedPxS) {
+export function timingMarginsS(kind, speedPxS, holdS = 0) {
     // Un activador no se supera ni se falla por sí solo: lo mide el obstáculo que lo acompaña.
     if (OBSTACLE_KIND[kind]?.trigger !== undefined) return NO_MARGIN;
-    const key = `${kind}@${Math.round(speedPxS)}`;
+    const key = holdS > 0 ? `${kind}@${Math.round(speedPxS)}@${holdS}` : `${kind}@${Math.round(speedPxS)}`;
     const cached = marginCache.get(key);
     if (cached !== undefined) return cached;
     // Los modos que lo saben calcular sin simular (un salto al correr) lo dan directo.
-    const known = OBSTACLE_KIND[kind] !== undefined ? movementMode(OBSTACLE_KIND[kind].mode ?? 'run').marginsS?.(OBSTACLE_KIND[kind], Math.round(speedPxS)) : null;
+    const known = OBSTACLE_KIND[kind] !== undefined ? movementMode(OBSTACLE_KIND[kind].mode ?? 'run').marginsS?.(OBSTACLE_KIND[kind], Math.round(speedPxS), holdS) : null;
     if (known !== null && known !== undefined) {
         const fast = { early: Math.min(WINDOW_SCAN_MAX_S, Math.round(known.early * 1000) / 1000), late: Math.min(WINDOW_SCAN_MAX_S, Math.round(known.late * 1000) / 1000) };
         marginCache.set(key, fast);
@@ -472,18 +484,39 @@ export function timingMarginsS(kind, speedPxS) {
     }
     const obstacles = toSimObstacles(events);
     const target = obstacles.findIndex((o) => o.kind === kind && o.t === 5);
-    const survives = (offset) => simulateRun(obstacles, speedPxS, { modes, pressOffset: (i) => (i === target ? offset : 0) }).ok;
+    const tapS = holdS > 0 ? (i) => (i === target ? holdS : null) : null;
+    const survives = (offset) => simulateRun(obstacles, speedPxS, { modes, tapS, pressOffset: (i) => (i === target ? offset : 0) }).ok;
 
     const out = { early: 0, late: 0 };
     if (target >= 0 && survives(0)) {
-        const steps = Math.round(WINDOW_SCAN_MAX_S / WINDOW_SCAN_STEP_S);
-        let early = 0;
-        while (early < steps && survives(-(early + 1) * WINDOW_SCAN_STEP_S)) early++;
-        let late = 0;
-        while (late < steps && survives((late + 1) * WINDOW_SCAN_STEP_S)) late++;
-        out.early = Math.round(early * WINDOW_SCAN_STEP_S * 1000) / 1000;
-        out.late = Math.round(late * WINDOW_SCAN_STEP_S * 1000) / 1000;
+        out.early = scanSide((offset) => survives(-offset));
+        out.late = scanSide(survives);
     }
     marginCache.set(key, out);
     return out;
+}
+
+/**
+ * Hasta dónde llega el margen por un lado: a pasos largos hasta el primer fallo
+ * y, entre el último acierto y ese fallo, por bisección hasta el paso fino. Un
+ * barrido fino de punta a punta eran ~200 simulaciones por kind y velocidad (los
+ * cristales, que no tienen fórmula: medio segundo por chart).
+ */
+function scanSide(survives) {
+    let ok = 0;
+    let fail = WINDOW_SCAN_MAX_S;
+    for (let off = WINDOW_SCAN_COARSE_S; off <= WINDOW_SCAN_MAX_S + 1e-9; off += WINDOW_SCAN_COARSE_S) {
+        if (!survives(off)) {
+            fail = off;
+            break;
+        }
+        ok = off;
+    }
+    if (ok >= WINDOW_SCAN_MAX_S - 1e-9) return WINDOW_SCAN_MAX_S;
+    while (fail - ok > WINDOW_SCAN_STEP_S) {
+        const mid = (ok + fail) / 2;
+        if (survives(mid)) ok = mid;
+        else fail = mid;
+    }
+    return Math.round(((ok + fail) / 2) * 1000) / 1000;
 }

@@ -29,7 +29,7 @@ export const RING_HAZARDS = Object.freeze(
         .filter((k) => {
             const d = OBSTACLE_KIND[k];
             return d.mode === 'run' && d.action === 'jump' && d.altitude === 0 && d.trigger === undefined
-                && (d.surface ?? 'floor') === 'floor';
+                && (d.surface ?? 'floor') === 'floor' && d.gate !== true;
         })
         .sort((a, b) => (OBSTACLE_KIND[a].w - OBSTACLE_KIND[b].w) || (a < b ? -1 : 1)),
 );

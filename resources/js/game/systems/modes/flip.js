@@ -16,6 +16,7 @@
 
 import { DINO_SIZE, FLIP_MODE, JUMP_BUFFER_S, MODE_COLORS, PHYSICS_STEP_S } from '../../config.js';
 import { FIGURE, ceilingYOf, obstacleHitbox, standingHitbox } from '../geometry.js';
+import { trackMarginsS } from '../trackMargins.js';
 import { BODY_EVENT, bodyState } from './body.js';
 
 function flip(body) {
@@ -117,9 +118,60 @@ export const FLIP_MODE_DEF = Object.freeze({
      * los cristales afilados de los acentos llegan antes tras el golpe.
      */
     leadS(def) {
-        return clearTimeS(def) + (def.leadMarginS ?? FLIP_MODE.leadMarginS);
+        return def.actionLeadS ?? clearTimeS(def) + (def.leadMarginS ?? FLIP_MODE.leadMarginS);
+    },
+
+    /**
+     * Márgenes de error de una inversión aislada ante un cristal, sin simular una
+     * partida (systems/trackMargins.js): el viaje de una superficie a la otra se
+     * integra una vez. Simétrico: lo que cuelga del techo se mide como si
+     * estuviera en el suelo (el Dino sale de la superficie del cristal).
+     *
+     * Un cristal suelto no limita pulsar pronto (el margen llega al tope del
+     * barrido); una pinza sí: tiene otro cristal en la superficie de llegada.
+     *
+     * @param {object} def
+     * @param {number} speedPxS
+     * @returns {{ early: number, late: number } | null}
+     */
+    marginsS(def, speedPxS) {
+        if (def.action !== 'flip' || !(speedPxS > 0)) return null;
+        const floor = def.surface === 'ceiling' ? floorTwin(def) : def;
+        return trackMarginsS(floor, TRACK_GROUND - floor.h - floor.altitude, speedPxS, this.leadS(def), flipTrack());
     },
 });
+
+const TRACK_GROUND = 1000;
+
+/** El mismo kind apoyado en el suelo (para medir por simetría lo que cuelga del techo). */
+const twins = new WeakMap();
+function floorTwin(def) {
+    let twin = twins.get(def);
+    if (twin === undefined) {
+        twin = { ...def, surface: 'floor' };
+        twins.set(def, twin);
+    }
+    return twin;
+}
+
+/** Rastro de una inversión desde el suelo hasta quedar apoyado en el techo (trackMargins.BodyTrack). */
+let flipTrackCache = null;
+function flipTrack() {
+    if (flipTrackCache !== null) return flipTrackCache;
+    const body = bodyState(TRACK_GROUND);
+    body.mode = 'flip';
+    const snapshot = () => ({ box: FLIP_MODE_DEF.hitbox(body, { x: 0, y: 0, w: 0, h: 0 }), figure: FLIP_MODE_DEF.figure(body) });
+    const rest = snapshot();
+    flip(body);
+    const steps = [];
+    for (let i = 0; i < 400; i++) {
+        FLIP_MODE_DEF.integrate(body, PHYSICS_STEP_S, TRACK_GROUND);
+        steps.push(snapshot());
+        if (body.grounded) break;
+    }
+    flipTrackCache = { rest, steps };
+    return flipTrackCache;
+}
 
 /**
  * Segundos desde que se invierte la gravedad apoyado en una superficie hasta

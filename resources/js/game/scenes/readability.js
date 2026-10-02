@@ -54,6 +54,9 @@ export const SPRITE_BODY = Object.freeze({
 /** Carácter del cuerpo de un sprite (las hileras de cactus son cactus). */
 export function spriteBody(sprite) {
     if (sprite.startsWith('cactusRow')) return 'G';
+    // El paso de medusa: su cactus ya lo mide el saguaro; aquí cuenta la medusa.
+    if (sprite.startsWith('gate')) return 'Z';
+    if (sprite.startsWith('pinch')) return 'P';
     return SPRITE_BODY[sprite] ?? null;
 }
 
@@ -71,12 +74,15 @@ export function playSubjects() {
         const sprite = def.sprites[0];
         const ch = spriteBody(sprite);
         if (ch === null) throw new Error(`readability: el sprite "${sprite}" (${kind}) no tiene color en SPRITE_BODY`);
-        const from = def.surface === 'ceiling' ? CORRIDOR_HEIGHT_PX - def.altitude - def.h : def.altitude;
-        const to = def.surface === 'ceiling' ? CORRIDOR_HEIGHT_PX - def.altitude : def.altitude + def.h;
-        const key = `${ch}:${from}:${to}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push({ id: kind, color: hexToRgb(PALETTE[ch]), min: ch === 'G' ? R.cactus : R.colored, from, to });
+        // Un kind que no llena su caja dice a qué alturas dibuja ese color (`drawn`).
+        for (const [low, high] of def.drawn ?? [[def.altitude, def.altitude + def.h]]) {
+            const from = def.surface === 'ceiling' ? CORRIDOR_HEIGHT_PX - high : low;
+            const to = def.surface === 'ceiling' ? CORRIDOR_HEIGHT_PX - low : high;
+            const key = `${ch}:${from}:${to}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ id: kind, color: hexToRgb(PALETTE[ch]), min: ch === 'G' ? R.cactus : R.colored, from, to });
+        }
     }
     // Los portales de modo, del suelo a lo alto del pasillo.
     for (const [mode, color] of Object.entries(MODE_COLORS)) {

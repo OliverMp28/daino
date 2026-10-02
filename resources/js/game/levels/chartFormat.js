@@ -122,9 +122,16 @@ export const CHART_FORMAT_VERSION = 5;
  * el Dino de pie ya no choca por el hueco sobre su lomo y el ptero, el grupo de
  * cactus y los cristales chocan por su dibujo, no por la caja que lo envuelve
  * (playtest de Oct 2026: se moría sin tocarse). Los márgenes de esos obstáculos
- * crecen un poco y el charter los vuelve a medir.
+ * crecen un poco y el charter los vuelve a medir. 15: la exigencia no depende
+ * del gesto — se mide con un jugador con práctica (±30 ms, que mantiene el salto
+ * donde le conviene) y la ponen sobre todo acentos de DOS lados: el paso de
+ * medusa al correr y la pinza de cristales en antigravedad, que castigan igual
+ * pulsar pronto que tarde, se mantenga o no (tercer playtest de la dificultad:
+ * "el Extremo lo pasé al segundo intento"; una hilera, mantenida, solo castigaba
+ * llegar tarde). Márgenes medidos sobre el rastro del salto (trackMargins.js) y
+ * exigencia de lo que no son acentos sumada acción a acción.
  */
-export const CHARTER_VERSION = 14;
+export const CHARTER_VERSION = 15;
 export const CHARTER_NAME = 'daino-charter';
 
 /** Techo defensivo de eventos: ~20 min de canción a 16 eventos/s. */

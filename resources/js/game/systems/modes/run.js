@@ -29,7 +29,8 @@ import {
     MODE_COLORS,
     PHYSICS_STEP_S,
 } from '../../config.js';
-import { DINO_CENTER_X, FIGURE, obstacleRects, standingHitbox } from '../geometry.js';
+import { FIGURE, standingHitbox } from '../geometry.js';
+import { trackMarginsS } from '../trackMargins.js';
 import { BODY_EVENT, bodyState } from './body.js';
 
 /** Caja de pie para preguntar si cabe levantarse (`settle`): no se asigna una por paso. */
@@ -208,72 +209,56 @@ export const RUN_MODE = Object.freeze({
     },
 
     /**
-     * Márgenes de error de un salto aislado sobre un obstáculo del suelo, sin
-     * simular una partida: el salto se integra UNA vez con el paso de la
-     * física (`jumpArc`) y el margen sale de cuándo va por encima del obstáculo
-     * frente a cuándo se solapan en horizontal, con los mismos hitboxes que la
-     * partida. Lo usa `playability.timingMarginsS` (el charter lo consulta miles
-     * de veces al elegir acentos). null para lo que no es un salto sobre algo
-     * apoyado en el suelo: eso se mide simulando.
+     * Márgenes de error de un salto aislado, sin simular una partida: el salto se
+     * integra UNA vez con el paso de la física (`jumpTrack`) y se pasa por delante
+     * del obstáculo con la colisión de la partida (systems/trackMargins.js). Lo usa
+     * `playability.timingMarginsS` (el charter lo consulta miles de veces al elegir
+     * acentos). null para lo que no es un salto sobre algo apoyado en el suelo:
+     * eso se mide simulando.
      *
-     * Contrastado con el barrido fino del simulador en 7 kinds a 350-1050 px/s:
-     * sesgo < 1 ms y error máximo 6 ms (tests/js/challenge.test.mjs).
+     * Vale para cualquier dibujo: una hilera (el salto tiene que cubrirla entera),
+     * un paso de medusa (algo encima antes del cactus: saltar pronto es subir contra
+     * ello). Contrastado con el barrido fino del simulador (tests/js/challenge.test.mjs).
+     *
+     * Con `holdS`, los del salto MANTENIDO ese tiempo: sube más y aterriza más
+     * tarde, así que perdona pulsar bastante antes, salvo que haya algo encima.
      *
      * @param {object} def
      * @param {number} speedPxS
+     * @param {number} [holdS]  Cuánto se mantiene el salto (0: un toque, el arco base).
      * @returns {{ early: number, late: number } | null}
      */
-    marginsS(def, speedPxS) {
+    marginsS(def, speedPxS, holdS = 0) {
         if (def.action !== 'jump' || (def.surface ?? 'floor') !== 'floor' || def.altitude !== 0 || !(speedPxS > 0)) return null;
-        const G = 1000;
-        const body = bodyState(G);
-        const dino = standingHitbox(body, { x: 0, y: 0, w: 0, h: 0 });
-        const arc = jumpArc();
-        const dt = PHYSICS_STEP_S;
-        const lead = this.leadS(def);
-        let early = Infinity;
-        let late = Infinity;
-        // Cada pieza del obstáculo (una sola caja, casi siempre) deja su margen;
-        // el salto tiene que salvarlas todas: manda la más estrecha por cada lado.
-        for (const box of obstacleRects(def, DINO_CENTER_X - def.w / 2, G - def.h)) {
-            // Con el centro del obstáculo sobre el del Dino, cuánto mundo le falta
-            // para dejar de solapar por cada lado: antes del cruce ya solapa desde
-            // `reachBefore` de distancia y sigue haciéndolo `reachAfter` después.
-            const reachBefore = dino.x + dino.w - box.x;
-            const reachAfter = box.x + box.w - dino.x;
-            // Va por encima mientras la base de su hitbox no baja de la cima de la pieza.
-            const clearY = box.y - (dino.y + dino.h - body.y);
-            let first = -1;
-            let last = -1;
-            for (let k = 0; k < arc.length; k++) {
-                if (arc[k] > clearY) continue;
-                if (first < 0) first = k;
-                last = k;
-            }
-            if (first < 0) return { early: 0, late: 0 };
-            // El paso k del arco se comprueba k pasos después de pulsar, más medio
-            // paso de media (la pulsación cae en cualquier punto de la rejilla). Al
-            // bajar, el choque lo detecta el paso SIGUIENTE al último por encima, y
-            // aterrizar lo retrasa otro medio: +2 pasos, medido.
-            late = Math.min(late, lead - (first + 0.5) * dt - reachBefore / speedPxS);
-            early = Math.min(early, (last + 2) * dt - lead - reachAfter / speedPxS);
-        }
-        return late < 0 || early < 0 ? { early: 0, late: 0 } : { early, late };
+        return trackMarginsS(def, TRACK_GROUND - def.h, speedPxS, this.leadS(def), jumpTrack(holdS));
     },
 });
 
-/** Y (esquina superior del box de pie) tras cada paso de un salto desde un suelo en 1000. */
-let arcCache = null;
-function jumpArc() {
-    if (arcCache !== null) return arcCache;
-    const body = bodyState(1000);
-    jump(body);   // sin mantener: el arco base
-    const ys = [];
+/** Suelo sobre el que se integran los rastros (solo cuentan las posiciones relativas a él). */
+const TRACK_GROUND = 1000;
+
+/**
+ * Rastro de un salto desde el suelo (trackMargins.BodyTrack): el arco base (un
+ * toque) o el de mantener la tecla `holdS` segundos.
+ */
+const trackCache = new Map();
+function jumpTrack(holdS = 0) {
+    const cached = trackCache.get(holdS);
+    if (cached !== undefined) return cached;
+    const body = bodyState(TRACK_GROUND);
+    const snapshot = () => ({ box: RUN_MODE.hitbox(body, { x: 0, y: 0, w: 0, h: 0 }), figure: RUN_MODE.figure(body) });
+    const rest = snapshot();
+    body.jumpKey = holdS > 0;
+    jump(body);
+    const steps = [];
     for (let i = 0; i < 400; i++) {
-        RUN_MODE.integrate(body, PHYSICS_STEP_S, 1000);
-        ys.push(body.y);
+        // Igual que en la partida: soltar llega antes de integrar su paso.
+        if (i * PHYSICS_STEP_S >= holdS) body.jumpHeld = false;
+        RUN_MODE.integrate(body, PHYSICS_STEP_S, TRACK_GROUND);
+        steps.push(snapshot());
         if (body.grounded) break;
     }
-    arcCache = Float64Array.from(ys);
-    return arcCache;
+    const track = { rest, steps };
+    trackCache.set(holdS, track);
+    return track;
 }

@@ -72,17 +72,20 @@ export const FLIGHT_PLAYER = Object.freeze({
  *        del validador la acortan y la alargan.
  * @param {Array<{ t: number, until: number }>} [holds]  Notas mantenidas, en orden.
  * @param {{ course?: { spans: Array<{ tIn: number, tOut: number, points: Array<{ t: number, alt: number }> }> } | null,
- *           player?: typeof FLIGHT_PLAYER | null, tapS?: number | null }} [flight]
+ *           player?: typeof FLIGHT_PLAYER | null, tapS?: number | null | ((index: number) => number | null) }} [flight]
  *        Con `course` (el túnel del nivel), las notas se vuelan mirándolo con
  *        `player` (FLIGHT_PLAYER por defecto; null = a ciegas). Sin él, a ciegas.
  *        `tapS`: saltar y agacharse son toques de esa duración (por defecto se
- *        mantiene el agachado hasta que pasa el obstáculo y el salto no se suelta).
+ *        mantiene el agachado hasta que pasa el obstáculo y el salto se suelta en
+ *        el acto: el arco base). Una función da el gesto de cada obstáculo: así
+ *        juega quien mantiene solo los saltos que le conviene (challenge.js).
  * @returns {ScriptedInput[]}  Ordenado por `at` (estable).
  */
 export function virtualPlayerScript(obstacles, profile, pressOffset = () => 0, holds = [], flight = {}) {
-    const tapS = flight.tapS ?? null;
+    const tapOf = typeof flight.tapS === 'function' ? flight.tapS : () => flight.tapS ?? null;
     const presses = obstacles.map((o, index) => {
         const at = o.t + pressOffset(index);
+        const tapS = tapOf(index) ?? null;
         // Sin `tapS` suelta en el mismo instante: el arco base, con el que se valida todo.
         if (o.def.action !== 'duck') return { at, input: 'jump', index, releaseAt: tapS === null ? at : at + tapS };
         return { at, input: 'duckStart', index, releaseAt: tapS === null ? o.cross + (o.def.w / 2 + DUCK_HOLD_MARGIN_PX) / profile.speedAt(o.cross) : at + tapS };

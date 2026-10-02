@@ -5,8 +5,9 @@
 //   - CUÁNTO se llena cada nivel del arco (acciones por minuto en reposo,
 //     calma, groove, empuje y clímax), siempre sobre golpes que suenan.
 //   - CUÁNTO EXIGEN los acentos (accents.js): cuántos golpes fuertes llevan una
-//     variante con menos margen, cuánto margen como mínimo y cuánta exigencia
-//     por minuto deben sumar para el jugador de referencia (challenge.js).
+//     variante con menos margen, cuánto margen como mínimo, cuánta exigencia
+//     deben sumar en la canción para el jugador de referencia (challenge.js) y
+//     cuántos pueden ser de DOS lados (pasos de medusa, pinzas de cristales).
 //   - CON QUÉ TOLERANCIA debe poder superarse: un nivel Relajado se supera
 //     pulsando con ±80 ms de error; uno Extremo exige ±40 ms. El validador
 //     juega el chart con ese margen y elimina lo que no cabe.
@@ -50,9 +51,10 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  * @property {number} toleranceS    Error humano con el que el chart debe superarse.
  * @property {number} minGapS       Hueco mínimo entre dos acciones cualesquiera.
  * @property {number} maxRestS      Silencio de juego máximo mientras la música suena (en un tramo de reposo, × CHARTER_RULES.restLevelFactor).
- * @property {{ duck: number, accent: number, offbeat: number, sixteenth?: number, combo: number, ring?: number }} unlock
+ * @property {{ duck: number, accent: number, offbeat: number, sixteenth?: number, combo: number, ring?: number, gate?: number }} unlock
  *           Etapa (STAGE) desde la que existe cada mecánica: agacharse, obstáculos
- *           de acento, contratiempos, semicorcheas, combinaciones rápidas y anillos.
+ *           de acento, contratiempos, semicorcheas, combinaciones rápidas, anillos y
+ *           acentos de dos lados.
  * @property {number} speedAmp      Cuánto de la aceleración por marchas e intensidad se aplica.
  * @property {number} baseSpeed     Multiplica la velocidad base que sale del tempo.
  * @property {number} maxSpeedPxS   Techo de velocidad de la dificultad (nunca por encima de SPEED_RULES.maxSpeedPxS).
@@ -68,14 +70,17 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  *           Una semicorchea ("e" o "a") se juega con un golpe de al menos
  *           `strength` y `ratio` veces el del pulso y el contratiempo que tiene al
  *           lado: el bombo sincopado, no el charles. null: nunca.
- * @property {{ share: number, marginS: number, hazard: number } | null} accent
+ * @property {{ share: number, marginS: number, hazard: number, gate?: { share: number } } | null} accent
  *           Acciones sobre los golpes más fuertes que llevan una variante de acento
  *           (accents.js): `share` de las que la admiten en cada tramo (por el
  *           factor de su nivel del arco); `marginS`, el margen de error mínimo (del
  *           lado más estrecho, con sus vecinas) que puede dejar uno; y `hazard`,
  *           cuánto deben exigir entre todos al jugador de referencia
- *           (levels/challenge.js) en la canción entera, en muertes esperadas (Ola 6c:
- *           antes por minuto de juego).
+ *           (levels/challenge.js: alguien con práctica, ±30 ms) en la canción entera,
+ *           en muertes esperadas: e^−hazard es la fracción de partidas que supera.
+ *           `gate` (charter 15): los acentos de DOS lados (paso de medusa, pinza de
+ *           cristales), para los más fuertes de cada tramo hasta `share` de sus
+ *           acentos; sin él, la dificultad no los tiene.
  * @property {number} airShare      Cuota máxima de obstáculos voladores por tramo.
  * @property {{ share: number, strength: number } | null} ring
  *           Anillos de salto (Ola 6c, patterns.js): como mucho `share` de las
@@ -103,6 +108,18 @@ export const STAGE = Object.freeze({ START: 0, FIRST_GROOVE: 1, FIRST_DRIVE: 2, 
  * venir cada obstáculo. Todas las densidades suben, la base de la velocidad
  * depende de la dificultad, las marchas y el clímax aceleran más y cada
  * dificultad tiene su techo. Relajado sigue siendo para empezar.
+ *
+ * Oct 2026 (tercer playtest: "el Extremo lo pasé al segundo intento… si es extremo
+ * debe ser realmente extremo, y lo mismo el difícil y el normal"). Medido: con el
+ * jugador de entonces (±45 ms, a toques) What's Up Danger en Extremo se superaba
+ * el 7 % de las veces; con ±30 ms el 81 %, y manteniendo los saltos el 88 %. La
+ * exigencia (`accent.hazard`) pasa a medirse con alguien con práctica (±30 ms, que
+ * mantiene el salto donde le conviene) y la ponen sobre todo acentos de dos lados
+ * (`accent.gate`), que cuestan lo mismo a toques, manteniendo o adelantándose; los
+ * márgenes mínimos bajan hasta 1.2 × la tolerancia de cada dificultad. Con ese
+ * jugador, en una canción entera: Normal se supera ~3 de cada 4 veces, Difícil
+ * ~1 de cada 3 y Extremo ~1 de cada 8; con ±35 ms, la mitad, 1 de cada 10 y 1 de
+ * cada 50-100. Relajado y Fácil no cambian (Fácil estrecha un poco sus hileras).
  *
  * Sep 2026 ("aumenta la velocidad o la progresión, solo eso"): `baseSpeed` y
  * `maxSpeedPxS` suben en Normal (860→940), Difícil (940→980) y Extremo
@@ -146,7 +163,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         offbeat: Object.freeze({ strength: 0.4, ratio: 0.85 }),
         calmBeatStrength: 0.5,
         climaxOffbeat: null,
-        accent: Object.freeze({ share: 0.18, marginS: 0.14, hazard: 0.1 }),
+        accent: Object.freeze({ share: 0.18, marginS: 0.11, hazard: 0.06 }),
         airShare: 0.34,
         ring: null,
         fly: Object.freeze({ chainBars: 0, comfortPx: 38 }),
@@ -160,7 +177,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         toleranceS: 0.055,
         minGapS: 0,
         maxRestS: 2,
-        unlock: { duck: STAGE.FIRST_GROOVE, accent: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_DRIVE, sixteenth: STAGE.FIRST_DRIVE, combo: STAGE.FIRST_DRIVE, ring: STAGE.FIRST_DRIVE },
+        unlock: { duck: STAGE.FIRST_GROOVE, accent: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_DRIVE, sixteenth: STAGE.FIRST_DRIVE, combo: STAGE.FIRST_DRIVE, ring: STAGE.FIRST_DRIVE, gate: STAGE.FIRST_GROOVE },
         speedAmp: 1.1,
         baseSpeed: 1.14,
         maxSpeedPxS: 940,
@@ -168,7 +185,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         calmBeatStrength: 0.45,
         climaxOffbeat: null,
         sixteenth: Object.freeze({ strength: 0.6, ratio: 0.9 }),
-        accent: Object.freeze({ share: 0.4, marginS: 0.085, hazard: 0.7 }),
+        accent: Object.freeze({ share: 0.4, marginS: 0.066, hazard: 0.3, gate: Object.freeze({ share: 0.5 }) }),
         airShare: 0.5,
         ring: Object.freeze({ share: 0.1, strength: 0.4 }),
         fly: Object.freeze({ chainBars: 2, comfortPx: 34 }),
@@ -182,7 +199,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         toleranceS: 0.047,
         minGapS: 0,
         maxRestS: 1.8,
-        unlock: { duck: STAGE.START, accent: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, sixteenth: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_GROOVE, ring: STAGE.FIRST_GROOVE },
+        unlock: { duck: STAGE.START, accent: STAGE.FIRST_GROOVE, offbeat: STAGE.FIRST_GROOVE, sixteenth: STAGE.FIRST_GROOVE, combo: STAGE.FIRST_GROOVE, ring: STAGE.FIRST_GROOVE, gate: STAGE.FIRST_GROOVE },
         speedAmp: 1.3,
         baseSpeed: 1.22,
         maxSpeedPxS: 980,
@@ -190,7 +207,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         calmBeatStrength: 0.35,
         climaxOffbeat: Object.freeze({ strength: 0.25 }),
         sixteenth: Object.freeze({ strength: 0.5, ratio: 0.8 }),
-        accent: Object.freeze({ share: 0.55, marginS: 0.07, hazard: 1.6 }),
+        accent: Object.freeze({ share: 0.55, marginS: 0.056, hazard: 1.1, gate: Object.freeze({ share: 0.65 }) }),
         airShare: 0.55,
         ring: Object.freeze({ share: 0.16, strength: 0.35 }),
         fly: Object.freeze({ chainBars: 4, comfortPx: 30 }),
@@ -203,7 +220,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         toleranceS: 0.04,
         minGapS: 0,
         maxRestS: 1.4,
-        unlock: { duck: STAGE.START, accent: STAGE.START, offbeat: STAGE.FIRST_GROOVE, sixteenth: STAGE.FIRST_GROOVE, combo: STAGE.START, ring: STAGE.FIRST_GROOVE },
+        unlock: { duck: STAGE.START, accent: STAGE.START, offbeat: STAGE.FIRST_GROOVE, sixteenth: STAGE.FIRST_GROOVE, combo: STAGE.START, ring: STAGE.FIRST_GROOVE, gate: STAGE.FIRST_GROOVE },
         speedAmp: 1.5,
         baseSpeed: 1.32,
         maxSpeedPxS: 1000,
@@ -211,7 +228,7 @@ export const DIFFICULTY_PROFILES = Object.freeze({
         calmBeatStrength: 0.3,
         climaxOffbeat: Object.freeze({ strength: 0.2 }),
         sixteenth: Object.freeze({ strength: 0.45, ratio: 0.7 }),
-        accent: Object.freeze({ share: 0.7, marginS: 0.058, hazard: 3.0 }),
+        accent: Object.freeze({ share: 0.7, marginS: 0.048, hazard: 2.0, gate: Object.freeze({ share: 0.8 }) }),
         airShare: 0.6,
         ring: Object.freeze({ share: 0.22, strength: 0.3 }),
         fly: Object.freeze({ chainBars: 8, comfortPx: 24 }),

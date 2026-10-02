@@ -34,10 +34,10 @@
 //           alrededor (`hits` dice si una caja chocaría ahora). Correr lo usa para
 //           no levantarse debajo de algo.
 // @property {(def: object) => number} leadS  Adelanto de un kind de este modo.
-// @property {(def: object, speedPxS: number) => ({ early: number, late: number } | null)} [marginsS]
+// @property {(def: object, speedPxS: number, holdS?: number) => ({ early: number, late: number } | null)} [marginsS]
 //           Opcional: márgenes de error de un kind aislado sin simular (el de
-//           correr los calcula para los saltos). null o ausente: se simulan
-//           (playability.timingMarginsS).
+//           correr los calcula para los saltos, a toques o manteniendo `holdS`).
+//           null o ausente: se simulan (playability.timingMarginsS).
 // @property {(body: object, def: object) => string | null} [trigger]
 //           Opcional (Ola 6c): el cuerpo atraviesa un activador del registro (un kind
 //           con `trigger`, como el anillo de salto). Decide si se activa y aplica su

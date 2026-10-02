@@ -669,7 +669,7 @@ El modelo y sus decisiones, en §2.11-2.15. Las olas sustituyen a las T03.1-T03.
   - `fx-guard.test.mjs` (7): el techo cabe bajo lo que necesita lo más difícil de leer; el limitador con 20 000 colores al azar; **el guardián con luz sin límite en las 7 escenas a 620 horas, sin un fallo**; la calma del break; los colores de las barras; **destellos: el golpe cambia la luminancia menos de 0.10 en cualquier escena y hora**; los drops de los oficiales, a más de 1 s.
 - **E2E** (Chrome con la GPU real, por CDP):
   - One Day hasta la noche: los efectos vetados, a cero toda la partida (medido cada fotograma); el destello verde con su rayo y el horizonte limpio; sin errores.
-  - Panel "Efectos": 16 filas; "solo" deja uno; intensidad 2; el motivo ("el sol no está en el cielo") a la vista. Suaves y Mínimos, en vivo.
+  - Panel "Efectos": 17 filas; "solo" deja uno; intensidad 2; el motivo ("el sol no está en el cielo") a la vista. Suaves y Mínimos, en vivo.
   - Con reduced motion emulado: se juega, con los efectos en Mínimos; sin errores.
 - **Bundle**: chunk principal 92.3 KB gzip (86.9 antes; +5.4), Pixi 140.7.
 

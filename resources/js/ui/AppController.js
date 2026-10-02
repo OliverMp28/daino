@@ -529,7 +529,7 @@ function handlePauseRequested() {
 }
 
 function openPausePanel() {
-    const durationSec = activeSession._durationSec;
+    const durationSec = activeSession.lengthSec;
     const reachedSec = Math.min(durationSec, Math.max(0, lastAudioEngine.getSongTime()));
     openRunPanel(runPanelView({
         mode: 'pause',
@@ -596,6 +596,8 @@ function handleGameState(ev) {
         previousBest: previous,
         title: run.loaded.title,
         sections: run.sections,
+        // En desarrollo, la precisión de la partida: con ella se calibra la dificultad.
+        timing: import.meta.env.DEV ? (detail.timing ?? null) : null,
     }), {
         onAction: handleRunAction,
         autoRetry: { checked: getAutoRetry(), onChange: setAutoRetry },

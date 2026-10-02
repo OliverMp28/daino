@@ -15,6 +15,8 @@
 //   CACTUS_SMALL — saguaro alto/angosto, apoyado en el suelo.
 //   CACTUS_WIDE  — cluster de 3 cactus, bajo/ancho, apoyado en el suelo.
 //   CACTUS_ROW*  — hilera de 2 a 8 saguaros: salto que exige precisión.
+//   GATE_*       — paso de medusa: una medusa a la altura de la cabeza y un
+//                  saguaro tras un hueco; hay que saltar justo en el hueco.
 //   PTERO        — pterodáctilo volador (altitude > 0): se pasa agachándose.
 //   CRYSTAL_*    — cristales de la antigravedad (Ola 6a), en el suelo o
 //                  colgando del techo (el mismo sprite reflejado).
@@ -90,7 +92,8 @@ export class Obstacle extends Container {
      * @param {number} pulse  [0,1], 1 justo en el golpe.
      */
     setBeat(pulse) {
-        if (Math.abs(pulse - this._beat) < 0.01 || this._popT < Infinity || this._armed) return;
+        // Un paso de medusa no late: estirarlo desde el suelo movería la medusa y su hueco.
+        if (this.def.gate === true || Math.abs(pulse - this._beat) < 0.01 || this._popT < Infinity || this._armed) return;
         this._beat = pulse;
         this._sprite.scale.set(PIXEL_SCALE * (1 - 0.04 * pulse), PIXEL_SCALE * (1 + 0.09 * pulse) * this._ySign);
     }

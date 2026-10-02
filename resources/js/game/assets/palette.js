@@ -20,6 +20,10 @@ export const PALETTE = Object.freeze({
     // Ptero
     P: '#ff5d7e', // cuerpo ptero — rosa beat (COLOR_BEAT): peligro aéreo
     p: '#c73a5c', // sombra ptero
+    // Medusa del paso (charter 15): el rosa del peligro, algo más claro, porque flota
+    // hasta 228 de altura y ahí el cielo del alba es el más claro de lo que se juega.
+    Z: '#ff7a96', // campana y tentáculos
+    z: '#d2486c', // sombra y nudos de los tentáculos
     // Suelo
     E: '#8b9aff', // línea de borde superior — periwinkle brillante
     D: '#12152e', // relleno tierra

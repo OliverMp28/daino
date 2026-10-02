@@ -47,7 +47,7 @@ import { createFlightCourse, flightMargin } from '../systems/flightCourse.js';
 import { createSpeedProfile } from '../systems/speedProfile.js';
 import { SPEED_RULES, planSpeed } from './speedPlan.js';
 import { accentVariant, assignAccents } from './accents.js';
-import { referencePassRate } from './challenge.js';
+import { createContextMargins, createReferenceOdds, hazardOf, referencePassRate } from './challenge.js';
 import { MODE_RULES, createModeGuide, modeEvents, planModes } from './modePlan.js';
 import { chartHolds } from './flightCharter.js';
 import { assignRingKinds } from './rings.js';
@@ -104,14 +104,14 @@ export const CHARTER_RULES = Object.freeze({
     /** Techo de reparaciones del validador (defensa ante bucles). */
     maxRepairs: 400,
     /**
-     * Partidas del jugador de referencia con las que se mide lo que ya exige el
-     * nivel SIN acentos (combinaciones, anillos, vuelo), para que los acentos pongan
-     * solo lo que falta hasta la exigencia de la dificultad (Ola 6c). Medido: con
-     * los acentos a su presupuesto sin descontar esto, Running With the Wolves en
-     * Normal (combinaciones rápidas a 82 BPM) quedaba en 0.31 para el jugador de
-     * referencia y What's Up Danger en 0.58. ~15 ms por partida de 3 min.
+     * Partidas del jugador de referencia con las que se mide lo que exige el VUELO
+     * de un nivel (lo demás se suma acción a acción: ver `restHazard`), para que los
+     * acentos pongan solo lo que falta hasta la exigencia de la dificultad (Ola 6c).
+     * Medido entonces: con los acentos a su presupuesto sin descontar lo que el
+     * nivel ya exige, Running With the Wolves en Normal (combinaciones rápidas a
+     * 82 BPM) quedaba en 0.31 para el jugador de referencia.
      */
-    restRuns: 32,
+    restRuns: 48,
 });
 
 /**
@@ -222,8 +222,20 @@ export function buildChart(analysis, opts = {}) {
             flights.push({ t0: span.tIn, notes: flight.holds.length, chained: flight.chained, melody: flight.melody });
         }
         // Lo que el nivel ya exige sin acentos; los acentos ponen lo que falta.
-        const rest = restHazard(actions, holds, ctx, baseSpeed, speedChanges);
-        accents = assignAccents(actions, { ...ctx, restHazard: rest });
+        // Las dos cuentas miden cada acción con sus vecinas: comparten esas medidas.
+        const level = {
+            obstacles: actions.map((a) => {
+                const def = OBSTACLE_KIND[a.kind];
+                return { t: a.t, kind: a.kind, def, cross: a.t + actionLeadS(def) };
+            }),
+            triggers: toSimTriggers(actions.filter((a) => a.type === 'ring').map((a) => ({ t: a.t, type: 'obstacle', kind: a.ring }))),
+            speed,
+            modes: simModes,
+        };
+        const context = createContextMargins(level);
+        const odds = createReferenceOdds(level, undefined, context);
+        const rest = restHazard(level, odds, holds, ctx, baseSpeed, speedChanges);
+        accents = assignAccents(actions, { ...ctx, restHazard: rest, level, context, odds });
         accents.rest = Math.round(rest * 1000) / 1000;
         repaired = repairUnplayable(actions, holds, ctx);
     }
@@ -359,6 +371,7 @@ export function unlockSchedule(arc, profile) {
         sixteenth: at(profile.unlock.sixteenth ?? STAGE.NEVER),
         combo: at(profile.unlock.combo),
         ring: at(profile.unlock.ring ?? STAGE.NEVER),
+        gate: at(profile.unlock.gate ?? STAGE.NEVER),
     };
 }
 
@@ -610,22 +623,29 @@ function assignKinds(actions, ctx) {
 }
 
 /**
- * Exigencia del nivel tal como está, sin acentos, para el jugador de referencia:
- * −ln de la fracción de partidas que supera (challenge.referencePassRate, con
- * `restRuns` partidas y semilla fija: determinista).
+ * Exigencia del nivel tal como está, sin acentos, para el jugador de referencia
+ * (muertes esperadas):
+ *
+ *   - Lo que se pulsa (saltos, agachados, inversiones, anillos): la suma de lo que
+ *     exige cada acción en su sitio, con sus vecinas (challenge.createReferenceOdds).
+ *   - El vuelo: −ln de la fracción de veces que supera sus tramos volándolos de
+ *     verdad (challenge.referencePassRate con `restRuns` partidas y semilla fija:
+ *     determinista), porque su error se arrastra de nota en nota y no se deja sumar.
+ *
+ * Hasta el charter 14 era todo un Monte Carlo del nivel entero: 32 partidas que
+ * solo distinguían escalones de 0.03 y costaban más que todo lo demás del charter.
  */
-function restHazard(actions, holds, ctx, baseSpeed, speedChanges) {
-    if (actions.length === 0 && holds.length === 0) return 0;
-    const events = [
-        ...ctx.structure,
-        ...holds.map((h) => ({ t: h.t, type: 'hold', until: h.until })),
-        ...actions.map((a) => ({ t: a.t, type: 'obstacle', kind: a.kind })),
-        ...actions.filter((a) => a.type === 'ring').map((a) => ({ t: a.t, type: 'obstacle', kind: a.ring })),
-    ].sort((a, b) => a.t - b.t);
-    const runs = CHARTER_RULES.restRuns;
-    const { passRate } = referencePassRate({ events, world: { speedPxS: baseSpeed, speedChanges } }, { runs, seed: 1 });
-    // Sin ninguna superada, lo que se sabe es que exige más que −ln(1/(2·runs)).
-    return -Math.log(Math.max(passRate, 1 / (2 * runs)));
+function restHazard(level, odds, holds, ctx, baseSpeed, speedChanges) {
+    let hazard = 0;
+    for (let i = 0; i < level.obstacles.length; i++) hazard += hazardOf(odds(i).miss);
+    if (holds.length > 0) {
+        const events = [...ctx.structure, ...holds.map((h) => ({ t: h.t, type: 'hold', until: h.until }))].sort((a, b) => a.t - b.t);
+        const runs = CHARTER_RULES.restRuns;
+        const { passRate } = referencePassRate({ events, world: { speedPxS: baseSpeed, speedChanges } }, { runs, seed: 1 });
+        // Sin ninguna superada, lo que se sabe es que exige más que −ln(1/(2·runs)).
+        hazard += -Math.log(Math.max(passRate, 1 / (2 * runs)));
+    }
+    return hazard;
 }
 
 /**
@@ -647,7 +667,7 @@ function assignFlipKinds(actions, ctx) {
         }
         const base = pickKindForRole('flip', null, onFloor ? 'floor' : 'ceiling');
         // Un acento conserva su margen al cambiar de superficie (accents.js).
-        a.kind = (a.accentTarget ?? null) !== null ? (accentVariant(base, a.t, a.accentTarget, ctx) ?? base) : base;
+        a.kind = (a.accentTarget ?? null) !== null ? (accentVariant(base, a.t, a.accentTarget, ctx, null, a.accentGate === true) ?? base) : base;
         onFloor = !onFloor;
     }
 }
@@ -711,6 +731,7 @@ function repairUnplayable(actions, holds, ctx) {
             // Un acento que no se deja jugar vuelve a ser la acción normal.
             hit.kind = accentOf;
             hit.accentTarget = null;
+            hit.accentGate = false;
             continue;
         }
         const weight = (a) => a.score + (a.forced ? 10 : 0);

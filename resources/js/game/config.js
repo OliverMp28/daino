@@ -325,6 +325,60 @@ export const MAX_BURST_PARTICLES = 140;
 export const CACTUS_ROW_CELLS = Object.freeze(Array.from({ length: 17 }, (_, i) => 22 + 5 * i));
 
 /**
+ * Paso de medusa (charter 15): el acento que exige por los DOS lados, se juegue
+ * como se juegue. Una medusa flota a la altura de la cabeza y, un hueco después,
+ * hay un cactus: saltar pronto es subir contra sus tentáculos, saltar tarde es
+ * comerse el cactus. El hueco decide el margen; el golpe sigue en su sitio.
+ *
+ * Por qué (tercer playtest de la dificultad, Oct 2026): una hilera de cactus solo
+ * aprieta a quien da un toque en el golpe. Mantener el salto lo alarga ~130 ms y
+ * regala todo el lado de pulsar pronto, y quien se guía por la vista salta antes
+ * sin castigo. Medido con ±30 ms en Dawn of Faith (Difícil): a toques se superaba
+ * el 12 % de las veces; manteniendo, el 45 %; adelantándose 35 ms, el 99 %. La
+ * dificultad no puede depender del gesto.
+ *
+ *   gapCells       Huecos entre la medusa y el cactus, en celdas del arte, de 2 en
+ *                  2 (8 de mundo: a 1000 px/s, 4 ms de margen por lado). Hasta 320
+ *                  de mundo: más lejos, la medusa ya no se lee como parte del salto
+ *                  (un acento que pide más margen que eso lleva una hilera).
+ *   floater        Dibujo de la medusa (celdas) y altura de sus puntas sobre el
+ *                  suelo: 92, por encima de la cabeza del Dino de pie (84), y
+ *                  llega a 228, más de lo que sube un salto mantenido: ni se pasa
+ *                  por encima ni estorba a quien corre o se agacha.
+ *   leftPadCells   Aire a la izquierda de la caja: deja el centro del hueco donde
+ *                  hace falta para que el margen sea el mismo por los dos lados a
+ *                  cualquier velocidad (medido, tests/js/gates.test.mjs).
+ *   leadS          El centro de la caja cruza al Dino esto después del golpe: lo
+ *                  que tarda el salto en pasar de "ya toca la medusa" a "ya salva
+ *                  el cactus", repartido entre los dos lados.
+ */
+export const GATE = Object.freeze({
+    gapCells: Object.freeze(Array.from({ length: 32 }, (_, i) => 18 + 2 * i)),
+    floater: Object.freeze({ wCells: 14, hCells: 34, altitudeCells: 23 }),
+    leftPadCells: 1,
+    leadS: 0.056,
+});
+
+/**
+ * Pinza de cristales (charter 15): el acento de dos lados de la antigravedad. Un
+ * cristal afilado en la superficie de LLEGADA y, enseguida, el del golpe en la
+ * superficie del Dino: invertir pronto es subir contra el primero, invertir tarde
+ * es comerse el segundo. La separación decide el margen. (Un cristal afilado solo
+ * castiga llegar tarde: "quien los ve venir se adelanta sin castigo".)
+ *
+ *   sepCells   Separación entre los dos cristales, en celdas del arte, de 2 en 2;
+ *              negativa: el de arriba pisa al de abajo (queda hueco de sobra entre
+ *              los dos para cruzar en diagonal).
+ *   padCells   Aire a la izquierda de la caja: centra el margen a cualquier velocidad.
+ *   leadS      El centro de la caja cruza al Dino esto después del golpe.
+ */
+export const PINCH = Object.freeze({
+    sepCells: Object.freeze(Array.from({ length: 40 }, (_, i) => -9 + 2 * i)),
+    padCells: 0,
+    leadS: 0.12,
+});
+
+/**
  * Márgenes de adelanto de los cristales afilados, en ms (ver `sharpCrystals`).
  * 95 y 80 llegaron con las piezas de colisión del cristal (Oct 2026): al chocar
  * solo por su dibujo, cada cristal perdona 5-25 ms más por el lado de pulsar
@@ -396,7 +450,14 @@ const CRYSTAL_HIT_PARTS = Object.freeze([[6, 32, 6, 28], [16, 6, 16, 54], [36, 2
  *   armedSprite    Dibujo del activador cuando el Dino está a su alcance y
  *                  pulsar lo activaría: enseña "ahora" (Obstacle.setArmed).
  *   hint           Cómo se explica las primeras partidas en que aparece
- *                  ({ label, keys, touch, color }).
+ *                  ({ label, keys, touch, color }; `id` si varios kinds son la
+ *                  misma mecánica y se cuentan juntos).
+ *   drawn          Franjas de altura sobre el suelo en las que dibuja su color
+ *                  ([[desde, hasta], …]) cuando no llena su caja: el guardián de
+ *                  legibilidad (scenes/readability.js) lo mide solo ahí.
+ *   gate           true en los acentos de dos lados (`GATE`): tienen algo
+ *                  encima antes del obstáculo, así que solo van donde hay sitio
+ *                  antes (levels/accents.js) y no laten con el pulso.
  */
 export const OBSTACLE_KIND = Object.freeze({
     CACTUS_SMALL: { w: 48, h: 96, altitude: 0, sprites: ['cactusSmall'], mode: 'run', surface: 'floor', action: 'jump', role: 'jump', weight: 1 },
@@ -407,6 +468,7 @@ export const OBSTACLE_KIND = Object.freeze({
     },
     CACTUS_WIDE: { w: 100, h: 68, altitude: 0, sprites: ['cactusWide'], mode: 'run', surface: 'floor', action: 'jump', role: 'accent', accentOf: 'CACTUS_SMALL', weight: 1 },
     ...cactusRows(),
+    ...gates(),
     // hitPad: choca el cuerpo, que está en los dos fotogramas del aleteo; el ala
     // (arriba en uno, abajo en el otro) no. La cola acaba en punta (solo su fila
     // central llega a la celda 20): la caja termina donde el cuerpo aún tiene alto.
@@ -419,6 +481,7 @@ export const OBSTACLE_KIND = Object.freeze({
     CRYSTAL_FLOOR: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'floor', action: 'flip', role: 'flip', weight: 1, hitParts: CRYSTAL_HIT_PARTS },
     CRYSTAL_CEIL: { w: 52, h: 64, altitude: 0, sprites: ['crystal'], mode: 'flip', surface: 'ceiling', action: 'flip', role: 'flip', weight: 1, hitParts: CRYSTAL_HIT_PARTS },
     ...sharpCrystals(),
+    ...pinches(),
 });
 
 /**
@@ -442,6 +505,35 @@ function cactusRows() {
 }
 
 /**
+ * Pasos de medusa (ver `GATE`): la medusa a la izquierda (llega primero), el
+ * hueco y un saguaro. Chocan los tentáculos, la campana y el cactus; el hueco y
+ * el aire bajo la medusa, no.
+ */
+function gates() {
+    const out = {};
+    const S = PIXEL_SCALE;
+    const f = GATE.floater;
+    const h = (f.altitudeCells + f.hCells) * S;
+    const jellyX = GATE.leftPadCells * S;
+    for (const cells of GATE.gapCells) {
+        const cactusX = jellyX + (f.wCells + cells) * S;
+        const w = cactusX + 48;
+        out[`GATE_${cells * S}`] = {
+            w, h, altitude: 0, sprites: [`gate${cells}A`, `gate${cells}B`], animPeriodS: 0.24, mode: 'run', surface: 'floor', action: 'jump',
+            role: 'accent', accentOf: 'CACTUS_SMALL', weight: 1, precision: true, gate: true, actionLeadS: GATE.leadS,
+            drawn: [[f.altitudeCells * S, h]],
+            hitParts: [
+                [jellyX + 4, 4, f.wCells * S - 8, 30],                      // campana
+                [jellyX + 4, 34, f.wCells * S - 8, f.hCells * S - 34],      // tentáculos
+                [cactusX + 6, h - 96 + 6, 36, 86],                          // el saguaro, con su caja de siempre
+            ],
+            hint: { id: 'gate', label: 'Medusa', keys: 'No saltes bajo la medusa: salta en el hueco', touch: 'No saltes bajo la medusa: salta en el hueco', color: 0xff5d7e },
+        };
+    }
+    return out;
+}
+
+/**
  * Cristales afilados de la antigravedad (tras el mismo playtest): los acentos de
  * la zona roja. Con el adelanto normal (0.24 s sobre lo que tarda en despejarse)
  * pulsar hasta ~200 ms tarde sigue salvando; uno afilado llega antes tras el golpe.
@@ -455,6 +547,36 @@ function sharpCrystals() {
     for (const ms of SHARP_CRYSTAL_MARGINS_MS) {
         for (const [surface, base] of [['floor', 'CRYSTAL_FLOOR'], ['ceiling', 'CRYSTAL_CEIL']]) {
             out[`${base}_SHARP_${ms}`] = { w: 52, h: 64, altitude: 0, sprites: ['crystalSharp'], mode: 'flip', surface, action: 'flip', role: 'accent', accentOf: base, weight: 1, leadMarginS: ms / 1000, hitParts: CRYSTAL_HIT_PARTS };
+        }
+    }
+    return out;
+}
+
+/**
+ * Pinzas de cristales (ver `PINCH`): la caja ocupa el pasillo entero; el cristal
+ * de guarda cuelga arriba a la izquierda (llega primero) y el del golpe se apoya
+ * abajo a la derecha. Las del techo son el mismo dibujo reflejado. El nombre lleva
+ * el ancho de la caja.
+ */
+function pinches() {
+    const out = {};
+    const S = PIXEL_SCALE;
+    const crystal = { w: 52, h: 64 };
+    for (const cells of PINCH.sepCells) {
+        const guardX = PINCH.padCells * S;
+        const targetX = guardX + crystal.w + cells * S;
+        const w = Math.max(guardX, targetX) + crystal.w;
+        const hitParts = [
+            ...CRYSTAL_HIT_PARTS.map(([x, y, pw, ph]) => [guardX + x, crystal.h - y - ph, pw, ph]),
+            ...CRYSTAL_HIT_PARTS.map(([x, y, pw, ph]) => [targetX + x, CORRIDOR_HEIGHT_PX - crystal.h + y, pw, ph]),
+        ];
+        for (const [surface, base] of [['floor', 'CRYSTAL_FLOOR'], ['ceiling', 'CRYSTAL_CEIL']]) {
+            out[`${base}_PINCH_${w}`] = {
+                w, h: CORRIDOR_HEIGHT_PX, altitude: 0, sprites: [`pinch${cells + 9}`], mode: 'flip', surface, action: 'flip',
+                role: 'accent', accentOf: base, weight: 1, gate: true, actionLeadS: PINCH.leadS, hitParts,
+                drawn: [[0, crystal.h], [CORRIDOR_HEIGHT_PX - crystal.h, CORRIDOR_HEIGHT_PX]],
+                hint: { id: 'pinch', label: 'Pinza', keys: 'Invierte justo entre los dos cristales', touch: 'Invierte justo entre los dos cristales', color: 0xff5d7e },
+            };
         }
     }
     return out;

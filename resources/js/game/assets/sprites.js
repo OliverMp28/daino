@@ -5,7 +5,7 @@
 // comparan la silueta de cada dibujo con su caja de colisión (tests/js/hitboxes.test.mjs:
 // nadie debe morir sin que se vea el choque).
 
-import { CACTUS_ROW_CELLS } from '../config.js';
+import { CACTUS_ROW_CELLS, CORRIDOR_HEIGHT_PX, GATE, PINCH, PIXEL_SCALE } from '../config.js';
 
 // --------------------------- Sprites ---------------------------
 // Convención: el dino mira a la DERECHA (el mundo scrollea hacia la izquierda).
@@ -219,6 +219,71 @@ function cactusRow(width) {
 const cactusRows = {};
 for (const cells of CACTUS_ROW_CELLS) cactusRows[`cactusRow${cells}`] = cactusRow(cells);
 
+// --------------------------- Paso de medusa (charter 15) ---------------------------
+
+// Medusa: campana y cuatro tentáculos que ondulan. Grid 14×34 → 56×136 px. En el
+// rosa del peligro (algo más claro que el del ptero: palette.js). Flota con las puntas a la altura de la
+// cabeza del Dino: se pasa por debajo corriendo, no saltando.
+const JELLY_BELL = [
+    '....ZZZZZZ....',
+    '..ZZZZZZZZZZ..',
+    '.ZZHHZZZZZZZZ.',
+    'ZZHHZZZZZZZZZZ',
+    'ZZHZZZZZZZZZZZ',
+    'ZZZZZZZZZZZZZZ',
+    'ZZZZZZZZZZZZZz',
+    'zZZZzZZZZzZZZz',
+    '.zZz.zZZz.zZz.',
+];
+
+/** @param {0 | 1} phase  Los dos fotogramas: los tentáculos ondulan a contrapié. */
+function jelly(phase) {
+    const f = GATE.floater;
+    const rows = JELLY_BELL.slice();
+    const lengthOf = (strand) => f.hCells - JELLY_BELL.length - (strand % 2 === 0 ? 0 : 2);
+    for (let y = 0; y < f.hCells - JELLY_BELL.length; y++) {
+        const cells = Array(f.wCells).fill('.');
+        [2, 5, 8, 11].forEach((base, strand) => {
+            const len = lengthOf(strand);
+            if (y >= len) return;
+            // Ondas largas (tres celdas rectas por tramo): a la velocidad del juego un
+            // zigzag de celda en celda se ve como una línea de puntos.
+            const wave = [0, 0, 0, 1, 1, 1, 0, 0, 0, -1, -1, -1][(y + phase * 6 + strand * 3) % 12];
+            cells[base + wave] = y >= len - 2 ? 'H' : (y % 6 === 5 ? 'z' : 'Z');
+        });
+        rows.push(cells.join(''));
+    }
+    return rows;
+}
+
+const jellyA = jelly(0);
+const jellyB = jelly(1);
+
+/**
+ * El paso entero en una rejilla del tamaño de su caja (config.js, `gates`): la
+ * medusa arriba a la izquierda, el hueco y el saguaro abajo a la derecha.
+ */
+function gateRows(gapCells, jellyRows) {
+    const f = GATE.floater;
+    const x0 = GATE.leftPadCells;
+    const cactusX = x0 + f.wCells + gapCells;
+    const rows = Array.from({ length: f.altitudeCells + f.hCells }, () => Array(cactusX + 12).fill('.'));
+    jellyRows.forEach((row, y) => {
+        for (let x = 0; x < row.length; x++) if (row[x] !== '.') rows[y][x0 + x] = row[x];
+    });
+    cactusSmall.forEach((row, y) => {
+        for (let x = 0; x < row.length; x++) if (row[x] !== '.') rows[rows.length - cactusSmall.length + y][cactusX + x] = row[x];
+    });
+    return rows.map((r) => r.join(''));
+}
+
+/** Dibujos que se generan la primera vez que se piden (los pasos: 84 rejillas grandes). */
+const lazySprites = {};
+for (const cells of GATE.gapCells) {
+    lazySprites[`gate${cells}A`] = () => gateRows(cells, jellyA);
+    lazySprites[`gate${cells}B`] = () => gateRows(cells, jellyB);
+}
+
 // Cluster de 3 cactus. Grid 25×17 → 100×68 px. Los tres llegan casi al alto de
 // la caja y la llenan de lado a lado: lo que choca es lo que se ve. (Hasta Oct
 // 2026 los de los lados medían 48 y 40 con la caja a 62: caer justo detrás del
@@ -425,6 +490,26 @@ const crystal = [
 // grupo en el rosa del ptero, para que se lea como peligro.
 const crystalSharp = crystal.map((row) => row.replaceAll('V', 'P').replaceAll('v', 'p').replaceAll('Y', 'H'));
 
+/**
+ * Pinza (config.js, `pinches`): el pasillo entero, con el cristal de guarda
+ * colgando arriba a la izquierda y el del golpe apoyado abajo a la derecha.
+ */
+function pinchRows(sepCells) {
+    const H = CORRIDOR_HEIGHT_PX / PIXEL_SCALE;
+    const guardX = PINCH.padCells;
+    const targetX = guardX + 13 + sepCells;
+    const rows = Array.from({ length: H }, () => Array(Math.max(guardX, targetX) + 13).fill('.'));
+    crystalSharp.forEach((row, y) => {
+        for (let x = 0; x < row.length; x++) {
+            if (row[x] === '.') continue;
+            rows[crystalSharp.length - 1 - y][guardX + x] = row[x];
+            rows[H - crystalSharp.length + y][targetX + x] = row[x];
+        }
+    });
+    return rows.map((r) => r.join(''));
+}
+for (const cells of PINCH.sepCells) lazySprites[`pinch${cells + 9}`] = () => pinchRows(cells);
+
 // Franja del techo: la tira del suelo reflejada, con su línea en el violeta del
 // modo. La fila 10 es la línea; la 11, los bultos que cuelgan hacia el pasillo.
 const ceiling = ground.slice().reverse().map((row) => row.replaceAll('E', 'U'));
@@ -524,13 +609,22 @@ const chevronDown = chevronUp.slice().reverse();
  * Todos los dibujos por nombre. `getTexture` (pixelart.js) los rasteriza; las
  * pruebas de colisión los leen tal cual para comparar lo que se ve con lo que choca.
  */
-export const SPRITES = Object.freeze({
+export const SPRITES = Object.freeze(withLazy({
     dinoRunA, dinoRunB, dinoJump, dinoDead, dinoJumpDead, dinoDuckA, dinoDuckB, dinoDuckDead,
     jetpack, jetFlameA, jetFlameB, jetFlameIdle,
     cactusSmall, cactusWide, ...cactusRows,
-    pteroA, pteroB,
+    pteroA, pteroB, jellyA, jellyB,
     ground, groundSand, groundSnow, groundCity, dot,
     cloud, cloudB, cloudRimTop, cloudRimBottom, cloudBRimTop, cloudBRimBottom,
     crystal, crystalSharp, ceiling, ceilingFly, portalA, portalB, chevronUp, chevronDown,
     orbA, orbB, orbLit,
-});
+}, lazySprites));
+
+/** Añade a `sprites` los dibujos perezosos: cada uno se genera al leerlo por primera vez. */
+function withLazy(sprites, lazy) {
+    for (const [name, make] of Object.entries(lazy)) {
+        let rows = null;
+        Object.defineProperty(sprites, name, { enumerable: true, get: () => (rows ??= make()) });
+    }
+    return sprites;
+}

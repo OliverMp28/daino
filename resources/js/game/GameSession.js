@@ -58,6 +58,8 @@ import { createSpawner } from './systems/spawner.js';
 import { createBeatClock } from './systems/beatClock.js';
 import { createSongDirector } from './systems/songDirector.js';
 import { createSpeedCues } from './systems/speedCues.js';
+import { playEndSec } from './systems/runEnd.js';
+import { createTimingLog } from './systems/timingLog.js';
 import { planSky } from './scenes/skyClock.js';
 import { resolveScene, sceneCycle } from './scenes/registry.js';
 import { speedProfileOf } from './systems/speedProfile.js';
@@ -69,7 +71,6 @@ import { createFlightCourse } from './systems/flightCourse.js';
 import { createHud } from '../ui/hud.js';
 import { Input } from './systems/input.js';
 import { BODY_EVENT, applyTrigger, bodyFigure, bodyHitbox, ceilingYOf, computeGroundY, enterMode, integrateBody, settlePosture } from './systems/physics.js';
-import { toSimTriggers } from './systems/playability.js';
 import { createModeTimeline } from './systems/modeTimeline.js';
 import { MOVEMENT_MODES } from './systems/modes/index.js';
 import { createFixedStepper } from './systems/fixedStep.js';
@@ -147,6 +148,10 @@ export class GameSession {
         // suena. El chart trae su propia duración, pero un decodificador
         // distinto puede diferir en unos ms de relleno del MP3.
         this._durationSec = this.audioBuffer.duration;
+        // Lo que dura el NIVEL: hasta un momento después del último obstáculo
+        // (systems/runEnd.js). Lo que la canción dure de más suena bajo el panel de
+        // resultados; la barra, el porcentaje y la victoria se miden con esto.
+        this._playEndSec = playEndSec(this.chart, this._durationSec);
         // Pulso: los beats reales si el chart los trae (formato 2); si no, los
         // obstáculos, que ya caen sobre golpes (Ola 3).
         const beats = this.chart.music.beats ?? [];
@@ -157,11 +162,13 @@ export class GameSession {
         // Hora del cielo de cada instante (T01): el plan se ancla a la
         // estructura del chart, con el ciclo de la escena vigente. Una historia
         // de autor (T02.6) lee también sus efectos de estructura (los drops).
+        // El cielo cuenta el NIVEL: su final (el sol asomando) es el del nivel, no el
+        // del archivo de audio; lo que la canción dure de más es el epílogo.
         this._sky = planSky(
             {
-                sections: this.chart.events.filter((e) => e.type === 'section'),
-                fx: this.chart.events.filter((e) => e.type === 'fx'),
-                durationSec: this._durationSec,
+                sections: this.chart.events.filter((e) => e.type === 'section' && e.t < this._playEndSec),
+                fx: this.chart.events.filter((e) => e.type === 'fx' && e.t < this._playEndSec),
+                durationSec: this._playEndSec,
             },
             sceneCycle(this.engine.getScene?.() ?? resolveScene()),
         );
@@ -220,6 +227,10 @@ export class GameSession {
             ...this._course.spans.flatMap((s) => s.holds.map((h) => ({ t: h.t, action: 'hold', claimed: false }))),
         ].sort((a, b) => a.t - b.t);
         this._onBeatCursor = 0;
+        /** Precisión de las pulsaciones de esta partida (para calibrar la dificultad). */
+        this._timing = createTimingLog(this._onBeatTargets);
+        /** La canción sigue sonando bajo el panel tras superar el nivel antes de su final. */
+        this._tailAudio = false;
         // Física a paso fijo sincronizada con el reloj de la canción.
         this._physics = createFixedStepper({ stepS: PHYSICS_STEP_S, maxCatchUpS: MAX_PHYSICS_CATCHUP_S });
         this._hitbox = { x: 0, y: 0, w: 0, h: 0 };
@@ -272,7 +283,7 @@ export class GameSession {
 
         // HUD DOM (#hud-root). El hudLayer del canvas queda para el flash.
         this.hud = createHud();
-        this.hud.update(0, 0, this._durationSec);
+        this.hud.update(0, 0, this._playEndSec);
         if (this.title) this.hud.setSong(this.title);
         // Reintento: "Intento N" al arrancar (se retira solo en `_tick`).
         this._attemptBanner = this.attempt > 1;
@@ -290,21 +301,28 @@ export class GameSession {
             const hint = MOVEMENT_MODES[m].hint;
             this._modeHints[m] = touch ? hint.touch : hint.keys;
         }
-        const firstTrigger = new Map();
-        for (const tr of toSimTriggers(this.chart.events)) if (!firstTrigger.has(tr.kind)) firstTrigger.set(tr.kind, tr);
-        for (const [kind, tr] of firstTrigger) {
-            const hint = tr.def.hint;
-            if (hint === undefined || countMechanicSeen(kind) > MODE_FX.hintRuns) continue;
-            this._mechanicCues.push({ t: tr.t, label: hint.label, hint: touch ? hint.touch : hint.keys, color: hint.color });
+        // Lo mismo con cada mecánica del registro que trae su explicación (`hint`): el
+        // orbe, el paso de medusa, la pinza. Varios kinds pueden ser la misma (`hint.id`).
+        const firstOf = new Map();
+        for (const e of obstacleEvents(this.chart)) {
+            const hint = OBSTACLE_KIND[e.kind].hint;
+            if (hint === undefined) continue;
+            const id = hint.id ?? e.kind;
+            if (!firstOf.has(id)) firstOf.set(id, { t: e.t, hint });
         }
+        for (const [id, { t, hint }] of firstOf) {
+            if (countMechanicSeen(id) > MODE_FX.hintRuns) continue;
+            this._mechanicCues.push({ t, label: hint.label, hint: touch ? hint.touch : hint.keys, color: hint.color });
+        }
+        this._mechanicCues.sort((a, b) => a.t - b.t);
         this.hud.setRoadmap?.({
-            durationSec: this._durationSec,
+            durationSec: this._playEndSec,
             sections: this.chart.events.filter((e) => e.type === 'section'),
             speedUps: this._speedCues.ups.map((u) => u.at),
             // Los tramos con otras reglas, marcados en el mapa con su color.
             modes: this._modes.segments
                 .filter((s) => s.mode !== 'run')
-                .map((s) => ({ t0: s.t0, t1: Math.min(s.t1, this._durationSec), color: MODE_COLORS[s.mode] })),
+                .map((s) => ({ t0: s.t0, t1: Math.min(s.t1, this._playEndSec), color: MODE_COLORS[s.mode] })),
         });
         this.hud.setGear?.(0);
 
@@ -496,13 +514,14 @@ export class GameSession {
 
         // Score: por ahora, score = floor(tiempo de canción * 100).
         this._score = Math.floor(shownTime * 100);
-        this.hud.update(this._score, Math.min(shownTime, this._durationSec), this._durationSec);
+        this.hud.update(this._score, Math.min(shownTime, this._playEndSec), this._playEndSec);
 
-        // Victoria: la canción terminó Y no queda ningún obstáculo por cruzar.
-        // Antes bastaba con que acabara el audio, y como los obstáculos
-        // llegaban tarde se ganaba con varios todavía en pantalla.
-        if (songTime >= this._durationSec && !this.spawner.hasPendingCrossing(songTime) && songTime >= this._course.lastEnd) {
-            this._finalSongTime = this._durationSec;
+        // Victoria: el nivel terminó (un momento después del último obstáculo, o al
+        // acabar la canción si llega antes: systems/runEnd.js) Y no queda nada por
+        // cruzar. Hasta Oct 2026 se esperaba siempre al final del audio: en Dawn of
+        // Faith eran 14 s mirando al Dino correr por un nivel ya superado.
+        if (songTime >= this._playEndSec && !this.spawner.hasPendingCrossing(songTime) && songTime >= this._course.lastEnd) {
+            this._finalSongTime = this._playEndSec;
             this._end('win');
         }
     }
@@ -791,6 +810,11 @@ export class GameSession {
         return this._cleared;
     }
 
+    /** Lo que dura el nivel (systems/runEnd.js): la escala de la barra y del porcentaje. */
+    get lengthSec() {
+        return this._playEndSec;
+    }
+
     /**
      * Termina como victoria una partida ya superada (salir desde la pausa
      * durante la outro no debe perder el nivel completado).
@@ -798,7 +822,7 @@ export class GameSession {
      */
     finishCleared() {
         if (!this._isRunning || !this._cleared || this._dying) return false;
-        this._finalSongTime = this._durationSec;
+        this._finalSongTime = this._playEndSec;
         this._end('win');
         return true;
     }
@@ -827,6 +851,7 @@ export class GameSession {
         );
         this._inputs.push(action, at);
         if (starts) this._checkOnBeat(action, at);
+        if (action === 'jump') this._timing.record(at);
     }
 
     /**
@@ -1031,10 +1056,15 @@ export class GameSession {
         if (!this._isRunning) return;
         this._isRunning = false;
 
-        // Detener el audio (idempotente si la muerte ya lo cortó).
-        try {
-            if (this.audioEngine.source) this.audioEngine.source.stop();
-        } catch { /* idempotente */ }
+        // Detener el audio (idempotente si la muerte ya lo cortó). Tras superar el
+        // nivel antes del final de la canción, no: lo que le queda suena bajo el panel
+        // de resultados (`stop` lo corta al salir o reintentar).
+        this._tailAudio = reason === 'win' && this.audioEngine.getSongTime() < this._durationSec - 0.05;
+        if (!this._tailAudio) {
+            try {
+                if (this.audioEngine.source) this.audioEngine.source.stop();
+            } catch { /* idempotente */ }
+        }
 
         // La escena se queda bajo el panel de resultados (reintentos, Sep 2026):
         // tras un choque el mundo se detiene donde caíste; tras superar el nivel
@@ -1059,9 +1089,14 @@ export class GameSession {
         // pausa no cuenta como un intento real. La UI no espera la respuesta;
         // si falla, log a consola — el panel de resultados ya muestra la marca.
         const reached = this._finalSongTime || Math.max(0, this.audioEngine.getSongTime());
-        const percentage = this._durationSec > 0
-            ? Math.min(100, Math.max(0, Math.round((reached / this._durationSec) * 100)))
+        const percentage = this._playEndSec > 0
+            ? Math.min(100, Math.max(0, Math.round((reached / this._playEndSec) * 100)))
             : 0;
+        // Precisión de las pulsaciones (systems/timingLog.js): con ella se calibra la dificultad.
+        const timing = this._timing.summary();
+        if (import.meta.env?.DEV && timing !== null) {
+            console.info(`[Daino] Precisión de la partida: ±${timing.sigmaMs} ms de dispersión, ${timing.biasMs >= 0 ? '+' : ''}${timing.biasMs} ms de media (${timing.presses} pulsaciones).`);
+        }
         const levelId = this.levelId;
         if (levelId !== null && (reason === 'win' || reason === 'collision')) {
             apiRequest('POST', '/api/progress', {
@@ -1093,9 +1128,10 @@ export class GameSession {
                 kind: reason,
                 score: this._score,
                 percentage,
-                durationSec: this._durationSec,
-                reachedSec: Math.min(reached, this._durationSec),
+                durationSec: this._playEndSec,
+                reachedSec: Math.min(reached, this._playEndSec),
                 attempt: this.attempt,
+                timing,
             },
         }));
 
@@ -1141,6 +1177,13 @@ export class GameSession {
 
     stop() {
         if (this._isRunning) this._end('stopped');
+        if (this._tailAudio) {
+            // La cola de la canción seguía sonando bajo el panel de resultados.
+            this._tailAudio = false;
+            try {
+                if (this.audioEngine.source) this.audioEngine.source.stop();
+            } catch { /* ya terminó sola */ }
+        }
         this._ended = false;
         this._skyEpilogue = null;
         if (this._ticker && this._tickFn) {

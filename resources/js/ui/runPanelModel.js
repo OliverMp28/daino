@@ -32,6 +32,8 @@ export const RUN_ACTION = Object.freeze({
  * @property {string} title
  * @property {Array<{ t: number, level?: number, climax?: boolean }>} [sections]
  * @property {boolean} [rotate]                Móvil en vertical: sugerir girarlo.
+ * @property {{ presses: number, biasMs: number, sigmaMs: number } | null} [timing]
+ *           Precisión de las pulsaciones de la partida (systems/timingLog.js); solo en desarrollo.
  */
 
 /**
@@ -103,6 +105,7 @@ export function runPanelView(run) {
             { label: 'Puntos', value: formatPoints(run.points) },
             { label: 'Tiempo', value: `${formatDuration(run.reachedSec)} / ${formatDuration(run.durationSec)}` },
             { label: 'Intento', value: String(Math.max(1, Math.floor(run.attempt || 1))) },
+            ...(run.timing ? [{ label: 'Precisión', value: `±${run.timing.sigmaMs} ms (${run.timing.biasMs >= 0 ? '+' : ''}${run.timing.biasMs})` }] : []),
         ],
         primary,
         secondary,

@@ -1682,6 +1682,100 @@ La caja del Dino de pie incluía el aire sobre su lomo (la cabeza empieza en la 
 
 ---
 
+#### La dificultad no depende del gesto: acentos de dos lados, y el nivel termina cuando se acaba ✅ (Oct 2026, tercer playtest de la dificultad)
+
+Dos comentarios del user tras volver a jugar:
+- **"He vuelto a jugar el nivel Extremo y otro Difícil y no se sienten tan difíciles; el Extremo lo pasé al segundo intento. Si es extremo debe ser realmente extremo, lo mismo el difícil, lo mismo el normal."** Es la tercera vez que lo pide.
+- **"En Dawn of Faith, tras saltar el último cactus, hay unos segundos en los que no pasa nada y termina el nivel… uno piensa: ¿ya lo superé?, ¿cuánto falta? Es tiempo muerto, salvo que haya algo que al jugador le interese ver."**
+
+**1. La exigencia estaba calibrada para un jugador que no era el que jugaba.** Desde el segundo playtest la dificultad se mide con un jugador de referencia que pulsa con un error gaussiano; era de ±45 ms. What's Up Danger en Extremo (charter 14), 200 partidas:
+
+| Quien juega | ±45 ms | ±35 ms | ±30 ms | ±25 ms | ±20 ms |
+|---|---|---|---|---|---|
+| A toques (el jugador del charter) | 7 % | 51 % | 81 % | 94 % | 98 % |
+| Manteniendo los saltos que conviene | — | — | **88 %** | — | — |
+
+Con ±45 ms era "casi nadie"; con ±30 ms, que es alguien con práctica, un paseo. Pasarlo al segundo intento cuadra con eso. En los demás oficiales, con ±30 ms: Sugar Red 96 %, Running With the Wolves 97 %, Mi Fiesta 85-99 %, Dawn of Faith 96 %.
+
+**2. Los acentos solo apretaban a quien daba un toque justo en el golpe.** Una hilera de cactus aprieta por los dos lados a toques. Pero desde "Una pulsación, un gesto" mantener el salto lo hace más alto y más largo, y eso regala todo el lado de pulsar pronto:
+
+| Hilera de 308, margen (ms antes / después del golpe) | A toques | Manteniendo |
+|---|---|---|
+| 800 px/s | −48 / +68 | **−183** / +68 |
+| 1000 px/s | −83 / +110 | **−225** / +110 |
+
+Y quien se guía por la vista salta "cuando la hilera está a la distancia de siempre", que es antes del golpe: mantenido, sin castigo. El cristal afilado de la antigravedad era de un lado por diseño ("quien los ve venir se adelanta sin castigo"). Medido en Dawn of Faith (Difícil) recalibrando solo el jugador y los márgenes, sin tocar los obstáculos, con ±30 ms:
+
+| Cómo juega | Lo supera |
+|---|---|
+| A toques, en el golpe | 12 % |
+| Manteniendo, en el golpe | 45 % |
+| Manteniendo y adelantándose 35 ms | **99 %** |
+
+Con obstáculos de un solo lado la dificultad depende del gesto: imposible para uno y regalada para otro con el mismo nivel. Apretar más las tablas no lo arregla.
+
+**3. De paso: los márgenes calculados tenían sesgo.** La fórmula del margen de un salto (charter 9) contaba un paso de física de más por el lado de pulsar tarde y medio de menos por el de pulsar pronto: 8 ms menos y 4 ms más de lo real. Para ±45 ms daba igual; para ±30 ms, 8 ms cambian la exigencia de un acento un 40 %. La bisección de los márgenes en contexto se quedaba con el extremo bajo (hasta 12-19 ms de menos).
+
+**4. El nivel esperaba al final del archivo de audio.** Entre el último obstáculo y el final: Dawn of Faith **14.5 s** (12 en silencio), Time 10.6 s, Mi Fiesta 5.4, One Day 5.3, Running With the Wolves 5.1, What's Up Danger 4.4, HOPE 4.0, los dos clips 2.4.
+
+**Reglas nuevas:**
+
+- **Jugador de referencia con práctica** (`challenge.js`, `REFERENCE_PLAYER`): ±30 ms y, en cada salto, el gesto que más le conviene (un toque o mantener). `createReferenceOdds` da lo que falla cada acción en su sitio con ese gesto; `referenceGestures`, qué mantiene; `referencePassRate` juega así (`hold: false` = solo toques; `biasS` = adelantándose o retrasándose). El jugador virtual acepta un gesto por obstáculo (`tapS` función).
+- **Acentos de dos lados** (`gate: true` en el registro). Castigan igual pulsar pronto que tarde, se mantenga o no, con el oído o con la vista:
+  - **Paso de medusa** (`GATE`, kinds `GATE_<hueco>`, 32 huecos de 72 a 320): una medusa flota con las puntas de los tentáculos a 92 del suelo (el Dino de pie mide 84) y, un hueco después, hay un saguaro. Se pasa por debajo corriendo y se salta en el hueco: saltar pronto es subir contra los tentáculos, tarde es el cactus. Llega a 228 de alto: ni un salto mantenido la pasa por encima. El hueco decide el margen.
+  - **Pinza de cristales** (`PINCH`, kinds `CRYSTAL_FLOOR_PINCH_<ancho>` / `CRYSTAL_CEIL_PINCH_<ancho>`, 40 separaciones): un cristal afilado en la superficie de LLEGADA y, enseguida, el del golpe en la del Dino. Invertir pronto es subir contra el primero.
+  - En los dos el adelanto es constante (`leadS`) y la caja está centrada para que **el margen sea el mismo por los dos lados a cualquier velocidad** (medido de 450 a 1000 px/s: los dos lados difieren menos de 10 ms). Un solo kind con piezas (`hitParts`) y un dibujo generado del tamaño de su caja: el simulador, el spawner y `Obstacle` no cambian. Cada uno se explica las primeras partidas (`hint`: "No saltes bajo la medusa: salta en el hueco", "Invierte justo entre los dos cristales").
+- **Dónde van** (`accents.js`): en los golpes más fuertes de cada tramo (hasta `accent.gate.share` de sus acentos) con **sitio antes** (`gateRoomS`): tras un salto, aunque se haya mantenido (0.86 s + margen + 68/velocidad: mantener de más el salto anterior no mata en el paso); tras un ptero, pegada a su cola (0.34 s + margen + 121/v: cabe en una alternancia agachado-salto a un beat); tras una inversión, 0.14 s + margen + 137/v. Un salto con sitio puntúa más como acento (`gateBonus`) y entra con un golpe más flojo: el golpe que llega tras un silencio de juego es una entrada. Nunca más holgados que ±120 ms (`gateMaxS`: más lejos, la medusa ya no se lee como parte del salto) y, al correr, solo si su lado de pulsar pronto lo pone la medusa y no el aterrizaje (despacio y con mucho hueco volvería a depender de mantener).
+- **Las hileras y los cristales afilados quedan para el resto**, más holgados (`rowFloor`: una hilera nunca pide menos de 1.3 × el margen mínimo).
+- **Pocos acentos estrechos en vez de muchos medianos** (`spread` 3, antes 0.5): el más fuerte de cada tramo va al margen mínimo y los demás bastante más holgados. Lo que se supera cae menos en picado con la precisión de quien juega.
+- **La apertura es un suelo** (`opening`: ×1.45 al empezar hasta ×1 al 35 % de la canción) que la escalera ya no cierra: con el margen mínimo desde el primer minuto, un Extremo largo perdía a un tercio de las partidas en el primer cuarto.
+- **Tablas** (`difficulty.js`): margen mínimo 66 · 56 · 48 ms (Normal, Difícil, Extremo; antes 85 · 70 · 58), que es 1.2 × la tolerancia de cada una; exigencia por canción 0.3 · 1.1 · 2.0 con el jugador nuevo; `gate.share` 0.5 · 0.65 · 0.8, desde el primer groove. Fácil estrecha sus hileras (140 → 110 ms); Relajado no cambia.
+- **Márgenes sobre el rastro** (`systems/trackMargins.js`): la trayectoria del cuerpo tras una pulsación (el salto, a toques o mantenido; la inversión) se integra una vez y se pasa por delante del obstáculo con la colisión de la partida. Sustituye a la fórmula del salto y da márgenes a la antigravedad, que se medía simulando (medio segundo por chart). Es el margen medio sobre la rejilla de la física.
+- **Lo que el nivel ya exige sin acentos** se suma acción a acción (el vuelo sigue volándose de verdad, solo sus tramos): antes eran 32 partidas del nivel entero que distinguían escalones de 0.03.
+- **El nivel termina cuando se acaba** (`systems/runEnd.js`): 1.6 s después de que el último obstáculo queda atrás (o de salir del último túnel), o con la canción si le quedan menos de 1.2 s. La música **no se corta**: sigue bajo el panel de resultados hasta su final. La barra, el porcentaje, el mapa de la canción y el cielo (el sol asomando) se miden con lo que dura el NIVEL.
+- **Precisión de la partida** (`systems/timingLog.js`): adelanto medio y dispersión de las pulsaciones de salto frente a su acción. En desarrollo sale en el panel de resultados ("Precisión ±31 ms (−8)") y en la consola: es el número con el que se calibra.
+
+**Charter 15.** Oficiales a su dificultad, 300 partidas (antes = charter 14):
+
+| Nivel | Antes, ±30 ms (toques / manteniendo) | Ahora ±30 ms | A toques | Adelantándose 35 ms | ±25 ms | ±35 ms |
+|---|---|---|---|---|---|---|
+| Sugar Red (Normal, 40 s) | 96 % / 97 % | 79 % | 80 % | 26 % | 95 % | 55 % |
+| Running With the Wolves (Normal) | 97 % / 97 % | 75 % | 73 % | 24 % | 94 % | 47 % |
+| Mi Fiesta (Difícil) | 85 % / 99 % | 30 % | 28 % | 0 % | 68 % | 9 % |
+| Dawn of Faith (Difícil) | 96 % / 96 % | 25 % | 23 % | 0 % | 66 % | 6 % |
+| What's Up Danger (Extremo) | 81 % / 88 % | **14 %** | 14 % | 0 % | 52 % | 1 % |
+
+Relajado y Fácil (Last Christmas, One Day, HOPE, Time) siguen en el 100 % (97-100 % con ±35 ms). En los 9 × 5: Normal 0.69-0.78, Difícil 0.25-0.46, Extremo 0.10-0.15 en canciones enteras (los clips de 40 s: 0.79-0.90, 0.77-0.80, 0.55-0.58). Adelantarse ya no regala nada: castiga.
+
+Dónde está la exigencia de What's Up Danger en Extremo (por décimas de canción): 0.00 · 0.02 · 0.02 · 0.11 · 0.12 · 0.04 · 0.03 · **0.64 · 0.77** · 0.08. El 77 % en la antigravedad del clímax (33 pinzas); 23 pasos de medusa repartidos antes. Mi Fiesta (Difícil): 35 pasos, también en sus tramos densos (agachado-salto a un beat).
+
+**Verificación.**
+- `gates.test.mjs` (9): mismo margen por los dos lados y para los dos gestos (pasos de 500 a 1000 px/s, pinzas en suelo y techo); sin atajos (cualquier salto anterior al margen muere, a toques y mantenido, hasta 1.2 s antes; por encima no se pasa; de pie y agachado la medusa no se toca); rastro frente a simulador en antigravedad; el charter los pone con sitio y jugables a toques; mantener de más el salto anterior no mata; final del nivel; precisión.
+- `challenge.test.mjs`: rastro frente a simulador a toques y manteniendo (medio paso, ≤ 12 ms); **la exigencia no depende del gesto** (a toques, manteniendo y adelantándose 35 ms en tres oficiales); bandas por dificultad con el jugador nuevo; 5★ superable con ±20 ms.
+- `hitboxes.test.mjs` y el guardián de legibilidad pasan con los 112 kinds nuevos (la medusa lleva un rosa algo más claro, `Z`: flota hasta 228 y el cielo del alba en la Costa es el más claro de lo que se juega; un kind dice a qué alturas dibuja con `drawn`).
+- **410 JS, 81 PHP, 112 Python.** Bundle principal 94.0 KB gzip (+1.7), charter 23.6 KB (+1.3). Un chart se genera en 0.2-1.2 s, como antes (a medio camino llegó a 2-10 s simulando cada variante en su sitio).
+- **E2E** (Chrome con la GPU real, bot de toques): What's Up Danger en Extremo al 100 % con sus 23 pasos y 33 pinzas, 59.9 FPS (p99 17.3 ms); Dawn of Faith al 100 %, termina en el segundo 183.7 (el audio, 196.5) y la canción sigue bajo el panel; el aviso de la medusa aparece dos compases antes de la primera; la precisión de una partida con pulsaciones fechadas (+15 ms, ±10) sale como se pulsó; build de producción cargado y jugado en el navegador.
+
+**Decisiones (vinculantes):**
+- **La dificultad no depende del gesto.** La exigencia de una dificultad la ponen acentos de dos lados; un acento que solo castiga llegar tarde (o que se relaja manteniendo) es adorno, no exigencia. Un obstáculo de precisión nuevo se mide a toques, manteniendo y adelantándose antes de contar con él.
+- **El jugador de referencia es alguien con práctica** (±30 ms, el mejor gesto). `accent.hazard` son sus muertes esperadas en la canción.
+- **Un acento de dos lados es un kind con piezas y adelanto constante**, centrado para que su margen sea simétrico a cualquier velocidad; solo va donde hay sitio antes y mantener de más la acción anterior no mata en él.
+- **Pocos acentos estrechos, no muchos medianos**, y nunca más estrechos que 1.2 × la tolerancia de la dificultad (el validador sigue jugando cada chart con ella).
+- **La apertura de la canción no se cierra**: la exigencia va donde la música aprieta.
+- **Un nivel dura lo que hay que jugar.** Termina un momento después del último obstáculo; la canción sigue bajo el panel. Un final que merezca verse es cosa de una escena, no de esperar al archivo.
+- **La dificultad se calibra midiendo a quien juega** (precisión de la partida), no suponiéndola.
+
+**Limitaciones:**
+- **Lo que se supera cambia mucho con la precisión**: con ±25 ms el Extremo de What's Up Danger cae una de cada dos veces; con ±35, una de cada cien. No se sabe cuál es la del user: el panel de resultados lo dice en desarrollo, y con ese número se ajusta `accent.hazard` (un número por dificultad).
+- Normal es duro para quien empieza (±45 ms: 7-12 %); Relajado y Fácil son suyos.
+- En una canción sin sitio (acciones cada medio segundo sin agachados antes de los saltos) caben pocos pasos y la exigencia no llega a la de su dificultad; en los clips de 40 s tampoco.
+- Los agachados siguen siendo de un lado (agacharse antes es gratis) y el vuelo, un momento de calma.
+- Un anillo puede no hacer falta si el salto anterior se mantiene (no se ha medido).
+- El modelo solo tiene errores de tiempo: no cuenta leer mal a 1000 px/s ni equivocarse de acción.
+- Sin probar en un móvil de verdad.
+
+---
+
 ### Ola 7 — Ediciones del autor y editor de niveles 💤 (aplazada: futura actualización)
 
 > **Decisión (Sep 2026, tras la Ola 6c):** se aplaza. Es la pieza más compleja que queda y hoy aporta poco frente a pulir cómo se juega y cómo se ve. Se guarda como **actualización futura, para anunciarla como sorpresa** cuando el juego esté publicado y haya autores que suban canciones. Esta sección deja el diseño pensado para que quien la retome no empiece de cero.
