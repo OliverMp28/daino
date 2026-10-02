@@ -15,14 +15,16 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /**
  * @param {string} text
- * @param {{ className?: string, shadow?: boolean, tag?: string }} [opts]
- *        `shadow`: sombra dura de una celda, abajo a la derecha (rótulos sobre la escena).
+ * @param {{ className?: string, shadow?: boolean | 'half', tag?: string }} [opts]
+ *        `shadow`: sombra dura abajo a la derecha, para lo que va sobre la escena. De
+ *        una celda, o de media (`'half'`) en los rótulos grandes, donde una celda
+ *        entera pesa demasiado (solo con celdas de un número par de píxeles).
  * @returns {HTMLElement}
  */
 export function pixelText(text, opts = {}) {
     const node = document.createElement(opts.tag ?? 'span');
     node.className = opts.className ? `px ${opts.className}` : 'px';
-    if (opts.shadow) node.dataset.shadow = 'true';
+    if (opts.shadow) node.dataset.shadow = opts.shadow === 'half' ? 'half' : 'true';
     setPixelText(node, text);
     return node;
 }
@@ -52,10 +54,10 @@ export function setPixelText(node, text) {
         svg = document.createElementNS(SVG_NS, 'svg');
         svg.setAttribute('aria-hidden', 'true');
         svg.setAttribute('focusable', 'false');
-        if (node.dataset.shadow === 'true') {
+        if (node.dataset.shadow) {
             const shadow = document.createElementNS(SVG_NS, 'path');
             shadow.setAttribute('class', 'px__shadow');
-            shadow.setAttribute('transform', 'translate(1 1)');
+            shadow.setAttribute('transform', node.dataset.shadow === 'half' ? 'translate(0.5 0.5)' : 'translate(1 1)');
             svg.appendChild(shadow);
         }
         const ink = document.createElementNS(SVG_NS, 'path');

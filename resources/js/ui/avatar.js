@@ -11,6 +11,8 @@
 // Aquí prefijeamos con `<meta name="daino:vout-origin">` cuando detectamos
 // que el path es relativo.
 
+import { pixelText } from './pixel/text.js';
+
 const META_VOUT_ORIGIN = 'daino:vout-origin';
 
 let cachedVoutOrigin = undefined;
@@ -53,48 +55,36 @@ export function resolveAvatarUrl(url) {
 }
 
 /**
- * Render de avatar circular con fallback a la inicial del username si no hay
- * URL o falla el load. El elemento devuelto es ya un `<span>` o `<div>` listo
- * para añadir al DOM — el caller decide el contenedor padre.
+ * Avatar cuadrado, con las esquinas en escalón como el resto de la interfaz
+ * (`.daino-avatar`, components.css), y la inicial del nombre en la letra del juego
+ * si no hay imagen o no carga. El elemento devuelto es ya un `<span>` o `<div>`
+ * listo para añadir al DOM — el caller decide el contenedor padre.
  *
  * @param {string | null | undefined} rawUrl
  * @param {string} username
- * @param {number} size  Tamaño en píxeles. Cuadrado.
+ * @param {number} size  Lado, en px a 16 px de rem: crece con la interfaz.
  * @param {{ tag?: 'span' | 'div' }} [opts]
  * @returns {HTMLElement}
  */
 export function renderAvatar(rawUrl, username, size, opts = {}) {
     const tag = opts.tag === 'div' ? 'div' : 'span';
     const wrap = document.createElement(tag);
-    wrap.style.display = 'inline-flex';
-    wrap.style.width = `${size}px`;
-    wrap.style.height = `${size}px`;
-    wrap.style.borderRadius = '50%';
-    wrap.style.overflow = 'hidden';
-    wrap.style.flex = 'none';
-    wrap.style.alignItems = 'center';
-    wrap.style.justifyContent = 'center';
-    wrap.style.background = 'color-mix(in oklch, var(--color-daino-beat) 80%, transparent)';
-    wrap.style.color = '#fff';
-    wrap.style.fontWeight = '600';
-    wrap.style.fontSize = `${Math.round(size * 0.42)}px`;
+    wrap.className = 'daino-avatar';
+    wrap.style.setProperty('--avatar', `${size / 16}rem`);
+    if (size >= 48) wrap.style.setProperty('--cell', 'var(--u4)');
 
     const initial = (username && username[0]) ? username[0].toUpperCase() : '?';
-    wrap.textContent = initial;
+    const letter = pixelText(initial);
+    letter.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(letter);
 
     const url = resolveAvatarUrl(rawUrl);
     if (url !== null) {
         const img = document.createElement('img');
         img.src = url;
         img.alt = '';
-        img.width = size;
-        img.height = size;
-        img.style.width = '100%';
-        img.style.height = '100%';
-        img.style.objectFit = 'cover';
         img.addEventListener('load', () => {
-            wrap.textContent = '';
-            wrap.appendChild(img);
+            wrap.replaceChildren(img);
         });
         // En 'error' dejamos el fallback (ya está pintado) — no hacemos nada
         // explícito. Esto cubre tanto 404 como CORS o assets bloqueados.

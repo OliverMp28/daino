@@ -6,24 +6,25 @@
 //     partida tal cual terminó: el Dino caído junto al obstáculo.
 //   - pause:   Reanudar delante (Esc), Reintentar (R), Niveles, Menú y volumen.
 //
+// Su aspecto (T04, doc 12): el panel de la interfaz, con el camino de la canción y
+// el Dino donde llegaste; sin iconos (las acciones se leen) salvo ▶ en Reanudar.
+//
 // Qué se enseña lo decide `runPanelModel.js`. Este módulo pinta, gestiona el
 // teclado y protege de pulsaciones accidentales: durante unas décimas tras
 // abrirse no acepta nada, porque quien choca suele estar machacando saltar y
 // ese toque no debe decidir por él (y menos "Menú").
 
 import { RUN_ACTION, keyAction } from './runPanelModel.js';
+import { button, el, range } from './kit.js';
+import { getSkin } from './settings.js';
+import { runningDinoEl, spriteEl } from './pixel/sprite.js';
+import { pixelText } from './pixel/text.js';
 
 const DIALOG_ID = 'modal-run';
 
 /** Tiempo tras abrir en el que el panel ignora teclas y toques. */
 export const ARM_DELAY_MS = 420;
 
-const ICONS = {
-    [RUN_ACTION.RESUME]: '<path d="M8 5.5v13l11-6.5z" fill="currentColor"/>',
-    [RUN_ACTION.RETRY]: '<path d="M19 12a7 7 0 1 1-2.05-4.95" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M20.5 3.5v5.2h-5.2z" fill="currentColor"/>',
-    [RUN_ACTION.LEVELS]: '<g fill="currentColor"><rect x="4" y="5" width="4" height="4" rx="1"/><rect x="10" y="5.5" width="10" height="3" rx="1.2"/><rect x="4" y="10.5" width="4" height="4" rx="1"/><rect x="10" y="11" width="10" height="3" rx="1.2"/><rect x="4" y="16" width="4" height="4" rx="1"/><rect x="10" y="16.5" width="10" height="3" rx="1.2"/></g>',
-    [RUN_ACTION.MENU]: '<path d="M4 11.2 12 4.5l8 6.7V20h-5.5v-5h-5v5H4z" fill="currentColor"/>',
-};
 
 /** @type {{ dialog: HTMLDialogElement | null, onKey: ((ev: KeyboardEvent) => void) | null, armTimer: number }} */
 const ui = { dialog: null, onKey: null, armTimer: 0 };
@@ -122,17 +123,17 @@ function ensureDialog() {
 }
 
 function renderCard(view, handlers, fire) {
-    const card = el('div', 'daino-run__card');
+    const card = el('div', 'daino-panel daino-run__card');
 
     const head = el('header', 'daino-run__head');
     if (view.title) head.appendChild(el('p', 'daino-run__title', view.title));
-    const heading = el('h2', 'daino-run__heading', view.heading);
+    const heading = pixelText(view.heading, { tag: 'h2', className: 'daino-run__heading' });
     heading.id = `${DIALOG_ID}-heading`;
     head.appendChild(heading);
-    if (view.mode === 'results') head.appendChild(el('p', 'daino-run__pct', view.percentLabel));
+    if (view.mode === 'results') head.appendChild(pixelText(view.percentLabel, { tag: 'p', className: 'daino-run__pct' }));
     card.appendChild(head);
 
-    card.appendChild(renderBar(view));
+    card.appendChild(renderTrack(view));
 
     const summary = el('p', 'daino-run__note', view.note ?? '');
     summary.id = `${DIALOG_ID}-summary`;
@@ -142,15 +143,15 @@ function renderCard(view, handlers, fire) {
     const stats = el('dl', 'daino-run__stats');
     for (const s of view.stats) {
         const item = el('div', 'daino-run__stat');
-        item.append(el('dt', null, s.label), el('dd', null, s.value));
+        item.append(pixelText(s.label, { tag: 'dt' }), pixelText(s.value, { tag: 'dd' }));
         stats.appendChild(item);
     }
     card.appendChild(stats);
 
     const actions = el('div', 'daino-run__actions');
-    actions.appendChild(actionButton(view.primary, 'daino-run__primary', fire));
+    actions.appendChild(actionButton(view.primary, 'daino-btn daino-btn--primary daino-btn--lg daino-run__primary', fire));
     const secondary = el('div', 'daino-run__secondary');
-    for (const a of view.secondary) secondary.appendChild(actionButton(a, 'daino-run__secondary-btn', fire));
+    for (const a of view.secondary) secondary.appendChild(actionButton(a, 'daino-btn daino-run__secondary-btn', fire));
     actions.appendChild(secondary);
     card.appendChild(actions);
 
@@ -162,13 +163,26 @@ function renderCard(view, handlers, fire) {
     return card;
 }
 
-function renderBar(view) {
-    const bar = el('div', 'daino-run__bar');
-    bar.setAttribute('role', 'img');
+/**
+ * El camino de la canción: la barra con sus tramos, lo alcanzado relleno, el Dino
+ * (con el personaje elegido) de pie donde llegaste y un banderín en tu mejor marca.
+ * El Dino dice cómo fue: caído si chocaste, trotando si superaste el nivel.
+ */
+function renderTrack(view) {
+    const track = el('div', 'daino-run__track');
+    track.setAttribute('role', 'img');
     const best = view.bar.best;
-    bar.setAttribute('aria-label', best !== null
+    track.setAttribute('aria-label', best !== null
         ? `${view.percentLabel} de la canción. Tu mejor marca: ${Math.round(best * 100)} %.`
         : `${view.percentLabel} de la canción.`);
+    track.style.setProperty('--at', String(view.bar.fill));
+
+    const skin = getSkin();
+    let dino;
+    if (view.tone === 'win') dino = runningDinoEl({ skin, className: 'daino-run__dino' });
+    else dino = spriteEl(view.mode === 'pause' ? 'dinoRunA' : 'dinoDead', { skin, className: 'daino-run__dino' });
+
+    const bar = el('div', 'daino-run__bar');
     const road = el('div', 'daino-run__road');
     for (const s of view.bar.segments) {
         const seg = el('i', 'daino-run__seg');
@@ -179,34 +193,26 @@ function renderBar(view) {
         road.appendChild(seg);
     }
     const fill = el('span', 'daino-run__fill');
-    fill.style.setProperty('--fill', String(view.bar.fill));
-    bar.append(road, fill);
+    fill.style.setProperty('--amount', String(view.bar.fill));
+    road.appendChild(fill);
+    bar.appendChild(road);
     if (best !== null) {
         const mark = el('b', 'daino-run__best');
         mark.style.left = `${(best * 100).toFixed(2)}%`;
-        mark.appendChild(el('span', null, 'Mejor'));
+        mark.appendChild(pixelText('Mejor'));
         bar.appendChild(mark);
     }
-    return bar;
+    track.append(dino, bar);
+    return track;
 }
 
 function actionButton(action, className, fire) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = className;
-    b.dataset.interactive = 'true';
+    const b = button(action.label, className, {
+        key: action.key ?? undefined,
+        before: action.action === RUN_ACTION.RESUME ? '▶' : undefined,
+    });
     b.dataset.action = action.action;
-    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    icon.setAttribute('viewBox', '0 0 24 24');
-    icon.setAttribute('aria-hidden', 'true');
-    icon.classList.add('daino-run__icon');
-    icon.innerHTML = ICONS[action.action] ?? '';
-    b.appendChild(icon);
-    b.appendChild(el('span', 'daino-run__label', action.label));
     if (action.key) {
-        const kbd = el('kbd', 'daino-run__key', action.key);
-        kbd.setAttribute('aria-hidden', 'true');
-        b.appendChild(kbd);
         b.setAttribute('aria-keyshortcuts', action.key === 'Espacio' ? 'Space' : action.key === 'Esc' ? 'Escape' : action.key);
     }
     b.addEventListener('click', () => fire(action.action));
@@ -217,6 +223,7 @@ function autoRetrySwitch({ checked, onChange }) {
     const label = el('label', 'daino-run__switch');
     const input = document.createElement('input');
     input.type = 'checkbox';
+    input.className = 'daino-check';
     input.checked = checked;
     input.dataset.interactive = 'true';
     input.addEventListener('change', () => onChange(input.checked));
@@ -226,22 +233,7 @@ function autoRetrySwitch({ checked, onChange }) {
 
 function volumeRow({ value, onInput }) {
     const row = el('label', 'daino-run__volume');
-    row.appendChild(el('span', null, 'Volumen'));
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = '0';
-    input.max = '1';
-    input.step = '0.01';
-    input.value = String(value);
-    input.dataset.interactive = 'true';
-    input.addEventListener('input', () => onInput(Number.parseFloat(input.value)));
-    row.appendChild(input);
+    row.appendChild(pixelText('Volumen'));
+    row.appendChild(range({ value, onInput }));
     return row;
-}
-
-function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
 }

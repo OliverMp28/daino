@@ -1,0 +1,496 @@
+/*
+ * HUD de la partida — DOM sobre el lienzo (doc 06 §4.2).
+ *
+ * Arriba: los puntos (izquierda), el tiempo con las marchas y el mapa de la canción
+ * (centro) y el título con el botón de pausa (derecha). Todo en la letra del juego
+ * con una sombra dura de una celda: se lee sobre el cielo de cualquier hora sin
+ * sombras difuminadas.
+ *
+ * En partida, los efectos del HUD solo animan opacidad, transformaciones o color:
+ * un `filter` o un `backdrop-filter` obliga a la GPU a otra pasada por elemento y
+ * fotograma, y juntos daban tirones de 100-170 ms en los drops en una GPU integrada
+ * (medido en la T02.6). Tampoco hay sombras blandas: las duras son parte del dibujo.
+ */
+
+.daino-hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    color: var(--d-bone);
+    user-select: none;
+}
+
+.daino-hud__top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    /* A la derecha, el hueco del botón de pausa (y los márgenes seguros). */
+    padding: max(1rem, var(--safe-top)) calc(4.5rem + var(--safe-right)) 1rem max(1.25rem, var(--safe-left));
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 1.5rem;
+    align-items: start;
+}
+
+/* ----- Puntos ----- */
+
+.daino-hud__score {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.45rem;
+}
+
+.daino-hud__label {
+    --cell: var(--u1);
+    color: var(--d-belly);
+}
+
+.daino-hud__value {
+    --cell: var(--u3);
+}
+
+/* ----- Tiempo, marchas y mapa de la canción ----- */
+
+.daino-hud__progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: center;
+    width: min(22.5rem, 100%);
+}
+
+.daino-hud__timer-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.daino-hud__timer {
+    --cell: var(--u2);
+}
+
+/* Marchas: una flecha por escalón de velocidad sobre la de arranque; la que viene
+   parpadea al pulso los compases previos a su acelerón. */
+.daino-hud__gear {
+    --cell: var(--u2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--u1);
+}
+
+.daino-hud__chev {
+    color: var(--d-speck);
+}
+
+.daino-hud__chev[data-on="true"] {
+    color: var(--d-spike);
+}
+
+.daino-hud__gear[data-gear="4"] .daino-hud__chev[data-on="true"] {
+    color: var(--d-beat);
+}
+
+.daino-hud__chev[data-next="true"] {
+    color: var(--d-bone);
+}
+
+.daino-hud__gear[data-bump="true"] {
+    animation: daino-gear-bump 360ms steps(3, end);
+}
+
+@keyframes daino-gear-bump {
+    0%   { transform: scale(1.75); }
+    100% { transform: scale(1); }
+}
+
+/* La barra: la canción entera. Cada tramo más claro cuanto más intenso, el clímax
+   en rosa, una marca en cada acelerón; lo jugado lo tapa el relleno. */
+.daino-hud__progress-bar {
+    position: relative;
+    width: 100%;
+    height: var(--u6);
+    background: var(--d-ink);
+    /* Su marco: una celda de tinta, para que se lea sobre un cielo claro. */
+    outline: var(--u1) solid var(--d-ink);
+    overflow: hidden;
+}
+
+/* Con mapa, anchura propia: en la columna `auto` medía lo que el texto del tiempo. */
+.daino-hud__progress-bar[data-road="true"] {
+    width: clamp(11.25rem, 24vw, 22.5rem);
+}
+
+.daino-hud__road {
+    position: absolute;
+    inset: 0;
+}
+
+.daino-hud__road-seg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--d-edge);
+    opacity: 0.22;
+}
+
+.daino-hud__road-seg[data-level="0"] { opacity: 0.12; }
+.daino-hud__road-seg[data-level="1"] { opacity: 0.22; }
+.daino-hud__road-seg[data-level="2"] { opacity: 0.36; }
+.daino-hud__road-seg[data-level="3"] { opacity: 0.52; }
+
+.daino-hud__road-seg[data-climax="true"] {
+    background: var(--d-beat);
+    opacity: 0.7;
+}
+
+.daino-hud__road-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: var(--u2);
+    margin-left: calc(-1 * var(--u1));
+    z-index: 2;
+    background: var(--d-spike);
+}
+
+/* Tramos con otras reglas (Ola 6a): una banda del color del modo, abajo. */
+.daino-hud__road-mode {
+    position: absolute;
+    top: 50%;
+    bottom: 0;
+}
+
+/* El ancho avanza a pasos de 0.1 % sin transición: una transición de ancho que
+   se reinicia cada pocos fotogramas era maquetar y repintar sin parar (T02.6). */
+.daino-hud__progress-fg {
+    position: relative;
+    z-index: 1;
+    width: 0;
+    height: 100%;
+    background: var(--d-bone);
+    transition: background-color 300ms ease-out;
+}
+
+/* Clímax: lo jugado se enciende en rosa y late; es el tramo final y se ve. */
+.daino-hud[data-phase="climax"] .daino-hud__progress-fg {
+    background: var(--d-beat);
+}
+
+.daino-hud[data-phase="climax"] .daino-hud__progress-fg::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--d-bone);
+    opacity: 0;
+    animation: daino-climax-pulse 0.9s steps(2, end) infinite alternate;
+}
+
+/* "¡Superado!": ya no quedan obstáculos y la canción termina de sonar. */
+.daino-hud[data-phase="cleared"] .daino-hud__progress-fg {
+    background: var(--d-cactus);
+}
+
+@keyframes daino-climax-pulse {
+    from { opacity: 0; }
+    to   { opacity: 0.55; }
+}
+
+/* ----- Modo de movimiento (Ola 6a) -----
+   El portal se ve venir por el mundo; este rótulo lo nombra antes de llegar
+   (parpadeando) y mientras dura. Las primeras veces, además dice cómo se juega. */
+
+.daino-hud__mode {
+    --daino-mode-color: var(--d-spike);
+    --cell: var(--u1);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 1.4rem;
+    margin-top: 0.1rem;
+    padding: 0 0.55rem;
+    border: var(--u2) solid var(--daino-mode-color);
+    background: var(--d-ink);
+    color: var(--daino-mode-color);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 180ms ease-out;
+}
+
+.daino-hud__mode[data-state="on"],
+.daino-hud__mode[data-state="warn"] {
+    opacity: 1;
+}
+
+.daino-hud__mode[data-state="warn"] {
+    animation: daino-mode-warn 0.5s steps(1, end) infinite;
+}
+
+@keyframes daino-mode-warn {
+    0%   { background: var(--d-ink); }
+    50%  { background: var(--d-speck); }
+}
+
+.daino-hud__mode-hint {
+    font: 600 0.72rem / 1 var(--d-font);
+    color: var(--d-bone);
+}
+
+.daino-hud__mode-hint:empty {
+    display: none;
+}
+
+/* ----- Título de la canción ----- */
+
+.daino-hud__song {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--d-bone);
+    /* Sombra dura, de un píxel: el título se lee sobre cualquier cielo. */
+    text-shadow: var(--u1) var(--u1) 0 var(--d-ink), calc(-1 * var(--u1)) 0 0 var(--d-ink), 0 calc(-1 * var(--u1)) 0 var(--d-ink);
+}
+
+/* ----- Pausa -----
+   El único modo de pausar en táctil: tamaño de dedo (2.75rem = 44 px a 16 px). */
+
+.daino-hud__pause {
+    position: absolute;
+    top: max(0.75rem, var(--safe-top));
+    right: max(0.9rem, var(--safe-right));
+    width: 2.75rem;
+    min-height: 2.75rem;
+    padding: 0;
+    gap: var(--u4);
+    --btn-bg: var(--d-ink);
+}
+
+.daino-hud__pause > i {
+    width: var(--u4);
+    height: var(--u12);
+    background: currentColor;
+}
+
+/* Solo mientras se juega: en pausa y en resultados manda el panel. */
+body:not([data-app-state="PLAYING"]) .daino-hud__pause {
+    visibility: hidden;
+}
+
+/* ----- Cómo se juega (las primeras partidas) -----
+   En táctil, cada mitad de la pantalla dice lo que hace; con teclado, una fila de
+   teclas. Nunca bloquea toques. */
+
+.daino-hud__controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 34%;
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0 max(1rem, var(--safe-right)) 0 max(1rem, var(--safe-left));
+    opacity: 0;
+    transition: opacity 240ms ease-out;
+    pointer-events: none;
+}
+
+.daino-hud__controls[data-shown="true"] {
+    opacity: 1;
+}
+
+.daino-hud__controls-side {
+    --cell: var(--u2);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 2.25rem;
+    padding: 0 0.8rem;
+    border: var(--u2) solid var(--d-speck);
+    background: var(--d-ink);
+    color: var(--d-bone);
+    white-space: nowrap;
+}
+
+.daino-hud__controls-side.is-pause {
+    color: var(--d-mute);
+}
+
+.daino-hud__controls[data-input="touch"] {
+    justify-content: space-between;
+    top: 40%;
+}
+
+.daino-hud__controls[data-input="touch"] .daino-hud__controls-side {
+    width: calc(50% - 1.5rem);
+    min-height: 3.25rem;
+    justify-content: center;
+    border-style: dashed;
+    background: rgb(11 12 26 / 0.7);
+}
+
+/* ----- Rótulos sobre la escena ----- */
+
+/* "¡Superado!", "Intento 3". */
+.daino-hud__banner {
+    --cell: var(--u5);
+    --px-shadow: var(--d-ink);
+    position: absolute;
+    top: 24%;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--d-spike);
+    opacity: 0;
+    transition: opacity 240ms ease-out;
+}
+
+.daino-hud__banner[data-shown="true"] {
+    opacity: 1;
+}
+
+/* Cuenta atrás al reanudar: 3, 2, 1 en el centro de la escena. */
+.daino-hud__count {
+    --cell: var(--u16);
+    --px-shadow: var(--d-ink);
+    position: absolute;
+    top: 38%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--d-bone);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.daino-hud__count[data-shown="true"] {
+    opacity: 1;
+    animation: daino-count 300ms steps(3, end) both;
+}
+
+/* Cada número entra de golpe, a saltos. */
+@keyframes daino-count {
+    from { transform: translate(-50%, -50%) scale(1.5); }
+    to   { transform: translate(-50%, -50%) scale(1); }
+}
+
+/* Con el panel de resultados o de pausa abierto, el rótulo repetiría lo que dice. */
+body[data-app-state="RESULTS"] .daino-hud__banner,
+body[data-app-state="PAUSED"] .daino-hud__banner {
+    opacity: 0;
+}
+
+/*
+ * Rótulo de una historia de autor (T02.6, "Diez años después…"): como el de una
+ * película, en serif cursiva de sistema (sin fuentes que descargar), entre dos
+ * filetes finos. Es la voz de la historia, no la del juego: por eso no va en la
+ * letra de celdas. Aparece despacio y se va despacio; nunca tapa el centro.
+ */
+.daino-hud__caption {
+    position: absolute;
+    top: 17%;
+    left: 50%;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.9em;
+    transform: translate(-50%, 0.35rem);
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: clamp(1.05rem, 2.3vw, 1.6rem);
+    font-style: italic;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    padding: 0.5em 1.6em;
+    color: #fff3dc;
+    text-shadow: 0 2px 22px rgba(0, 0, 0, 0.8), 0 0 3px rgba(0, 0, 0, 0.7);
+    /* Un velo oscuro muy suave detrás: el rótulo cae en la franja de las nubes,
+       que de día son blancas. */
+    background: radial-gradient(ellipse at center, rgba(5, 5, 12, 0.42), rgba(5, 5, 12, 0) 72%);
+    opacity: 0;
+    transition: opacity 1400ms ease-out, transform 1400ms ease-out;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.daino-hud__caption::before,
+.daino-hud__caption::after {
+    content: '';
+    width: 2.2em;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.45;
+}
+
+.daino-hud__caption[data-shown="true"] {
+    opacity: 0.92;
+    transform: translate(-50%, 0);
+}
+
+body[data-app-state="RESULTS"] .daino-hud__caption,
+body[data-app-state="PAUSED"] .daino-hud__caption {
+    opacity: 0;
+}
+
+/* ----- Pantallas pequeñas ----- */
+
+@media (max-width: 640px) {
+    .daino-hud__top {
+        padding: max(0.75rem, var(--safe-top)) calc(4rem + var(--safe-right)) 0.75rem max(0.85rem, var(--safe-left));
+        grid-template-columns: 1fr 1fr;     /* puntos y tiempo; el título se oculta */
+    }
+
+    .daino-hud__song {
+        display: none;
+    }
+
+    .daino-hud__progress {
+        align-items: flex-end;
+    }
+
+    .daino-hud__progress-bar[data-road="true"] {
+        width: clamp(7.5rem, 38vw, 13.75rem);
+    }
+
+    /* En móvil la explicación pasa a su propia línea en vez de desbordar. */
+    .daino-hud__mode {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        padding-block: 0.25rem;
+        white-space: normal;
+        text-align: right;
+    }
+
+    .daino-hud__banner { --cell: var(--u3); }
+}
+
+/* Móvil apaisado: el HUD roba lo menos posible del poco alto que hay. */
+@media (max-height: 480px) {
+    .daino-hud__top {
+        padding-top: max(0.5rem, var(--safe-top));
+        padding-bottom: 0.5rem;
+        gap: 1rem;
+    }
+    .daino-hud__score { gap: 0.3rem; }
+    .daino-hud__value { --cell: var(--u2); }
+    .daino-hud__song { font-size: 0.75rem; }
+    .daino-hud__progress { gap: 0.35rem; }
+    .daino-hud__pause { top: max(0.45rem, var(--safe-top)); width: 2.5rem; min-height: 2.5rem; }
+    .daino-hud__controls { top: 30%; }
+    .daino-hud__count { --cell: var(--u10); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-hud__banner,
+    .daino-hud__caption {
+        transition: none;
+    }
+    .daino-hud__gear[data-bump="true"],
+    .daino-hud__count[data-shown="true"],
+    .daino-hud__mode[data-state="warn"],
+    .daino-hud[data-phase="climax"] .daino-hud__progress-fg::after {
+        animation: none;
+    }
+}

@@ -45,6 +45,7 @@ import { closeAllModals, openSettingsModal } from './modals.js';
 import { openCatalog } from './catalog.js';
 import { PLAY_REQUEST_EVENT, PREFETCH_REQUEST_EVENT } from './playRequests.js';
 import { showToast } from './toast.js';
+import { hideLoader, showLoader } from './loader.js';
 import { Input } from '../game/systems/input.js';
 import { SCENERY } from '../game/config.js';
 import { DEFAULT_SCENE, playSceneId } from '../game/scenes/registry.js';
@@ -790,17 +791,13 @@ function setState(next) {
     engineApi?.setRenderProfile?.(next);
 }
 
+// El aviso de "preparando nivel" (el Dino que trota y la fase) vive en ui/loader.js.
 function showHintWithText(text) {
-    const hint = document.getElementById('hint');
-    if (!hint) return;
-    if (hint.textContent !== text) hint.textContent = text;
-    hint.classList.remove('is-hidden');
+    showLoader(text);
 }
 
 function hideHint() {
-    const hint = document.getElementById('hint');
-    if (!hint) return;
-    hint.classList.add('is-hidden');
+    hideLoader();
 }
 
 if (import.meta.hot) {

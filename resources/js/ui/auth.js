@@ -17,6 +17,7 @@ import { getUser } from '../api/client.js';
 import { isBridgeEmbedded } from '../iframe/bridge.js';
 import { openProfileModal } from './modals.js';
 import { renderAvatar } from './avatar.js';
+import { linkButton } from './kit.js';
 
 let chipEl = null;
 let onLogin = null;
@@ -60,25 +61,19 @@ function render() {
 
     if (user === null) {
         // Anónimo — botón LOGIN. Es navegación a /auth/login, así que <a>.
-        const link = document.createElement('a');
-        link.href = '/auth/login';
-        link.className = 'daino-btn daino-btn--primary';
-        link.dataset.interactive = 'true';
-        link.textContent = 'Iniciar sesión';
-        link.style.fontSize = '0.85rem';
-        link.style.padding = '0.45rem 0.9rem';
-        chipEl.appendChild(link);
+        // Discreto: el único bloque rosa del menú es JUGAR.
+        chipEl.appendChild(linkButton('Iniciar sesión', '/auth/login', 'daino-btn daino-btn--sm'));
         return;
     }
 
     // Logueado — avatar + username, click abre PERFIL.
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'daino-auth-chip__button';
+    button.className = 'daino-btn daino-btn--sm daino-auth-chip__button';
     button.dataset.interactive = 'true';
     button.setAttribute('aria-label', `Perfil de ${user.username}`);
 
-    const avatar = renderAvatar(user.avatar_url, user.username, 32);
+    const avatar = renderAvatar(user.avatar_url, user.username, 24);
     const username = document.createElement('span');
     username.className = 'daino-auth-chip__name';
     username.textContent = user.username;

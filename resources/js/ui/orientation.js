@@ -6,6 +6,9 @@
 // sugiere girar el móvil; quien quiera puede jugar en vertical igualmente, y
 // la decisión se recuerda hasta recargar.
 
+import { button } from './kit.js';
+import { pixelText } from './pixel/text.js';
+
 let allowPortrait = false;
 
 /** Pantalla táctil en vertical (ratón o teclado en una ventana estrecha no cuentan). */
@@ -36,17 +39,19 @@ export function waitForLandscape() {
     const icon = document.createElement('div');
     icon.className = 'daino-rotate__phone';
     icon.setAttribute('aria-hidden', 'true');
-    const title = document.createElement('h2');
+    const title = pixelText('Gira el móvil', { tag: 'h2' });
     title.id = 'daino-rotate-title';
-    title.textContent = 'Gira el móvil';
     const text = document.createElement('p');
     text.textContent = 'Daino se juega en horizontal: verás venir cada obstáculo con tiempo.';
     const actions = document.createElement('div');
     actions.className = 'daino-rotate__actions';
     const portrait = button('Jugar en vertical', 'daino-btn');
-    const cancel = button('Ahora no', 'daino-btn daino-rotate__cancel');
+    const cancel = button('Ahora no', 'daino-btn daino-btn--ghost daino-rotate__cancel');
     actions.append(portrait, cancel);
-    dialog.append(icon, title, text, actions);
+    const card = document.createElement('div');
+    card.className = 'daino-panel daino-rotate__card';
+    card.append(icon, title, text, actions);
+    dialog.appendChild(card);
     root.appendChild(dialog);
 
     return new Promise((resolve) => {
@@ -75,13 +80,4 @@ export function waitForLandscape() {
         dialog.showModal();
         portrait.focus({ preventScroll: true });
     });
-}
-
-function button(label, className) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = className;
-    b.dataset.interactive = 'true';
-    b.textContent = label;
-    return b;
 }

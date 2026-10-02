@@ -243,7 +243,8 @@ test('cantidades del cielo: sin música, cero; con ella, lo de siempre; un efect
 });
 
 test('colores por defecto: el rosa y el cian de los tokens de la interfaz', () => {
-    const css = readFileSync(path.join(ROOT, 'resources/css/main.css'), 'utf8');
-    assert.ok(/--color-daino-beat/.test(css) && /--color-daino-high/.test(css));
+    // Los colores de la interfaz viven en tokens.css desde el T04 (doc 12).
+    const css = readFileSync(path.join(ROOT, 'resources/css/ui/tokens.css'), 'utf8');
+    assert.ok(/--d-beat:/.test(css) && /--d-spike:/.test(css));
     for (const c of [FX_COLORS.warm, FX_COLORS.cool]) for (const v of c) assert.ok(v >= 0 && v <= 1);
 });

@@ -1,8 +1,9 @@
 // HUD durante partida — DOM puro con Tailwind/CSS. Reemplaza al
 // game/systems/Hud.js (BitmapText) del Bloque 5.
 //
-// Doc 06 §4.2 + §8: HUD `fixed` con `pointer-events: none`. Tipografía
-// vectorial (Inter via tokens en main.css), transiciones CSS, ARIA gratis.
+// Doc 06 §4.2 + §8: HUD `fixed` con `pointer-events: none`. Lo que dice el juego
+// (puntos, tiempo, rótulos) va en su letra de celdas con sombra dura (T04, doc 12:
+// pixel/text.js); el título de la canción, en la letra del sistema.
 //
 // API:
 //   createHud()                       → { update, setBanner, dispose, … }
@@ -23,6 +24,8 @@
 //     mitades de la pantalla son invisibles y nadie adivina que la derecha agacha.
 
 import { Input } from '../game/systems/input.js';
+import { keycap } from './kit.js';
+import { pixelText, setPixelText } from './pixel/text.js';
 
 let rootEl = null;
 let scoreEl = null;
@@ -92,12 +95,8 @@ export function createHud(_unused) {
     scoreBox.className = 'daino-hud__score';
     scoreBox.setAttribute('role', 'status');
     scoreBox.setAttribute('aria-live', 'polite');
-    const scoreLabel = document.createElement('span');
-    scoreLabel.className = 'daino-hud__label';
-    scoreLabel.textContent = 'SCORE';
-    scoreEl = document.createElement('span');
-    scoreEl.className = 'daino-hud__value';
-    scoreEl.textContent = '000000';
+    const scoreLabel = pixelText('Puntos', { className: 'daino-hud__label', shadow: true });
+    scoreEl = pixelText('000000', { className: 'daino-hud__value', shadow: true });
     scoreBox.appendChild(scoreLabel);
     scoreBox.appendChild(scoreEl);
 
@@ -105,9 +104,7 @@ export function createHud(_unused) {
     centerBox.className = 'daino-hud__progress';
     const timerRow = document.createElement('div');
     timerRow.className = 'daino-hud__timer-row';
-    timerEl = document.createElement('span');
-    timerEl.className = 'daino-hud__timer';
-    timerEl.textContent = '0:00 / 0:00';
+    timerEl = pixelText('0:00 / 0:00', { className: 'daino-hud__timer', shadow: true });
     // Marchas (afinado de velocidad): cuánto más rápido va el mundo que al
     // empezar. Decorativo para lectores de pantalla: la información es visual.
     gearEl = document.createElement('span');
@@ -115,10 +112,8 @@ export function createHud(_unused) {
     gearEl.setAttribute('aria-hidden', 'true');
     chevEls = [];
     for (let i = 0; i < GEAR_SLOTS; i++) {
-        // Chevrón dibujado con CSS (bordes girados): el glifo "›" de la fuente
-        // del HUD medía 5 px y no se leía de reojo.
-        const chev = document.createElement('span');
-        chev.className = 'daino-hud__chev';
+        // Una flecha de la letra del juego por marcha.
+        const chev = pixelText('▶', { className: 'daino-hud__chev', shadow: true });
         gearEl.appendChild(chev);
         chevEls.push(chev);
     }
@@ -142,8 +137,7 @@ export function createHud(_unused) {
     modeEl.className = 'daino-hud__mode';
     modeEl.dataset.state = '';
     modeEl.setAttribute('role', 'status');
-    modeLabelEl = document.createElement('span');
-    modeLabelEl.className = 'daino-hud__mode-label';
+    modeLabelEl = pixelText('', { className: 'daino-hud__mode-label' });
     modeHintEl = document.createElement('span');
     modeHintEl.className = 'daino-hud__mode-hint';
     modeEl.append(modeLabelEl, modeHintEl);
@@ -167,7 +161,7 @@ export function createHud(_unused) {
     // barra espaciadora (saltar) lo "pulsaría" otra vez.
     const pauseBtn = document.createElement('button');
     pauseBtn.type = 'button';
-    pauseBtn.className = 'daino-hud__pause';
+    pauseBtn.className = 'daino-btn daino-hud__pause';
     pauseBtn.dataset.interactive = 'true';
     pauseBtn.setAttribute('aria-label', 'Pausa (Esc)');
     pauseBtn.title = 'Pausa (Esc)';
@@ -180,8 +174,7 @@ export function createHud(_unused) {
     // Rótulo secundario (Ola 5): "¡Superado!" cuando ya no quedan obstáculos
     // y la canción termina sonando; "Intento N" al reintentar. No tapa el
     // centro de la escena.
-    bannerEl = document.createElement('div');
-    bannerEl.className = 'daino-hud__banner';
+    bannerEl = pixelText('', { tag: 'div', className: 'daino-hud__banner', shadow: true });
     bannerEl.setAttribute('role', 'status');
 
     // Rótulo de una historia de autor (T02.6): una línea breve, en cursiva, bajo el
@@ -219,11 +212,7 @@ function buildControls() {
     const side = (cls, key, text) => {
         const el = document.createElement('div');
         el.className = `daino-hud__controls-side ${cls}`;
-        const k = document.createElement('kbd');
-        k.textContent = key;
-        const t = document.createElement('span');
-        t.textContent = text;
-        el.append(k, t);
+        el.append(keycap(key), pixelText(text));
         return el;
     };
     if (touch) {
@@ -254,12 +243,12 @@ function resetState() {
     if (controlsEl) controlsEl.dataset.shown = 'false';
     if (modeEl) {
         modeEl.dataset.state = '';
-        modeLabelEl.textContent = '';
+        setPixelText(modeLabelEl, '');
         modeHintEl.textContent = '';
     }
     lastModeKey = '';
     if (bannerEl) {
-        bannerEl.textContent = '';
+        setPixelText(bannerEl, '');
         bannerEl.dataset.shown = 'false';
     }
     if (captionEl) {
@@ -277,13 +266,13 @@ const api = {
      */
     update(score, currentSec, totalSec) {
         if (score !== lastScore && scoreEl && (score < lastScore || currentSec - lastScoreAt >= SCORE_MIN_INTERVAL_S || currentSec < lastScoreAt)) {
-            scoreEl.textContent = String(score).padStart(6, '0');
+            setPixelText(scoreEl, String(score).padStart(6, '0'));
             lastScore = score;
             lastScoreAt = currentSec;
         }
         const timeKey = `${fmtTime(currentSec)}|${fmtTime(totalSec)}`;
         if (timeKey !== lastTimeKey && timerEl) {
-            timerEl.textContent = `${fmtTime(currentSec)} / ${fmtTime(totalSec)}`;
+            setPixelText(timerEl, `${fmtTime(currentSec)} / ${fmtTime(totalSec)}`);
             lastTimeKey = timeKey;
         }
         const ratio = totalSec > 0 ? Math.max(0, Math.min(1, currentSec / totalSec)) : 0;
@@ -303,7 +292,7 @@ const api = {
     setBanner(text) {
         if (!bannerEl) return;
         // Al ocultarlo el texto se queda: así se desvanece en vez de vaciarse de golpe.
-        if (text) bannerEl.textContent = text;
+        if (text) setPixelText(bannerEl, text);
         bannerEl.dataset.shown = text ? 'true' : 'false';
     },
     /** Rótulo de una historia de autor (T02.6). Pasar '' para que se desvanezca. */
@@ -314,13 +303,12 @@ const api = {
     setCountdown(text) {
         if (!rootEl) return;
         if (!countEl) {
-            countEl = document.createElement('div');
-            countEl.className = 'daino-hud__count';
+            countEl = pixelText('', { tag: 'div', className: 'daino-hud__count', shadow: 'half' });
             countEl.setAttribute('role', 'status');
             countEl.setAttribute('aria-live', 'assertive');
             rootEl.appendChild(countEl);
         }
-        countEl.textContent = text;
+        if (text) setPixelText(countEl, text);
         countEl.dataset.shown = text ? 'true' : 'false';
         // Cada número entra con su golpe: se reinicia la animación.
         if (text) {
@@ -428,7 +416,7 @@ const api = {
         if (key === lastModeKey) return;
         lastModeKey = key;
         modeEl.dataset.state = state;
-        modeLabelEl.textContent = label;
+        setPixelText(modeLabelEl, label);
         modeHintEl.textContent = hint;
         if (color !== undefined) modeEl.style.setProperty('--daino-mode-color', `#${color.toString(16).padStart(6, '0')}`);
     },

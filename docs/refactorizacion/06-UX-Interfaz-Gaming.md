@@ -158,6 +158,8 @@ Cuando Daino corre dentro de un `<iframe>` en Vout:
 
 ---
 
+> ✅ **Aspecto (Oct 2026, T04):** cómo se VE esa interfaz DOM (letra, colores, paneles, portadas) se decide en el **[doc 12](12-Identidad-Interfaz.md)**: está hecha de lo mismo que el juego. Lo de este apartado sigue vigente salvo dos puntos: el HUD ya no usa Tailwind ni la letra del sistema para lo que dice el juego (va en su letra de celdas), y los paneles no desaturan ni desenfocan la escena de detrás: la oscurecen con un velo liso.
+
 ## 9. Impacto en el doc 05 (estructura de proyecto)
 
 La capa UI separada en `resources/js/ui/` sigue teniendo sentido, pero sus archivos cambian de propósito:
@@ -173,7 +175,7 @@ No hace falta reescribir el doc 05. Este 06 lo complementa.
 
 ## 10. Referencias visuales (para mood, no copiado literal)
 
-- Menús de PlayStation 5 / Xbox Series X (paneles slide-in, HUD discreto).
+- Menús de PlayStation 5 / Xbox Series X (paneles slide-in, HUD discreto): por cómo se navega, no por su aspecto de cristal (doc 12).
 - Geometry Dash (fondo reactivo + gameplay frontal).
 - Beat Saber / osu! (feedback audio-visual integrado, no UI de web clásica).
 - Thumper (fondo shader intenso sincronizado con beat).

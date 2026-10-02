@@ -20,7 +20,8 @@ import {
     WINDOW_STEPS, buildingWindows, skylineBuildings, skylineCells, skylineGapless,
 } from '../../resources/js/game/entities/scenery/skylineShape.js';
 import { PIXEL_SCALE, WORLD_VIEW } from '../../resources/js/game/config.js';
-import { sceneChoiceView, sceneSwatch } from '../../resources/js/ui/catalogModel.js';
+import { sceneChoiceView } from '../../resources/js/ui/catalogModel.js';
+import { sceneCoverSpec } from '../../resources/js/ui/coverModel.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const coast = SCENES.coast;
@@ -100,9 +101,8 @@ test('selector del escenario: solo en niveles propios, Automático primero y la 
     assert.equal(auto.current, 'auto');
     assert.deepEqual(auto.options.map((o) => o.value), ['auto', ...SELECTABLE_SCENES.map((s) => s.id)]);
     assert.ok(auto.options[0].label.includes(SCENES[DEFAULT_SCENE].label), 'dice qué es Automático para este nivel');
-    for (const o of auto.options) {
-        for (const c of Object.values(o.swatch)) assert.match(c, /^#[0-9a-f]{6}$/);
-    }
+    // La muestra de cada opción es la portada de su ambiente, a su hora de siempre.
+    for (const o of auto.options.slice(1)) assert.deepEqual(o.cover, sceneCoverSpec(SCENES[o.value]));
     assert.equal(sceneChoiceView({ id: 1, is_mine: true, scene: 'coast' }).current, 'coast');
     // Una historia de autor o un id desconocido no son una opción: se ve Automático.
     assert.equal(sceneChoiceView({ id: 1, is_mine: true, scene: 'volcano' }).current, 'auto');
@@ -113,7 +113,7 @@ test('selector del escenario: Automático enseña su propuesta, o por qué no la
     const proposed = sceneChoiceView({ ...mine, scene_auto: 'storm', difficulty_ceiling: 4 }).options[0];
     assert.equal(proposed.label, `Automático: ${SCENES.storm.label}`);
     assert.match(proposed.hint, /cómo suena/);
-    assert.deepEqual(proposed.swatch, sceneSwatch(SCENES.storm), 'la muestra es la del ambiente propuesto');
+    assert.deepEqual(proposed.cover, sceneCoverSpec(SCENES.storm), 'la muestra es la del ambiente propuesto');
 
     const hints = {
         analizando: sceneChoiceView({ ...mine, scene_auto: null, analysis: { status: 'running' } }).options[0].hint,
@@ -246,5 +246,4 @@ test('el cielo encapotado: vela el sol y la luna, esconde las estrellas y cubre 
     // La nieve y la lluvia se tiñen con la hora y son más claras que el cielo.
     skyStateAt(18.2, SCENES.snow, storm);
     assert.ok(relativeLuminance(storm.arc.snowColor) > relativeLuminance(storm.sky.horizon) * 2);
-    assert.equal(sceneSwatch(SCENES.snow).land.length, 7);
 });

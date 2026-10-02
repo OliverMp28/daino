@@ -19,6 +19,7 @@
 import { openRankingModal, openProfileModal, openSettingsModal } from './modals.js';
 import { openCatalog, openUploadSong } from './catalog.js';
 import { prefetchLevels } from '../api/levelsCache.js';
+import { pixelText } from './pixel/text.js';
 
 let rootEl = null;
 let callbacks = {};
@@ -49,21 +50,16 @@ export function mount(opts = {}) {
     const main = document.createElement('main');
     main.className = 'daino-menu__main';
 
-    const title = document.createElement('h1');
-    title.className = 'daino-menu__title';
-    title.textContent = 'DAINO';
-    main.appendChild(title);
-
-    const subtitle = document.createElement('p');
-    subtitle.className = 'daino-menu__subtitle';
-    subtitle.textContent = 'Cada nivel es una canción';
-    main.appendChild(subtitle);
+    // El rótulo y el lema, en la letra del juego y con sombra dura: se leen sobre
+    // el cielo de cualquier hora.
+    main.appendChild(pixelText('DAINO', { tag: 'h1', className: 'daino-menu__title', shadow: 'half' }));
+    main.appendChild(pixelText('Cada nivel es una canción', { tag: 'p', className: 'daino-menu__subtitle', shadow: true }));
 
     const nav = document.createElement('nav');
     nav.className = 'daino-menu__actions';
     nav.setAttribute('aria-label', 'Acciones principales');
 
-    nav.appendChild(actionButton({ label: 'JUGAR', key: 'play', className: 'daino-menu__action--primary' }));
+    nav.appendChild(actionButton({ label: 'JUGAR', key: 'play', className: 'daino-btn--primary daino-menu__action--primary' }));
 
     // Bloque aparte: música propia. Botón con explicación de una línea para
     // que se entienda qué hace ANTES de pulsarlo.
@@ -95,14 +91,14 @@ export function mount(opts = {}) {
 function actionButton({ label, key, className }) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'daino-menu__action';
-    if (className) btn.classList.add(className);
+    btn.className = className ? `daino-btn daino-menu__action ${className}` : 'daino-btn daino-menu__action';
     btn.dataset.interactive = 'true';
     btn.dataset.action = key;
-    const text = document.createElement('span');
-    text.className = 'daino-menu__action-label';
-    text.textContent = label;
-    btn.appendChild(text);
+    // El cursor de la lista (▶), a la izquierda de la acción señalada.
+    const cursor = pixelText('▶', { className: 'daino-menu__cursor' });
+    cursor.setAttribute('aria-hidden', 'true');
+    cursor.querySelector('.px__sr')?.remove();
+    btn.append(cursor, pixelText(label, { className: 'daino-menu__action-label' }));
     btn.addEventListener('click', () => handleAction(key));
     return btn;
 }

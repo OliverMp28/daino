@@ -12,6 +12,7 @@ import { startBridge } from '@/iframe/bridge.js';
 import * as client from '@/api/client.js';
 import * as auth from '@/ui/auth.js';
 import * as appController from '@/ui/AppController.js';
+import { startPixelGrid } from '@/ui/pixel/grid.js';
 
 let booted = false;
 
@@ -22,6 +23,10 @@ if (typeof window !== 'undefined') {
 async function boot() {
     if (booted) return;
     booted = true;
+
+    // La rejilla de la interfaz, antes de pintar nada: celdas enteras en píxeles de
+    // pantalla a cualquier tamaño y zoom (T04).
+    startPixelGrid();
 
     const bridgeStatus = startBridge();
     if (bridgeStatus.embedded) {

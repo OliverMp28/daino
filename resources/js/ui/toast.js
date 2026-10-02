@@ -16,7 +16,7 @@
  */
 export function showToast(message, severity = 'error', durationMs = 4000) {
     const el = document.createElement('div');
-    el.className = 'daino-toast';
+    el.className = 'daino-toast daino-cut';
     el.dataset.severity = severity;
     el.setAttribute('role', severity === 'error' ? 'alert' : 'status');
     el.textContent = message;

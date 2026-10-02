@@ -18,6 +18,11 @@
 //   - El escenario (T02) se elige en cualquier nivel propio, también publicado:
 //     no cambia el nivel que se juega, solo lo que se ve.
 //
+// Su aspecto (T04, doc 12): la portada de cada nivel es una miniatura de su
+// escenario a una hora del cielo (coverModel.js, pixel/cover.js), y bajo ella una
+// línea dice hasta dónde has llegado. Las piezas (botones, etiquetas, estrellas)
+// son las de toda la interfaz (kit.js).
+//
 // Arquitectura:
 //   - Qué se enseña lo decide `catalogModel.js` / `publishModel.js` (puros,
 //     testeados en Node).
@@ -33,8 +38,11 @@ import {
 import { requestCatalogPlay, requestPrefetch } from './playRequests.js';
 import { pickFileViaInput, uploadMaxMb } from './upload.js';
 import { createLocalBests } from '../storage/localBests.js';
-import { renderAvatar } from './avatar.js';
 import { cardView, emptyView, sceneChoiceView, tabsFor, PLAY_MODE, formatPoints } from './catalogModel.js';
+import { button, closeButton, el, labelOf, px, pxWords, setLabel, setTag, stars, tag } from './kit.js';
+import { paintCover } from './pixel/coverImage.js';
+import { pixelText, setPixelText } from './pixel/text.js';
+import { rankingGhosts, rankingRow } from './rankingRow.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { createModal } from './modals.js';
 import { showToast } from './toast.js';
@@ -117,27 +125,25 @@ export function openUploadSong() {
         isAuthenticated()
             ? 'Queda guardado en «Míos», y desde ahí puedes publicarlo para que lo juegue cualquiera.'
             : 'Inicia sesión si quieres guardarlo en «Míos» y publicarlo después.',
-        `MP3 de hasta ${uploadMaxMb()} MB. También puedes soltarlo sobre la ventana en cualquier momento.`,
+        `MP3 de hasta ${uploadMaxMb()} MB.`,
     ]) {
         points.appendChild(el('li', null, text));
     }
 
-    const drop = document.createElement('button');
-    drop.type = 'button';
-    drop.className = 'daino-upload__drop';
-    drop.dataset.interactive = 'true';
-    drop.append(el('span', 'daino-upload__drop-icon', '♪'), el('strong', null, 'Elegir MP3'), el('span', 'daino-upload__drop-hint', 'o arrástralo aquí'));
-    drop.addEventListener('click', () => {
+    // Un botón, no una zona donde soltar: el MP3 se puede soltar en cualquier parte
+    // de la ventana, y una zona marcada haría creer que solo vale ahí.
+    const pick = button('Elegir MP3', 'daino-btn daino-btn--primary daino-btn--lg daino-upload__pick', { before: '♪' });
+    pick.addEventListener('click', () => {
         // El selector se abre DENTRO del clic: gesto de usuario para el audio.
         pickFileViaInput();
     });
 
-    body.append(lead, points, drop);
+    body.append(lead, points, pick, el('p', 'daino-upload__drop-hint', 'o suelta el archivo sobre la ventana'));
 
     const dialog = createModal('upload-song', { title: 'Subir mi canción', body });
     dialog.classList.add('daino-modal--center');
     if (!dialog.open) dialog.showModal();
-    queueMicrotask(() => drop.focus());
+    queueMicrotask(() => pick.focus());
 }
 
 // --------------------------- Estructura ---------------------------
@@ -205,12 +211,11 @@ function ensureDialog() {
 
 function renderShell() {
     const dialog = ui.dialog;
-    dialog.innerHTML = '';
 
-    const shell = el('div', 'daino-catalog__shell');
+    const shell = el('div', 'daino-panel daino-catalog__shell');
     const header = el('header', 'daino-catalog__header');
 
-    const title = el('h2', 'daino-catalog__title', 'Niveles');
+    const title = pixelText('Niveles', { tag: 'h2', className: 'daino-catalog__title' });
     title.id = `${DIALOG_ID}-title`;
 
     // Sin sesión hay una sola colección: sin pestañas que no llevan a ningún sitio.
@@ -220,7 +225,11 @@ function renderShell() {
         tabs.setAttribute('role', 'tablist');
         tabs.setAttribute('aria-label', 'Colecciones de niveles');
         for (const tab of available) {
-            const btn = button(tab.label, 'daino-catalog__tab');
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'daino-catalog__tab';
+            btn.dataset.interactive = 'true';
+            btn.appendChild(pixelText(tab.label));
             btn.setAttribute('role', 'tab');
             btn.dataset.tab = tab.id;
             btn.setAttribute('aria-selected', String(tab.id === ui.tab));
@@ -238,21 +247,23 @@ function renderShell() {
     }
 
     const actions = el('div', 'daino-catalog__header-actions');
-    const uploadBtn = button('+ Subir mi canción', 'daino-btn daino-catalog__upload');
+    // En una pantalla estrecha queda solo su "+": el nombre lo lleva la etiqueta.
+    const uploadBtn = button('Subir mi canción', 'daino-btn daino-btn--sm daino-catalog__upload', { before: '+' });
+    uploadBtn.setAttribute('aria-label', 'Subir mi canción');
+    uploadBtn.title = 'Subir mi canción';
     uploadBtn.addEventListener('click', () => openUploadSong());
-    const close = button('×', 'daino-catalog__close');
-    close.setAttribute('aria-label', 'Cerrar');
-    close.addEventListener('click', () => ui.dialog.close());
+    const close = closeButton(() => ui.dialog.close());
+    close.classList.add('daino-catalog__close');
     actions.append(uploadBtn, close);
 
     header.append(title, tabs, actions);
 
-    const main = el('main', 'daino-catalog__main');
+    const main = el('main', 'daino-catalog__main daino-scroll');
     main.id = `${DIALOG_ID}-main`;
     if (available.length > 1) main.setAttribute('role', 'tabpanel');
 
     shell.append(header, main);
-    dialog.appendChild(shell);
+    dialog.replaceChildren(shell);
 }
 
 function mainEl() {
@@ -287,7 +298,7 @@ function paintSkeleton(main) {
     grid.setAttribute('aria-hidden', 'true');
     for (let i = 0; i < SKELETON_CARDS; i++) {
         const li = el('li', 'daino-card daino-card--skeleton');
-        li.append(el('div', 'daino-card__cover'), el('div', 'daino-card__body'));
+        li.append(el('div', 'daino-card__cover'), el('div', 'daino-card__mark'), el('div', 'daino-card__body'));
         grid.appendChild(li);
     }
     main.appendChild(grid);
@@ -298,7 +309,7 @@ function paintError(main, message, retry) {
     main.innerHTML = '';
     const box = el('div', 'daino-catalog__state');
     box.setAttribute('role', 'alert');
-    const again = button('Reintentar', 'daino-btn');
+    const again = button('Reintentar');
     again.addEventListener('click', retry);
     box.append(el('p', null, message), again);
     main.appendChild(box);
@@ -324,7 +335,7 @@ function paintGrid(main, tab, page) {
     if (page.items.length === 0) {
         const view = emptyView(tab);
         const box = el('div', 'daino-catalog__state');
-        box.append(el('h3', null, view.title), el('p', null, view.body));
+        box.append(pixelText(view.title, { tag: 'h3' }), el('p', null, view.body));
         if (view.action === 'upload') {
             const cta = button('Subir mi canción', 'daino-btn daino-btn--primary');
             cta.addEventListener('click', () => openUploadSong());
@@ -344,7 +355,7 @@ function paintGrid(main, tab, page) {
         const more = button(`Cargar más (${page.total - page.items.length})`, 'daino-btn daino-catalog__more');
         more.addEventListener('click', async () => {
             more.disabled = true;
-            more.textContent = 'Cargando…';
+            setLabel(more, 'Cargando…');
             const seq = ui.renderSeq;
             const res = await loadMoreLevels(tab);
             if (seq !== ui.renderSeq) return;
@@ -352,7 +363,7 @@ function paintGrid(main, tab, page) {
                 paintGrid(main, tab, res.data);
             } else {
                 more.disabled = false;
-                more.textContent = 'Reintentar';
+                setLabel(more, 'Reintentar');
             }
         });
         main.appendChild(more);
@@ -385,63 +396,75 @@ function paintGrid(main, tab, page) {
 function renderCard(level) {
     const view = cardView(level, localBests.get(level.id));
     const li = el('li', 'daino-card');
-    li.style.setProperty('--hue', String(view.hue));
     li.dataset.mode = view.playMode;
 
     const play = document.createElement('button');
     play.type = 'button';
-    play.className = 'daino-card__open';
+    play.className = 'daino-card__open daino-cut';
     play.dataset.interactive = 'true';
     play.dataset.levelId = String(level.id);
     play.setAttribute('aria-label', view.actionLabel);
     play.addEventListener('click', () => playFromCatalog(level, view.playMode, play));
 
-    const cover = el('div', 'daino-card__cover');
-    cover.appendChild(renderEq(level.id));
+    // La portada: el escenario del nivel, a la hora de su dificultad.
+    const cover = paintCover(el('div', 'daino-card__cover'), view.cover);
     if (view.badge) {
-        const badge = el('span', 'daino-card__badge', view.badge);
-        badge.dataset.state = view.publish.state;
+        const badge = tag(view.badge, view.publish.state);
+        badge.classList.add('daino-card__badge');
         cover.appendChild(badge);
         if (view.publish.state === PUBLISH_STATE.ANALYZING) {
-            // Porcentaje en la insignia mientras se analiza. Solo texto: el
+            // Porcentaje en la etiqueta mientras se analiza. Solo texto: el
             // progreso detallado (y anunciado) está en la ficha.
             ui.unsubscribers.push(subscribeAnalysis(level.id, (status) => {
                 const v = analysisView(status.analysis);
-                const text = v?.progress != null ? `Analizando ${Math.round(v.progress * 100)} %` : 'En cola';
-                if (badge.textContent !== text) badge.textContent = text;
+                setTag(badge, v?.progress != null ? `Analizando ${Math.round(v.progress * 100)} %` : 'En cola');
             }));
         }
     }
-    cover.appendChild(renderStars(view.difficulty));
-    if (view.playMode !== PLAY_MODE.UNAVAILABLE) {
-        // Qué hace pulsar la tarjeta, sin leer nada: ▶ juega, ♪ pide tu MP3.
-        const glyph = el('span', 'daino-card__glyph', view.playMode === PLAY_MODE.NEEDS_FILE ? '♪' : '▶');
-        glyph.setAttribute('aria-hidden', 'true');
-        cover.appendChild(glyph);
+    // Tu marca: la línea bajo la portada, llena hasta donde llegaste.
+    const mark = el('div', 'daino-card__mark');
+    const needsFile = view.playMode === PLAY_MODE.NEEDS_FILE;
+    if (view.best && !needsFile) {
+        mark.style.setProperty('--best', String(view.best.ratio));
+        if (view.best.completed) mark.dataset.done = 'true';
     }
 
     const body = el('div', 'daino-card__body');
     body.append(el('strong', 'daino-card__title', view.title));
     // Siempre presente (aunque vacía) para que todas las tarjetas alineen.
-    body.append(el('span', 'daino-card__byline', view.byline || ' '));
-    const meta = el('span', 'daino-card__meta', [view.bpm, view.duration].filter(Boolean).join(' · '));
-    body.append(meta);
+    body.append(el('span', 'daino-card__meta', view.meta || ' '));
+
+    const rank = el('div', 'daino-card__rank');
+    rank.append(stars(view.difficulty), px(view.difficulty.name));
+    if (view.players) rank.append(el('span', 'daino-card__players', view.players));
+    body.append(rank);
 
     const foot = el('div', 'daino-card__foot');
-    let footText = view.best ? `Mejor: ${view.best.points} · ${view.best.percentage}` : 'Sin jugar';
-    if (view.playMode === PLAY_MODE.NEEDS_FILE) footText = 'Juega con tu MP3';
-    foot.append(el('span', view.best && view.playMode !== PLAY_MODE.NEEDS_FILE ? 'daino-card__best' : 'daino-card__best is-empty', footText));
-    if (view.players) foot.append(el('span', 'daino-card__players', view.players));
+    if (needsFile) {
+        foot.append(px('Juega con tu MP3', 'daino-card__best is-empty'));
+    } else if (view.best) {
+        const pct = px(view.best.percentage, 'daino-card__best');
+        if (view.best.completed) pct.dataset.done = 'true';
+        foot.append(pct, px(view.best.points, 'daino-card__points'));
+    } else {
+        foot.append(px('Sin jugar', 'daino-card__best is-empty'));
+    }
     body.append(foot);
 
-    play.append(cover, body);
+    play.append(cover, mark, body);
+    if (view.playMode !== PLAY_MODE.UNAVAILABLE) {
+        // Qué hace pulsar la tarjeta, sin leer nada: ▶ juega, ♪ pide tu MP3. En el
+        // pie, junto al botón de detalles: las dos cosas que se pueden hacer.
+        const glyph = el('span', 'daino-card__play daino-cut');
+        glyph.setAttribute('aria-hidden', 'true');
+        glyph.appendChild(pixelText(view.playMode === PLAY_MODE.NEEDS_FILE ? '♪' : '▶'));
+        play.appendChild(glyph);
+    }
 
-    const details = button('', 'daino-card__details');
+    const details = button('ℹ', 'daino-btn daino-btn--icon daino-card__details');
     details.dataset.levelId = String(level.id);
     details.setAttribute('aria-label', `Detalles de «${view.title}»`);
     details.title = 'Detalles y ranking';
-    details.appendChild(el('span', null, 'i'));
-    details.firstChild.setAttribute('aria-hidden', 'true');
     details.addEventListener('click', () => openDetail(level, details));
 
     li.append(play, details);
@@ -456,33 +479,6 @@ function playFromCatalog(level, mode, fromButton) {
     if (mode === PLAY_MODE.CATALOG) requestCatalogPlay(level);
     else if (mode === PLAY_MODE.NEEDS_FILE) pickFileViaInput({ level });
     else openDetail(level, fromButton);
-}
-
-/** Barras de "ecualizador" decorativas, estables por nivel (sin animación JS). */
-function renderEq(seed) {
-    const eq = el('span', 'daino-card__eq');
-    eq.setAttribute('aria-hidden', 'true');
-    let x = (Number(seed) * 2654435761) >>> 0;
-    for (let i = 0; i < 12; i++) {
-        x ^= x << 13; x >>>= 0;
-        x ^= x >>> 17;
-        x ^= x << 5; x >>>= 0;
-        const bar = el('span', null);
-        bar.style.setProperty('--h', `${25 + (x % 70)}%`);
-        eq.appendChild(bar);
-    }
-    return eq;
-}
-
-function renderStars(difficulty) {
-    const stars = el('span', 'daino-stars');
-    stars.setAttribute('role', 'img');
-    stars.setAttribute('aria-label', difficulty.label);
-    stars.title = difficulty.name;
-    for (let i = 1; i <= 5; i++) {
-        stars.appendChild(el('span', i <= difficulty.filled ? 'is-on' : null, '★'));
-    }
-    return stars;
 }
 
 // --------------------------- Ficha ---------------------------
@@ -511,22 +507,24 @@ function openDetail(level, fromButton, opts = {}) {
     if (view.playMode === PLAY_MODE.CATALOG) requestPrefetch(level);
 
     const detail = el('section', 'daino-detail');
-    detail.style.setProperty('--hue', String(view.hue));
 
-    const back = button('← Volver', 'daino-detail__back');
+    const back = button('Volver', 'daino-btn daino-btn--ghost daino-btn--sm daino-detail__back', { before: '←' });
     back.addEventListener('click', () => closeDetail());
 
     const hero = el('div', 'daino-detail__hero');
-    const cover = el('div', 'daino-card__cover daino-detail__cover');
-    cover.appendChild(renderEq(level.id));
-    if (view.badge) cover.appendChild(el('span', 'daino-card__badge', view.badge));
+    const cover = paintCover(el('div', 'daino-detail__cover daino-cut'), view.cover);
+    if (view.badge) {
+        const badge = tag(view.badge, view.publish.state);
+        badge.classList.add('daino-card__badge');
+        cover.appendChild(badge);
+    }
 
     const info = el('div', 'daino-detail__info');
     info.append(el('h3', 'daino-detail__title', view.title));
     if (view.byline) info.append(el('p', 'daino-detail__byline', view.byline));
 
     const stats = el('dl', 'daino-detail__stats');
-    addStat(stats, 'Dificultad', renderStars(view.difficulty), view.difficulty.name);
+    addStat(stats, 'Dificultad', [stars(view.difficulty), px(view.difficulty.name)]);
     if (view.bpm) addStat(stats, 'Tempo', view.bpm);
     addStat(stats, 'Duración', view.duration);
     // Un nivel tuyo lo enseña (y lo cambia) en su selector, más abajo.
@@ -534,10 +532,15 @@ function openDetail(level, fromButton, opts = {}) {
     if (level.is_public === true) addStat(stats, 'Jugadores', level.players > 0 ? String(level.players) : '—');
     info.appendChild(stats);
 
-    const bestBox = el('p', view.best ? 'daino-detail__best' : 'daino-detail__best is-empty');
-    bestBox.textContent = view.best
-        ? `Tu mejor marca: ${view.best.points} puntos · ${view.best.percentage}${view.best.completed ? ' · completado' : ''}`
-        : 'Aún no lo has jugado.';
+    // Tu marca, en el color de lo tuyo (verde si lo superaste).
+    let bestBox;
+    if (view.best) {
+        bestBox = el('p', 'daino-detail__best');
+        if (view.best.completed) bestBox.dataset.done = 'true';
+        bestBox.append(px('Tu marca', 'daino-detail__best-label'), px(view.best.percentage), px(`${view.best.points} puntos`));
+    } else {
+        bestBox = el('p', 'daino-detail__best is-empty', 'Aún no lo has jugado.');
+    }
     info.appendChild(bestBox);
 
     const actions = el('div', 'daino-detail__actions');
@@ -548,7 +551,9 @@ function openDetail(level, fromButton, opts = {}) {
     const guarded = [];
 
     if (view.playMode !== PLAY_MODE.UNAVAILABLE) {
-        const play = button(view.playLabel, 'daino-btn daino-btn--primary daino-detail__play');
+        const play = button(view.playLabel, 'daino-btn daino-btn--primary daino-btn--lg daino-detail__play', {
+            before: view.playMode === PLAY_MODE.NEEDS_FILE ? '♪' : '▶',
+        });
         play.addEventListener('click', () => playFromCatalog(level, view.playMode, play));
         actions.appendChild(play);
         guarded.push(play);
@@ -560,13 +565,13 @@ function openDetail(level, fromButton, opts = {}) {
     }
 
     if (publish.canRetry) {
-        const retry = button('Reintentar análisis', 'daino-btn');
+        const retry = button('Reintentar análisis');
         retry.addEventListener('click', () => { void retryLevelAnalysis(level, retry, status); });
         actions.appendChild(retry);
     }
     if (publish.canPublish) {
         const failed = publish.state === PUBLISH_STATE.FAILED;
-        const start = button(failed ? 'Publicar de nuevo…' : 'Publicar…', 'daino-btn');
+        const start = button(failed ? 'Publicar de nuevo…' : 'Publicar…');
         start.addEventListener('click', () => { void publishLevel(level, start, status); });
         actions.appendChild(start);
     }
@@ -574,12 +579,14 @@ function openDetail(level, fromButton, opts = {}) {
     let choice = null;
     if (publish.canConfirm) {
         const name = DIFFICULTY_NAMES[view.difficulty.value];
-        const confirm = button(`Publicar en ${name}`, 'daino-btn daino-detail__confirm');
+        const confirm = button(`Publicar en ${name}`, 'daino-btn daino-btn--strong daino-detail__confirm');
         confirm.addEventListener('click', () => { void confirmLevelPublish(level, confirm, status, guarded); });
         actions.appendChild(confirm);
         guarded.push(confirm);
 
-        const withdraw = button('No publicar', 'daino-detail__withdraw');
+        const withdraw = el('button', 'daino-detail__withdraw', 'No publicar');
+        withdraw.type = 'button';
+        withdraw.dataset.interactive = 'true';
         withdraw.title = 'Vuelve a ser privado y su audio se borra del servidor';
         withdraw.addEventListener('click', () => { void withdrawLevel(level, withdraw, status); });
         actions.appendChild(withdraw);
@@ -599,11 +606,12 @@ function openDetail(level, fromButton, opts = {}) {
         info.appendChild(el('p', 'daino-detail__hint',
             'Pruébalo con Jugar si quieres. Una vez publicado, su dificultad queda fija para todos.'));
     }
-    const sceneChoice = renderSceneChoice(level, status);
-    if (sceneChoice !== null) info.appendChild(sceneChoice);
+    // El progreso del análisis va antes que el escenario: es lo que se viene a mirar.
     if (publish.analysis !== null) {
         info.appendChild(renderAnalysisPanel(level, publish));
     }
+    const sceneChoice = renderSceneChoice(level, status);
+    if (sceneChoice !== null) info.appendChild(sceneChoice);
 
     hero.append(cover, info);
     detail.append(back, hero);
@@ -612,14 +620,16 @@ function openDetail(level, fromButton, opts = {}) {
     if (level.is_public === true) {
         const rankingBox = el('section', 'daino-detail__ranking');
         rankingBox.setAttribute('aria-labelledby', `${DIALOG_ID}-ranking`);
-        const rankingTitle = el('h4', null, 'Ranking del nivel');
+        const rankingTitle = pixelText('Ranking del nivel', { tag: 'h4' });
         rankingTitle.id = `${DIALOG_ID}-ranking`;
-        const rankingList = el('ol', 'daino-detail__ranking-list');
+        const rankingList = el('ol', 'daino-ranking__list');
         rankingList.setAttribute('aria-busy', 'true');
-        rankingList.appendChild(el('li', 'daino-detail__ranking-empty', 'Cargando…'));
-        rankingBox.append(rankingTitle, rankingList);
+        rankingList.append(...rankingGhosts(3));
+        const rankingNote = el('p', 'daino-ranking__note');
+        rankingNote.hidden = true;
+        rankingBox.append(rankingTitle, rankingList, rankingNote);
         detail.appendChild(rankingBox);
-        void loadLevelRanking(level, rankingList, seq);
+        void loadLevelRanking(level, rankingList, rankingNote, seq);
     }
 
     main.appendChild(detail);
@@ -636,58 +646,60 @@ function closeDetail() {
     });
 }
 
-function addStat(dl, label, value, title) {
+/**
+ * Un dato de la ficha: su nombre y su valor, los dos en la letra del juego.
+ *
+ * @param {HTMLElement} dl
+ * @param {string} label
+ * @param {string | Node[]} value  Texto, o los nodos ya montados (las estrellas).
+ */
+function addStat(dl, label, value) {
     const wrap = el('div', 'daino-detail__stat');
     const dd = el('dd', null);
-    if (value instanceof HTMLElement) dd.appendChild(value);
-    else dd.textContent = value;
-    if (title) dd.title = title;
-    wrap.append(el('dt', null, label), dd);
+    if (Array.isArray(value)) dd.append(...value);
+    else dd.appendChild(pixelText(value));
+    wrap.append(pixelText(label, { tag: 'dt' }), dd);
     dl.appendChild(wrap);
 }
 
-async function loadLevelRanking(level, list, seq) {
+async function loadLevelRanking(level, list, note, seq) {
     const res = await apiRequest('GET', `/api/levels/${level.id}/ranking?limit=10`);
     if (seq !== ui.renderSeq) return;
     list.removeAttribute('aria-busy');
-    list.innerHTML = '';
+    list.replaceChildren();
+    const say = (...nodes) => {
+        note.replaceChildren(...nodes);
+        note.hidden = false;
+    };
 
     if (!res.ok) {
-        list.appendChild(el('li', 'daino-detail__ranking-empty', 'No se pudo cargar el ranking.'));
+        say('No se pudo cargar el ranking.');
         return;
     }
     const { items = [], me = null } = res.data ?? {};
     const myVoutId = getUser()?.vout_id ?? null;
+    const row = (entry, isMe) => rankingRow({
+        rank: entry.rank,
+        user: entry.user,
+        score: formatPoints(entry.points),
+        detail: `${entry.percentage} %`,
+        isMe,
+    });
 
-    if (items.length === 0) {
-        list.appendChild(el('li', 'daino-detail__ranking-empty', 'Nadie ha dejado marca todavía. La primera puede ser la tuya.'));
-    }
     for (const entry of items) {
-        list.appendChild(rankingRow(entry, entry.user?.vout_id === myVoutId && myVoutId !== null));
+        list.appendChild(row(entry, entry.user?.vout_id === myVoutId && myVoutId !== null));
     }
     if (me !== null && !items.some((e) => e.user?.vout_id === myVoutId)) {
-        list.appendChild(rankingRow({ rank: me.rank, user: getUser(), points: me.points, percentage: me.percentage }, true));
+        list.appendChild(row({ rank: me.rank, user: getUser(), points: me.points, percentage: me.percentage }, true));
     }
     if (!isAuthenticated()) {
-        const hint = el('li', 'daino-detail__ranking-hint');
-        const link = document.createElement('a');
+        const link = el('a', 'daino-link', 'Inicia sesión');
         link.href = '/auth/login';
-        link.textContent = 'Inicia sesión';
         link.dataset.interactive = 'true';
-        hint.append(link, document.createTextNode(' para que tus partidas entren en el ranking.'));
-        list.appendChild(hint);
+        say(...(items.length === 0 ? ['Nadie ha dejado marca todavía. '] : []), link, ' para que tus partidas entren en el ranking.');
+    } else if (items.length === 0) {
+        say('Nadie ha dejado marca todavía. La primera puede ser la tuya.');
     }
-}
-
-function rankingRow(entry, isMe) {
-    const li = el('li', isMe ? 'daino-detail__ranking-row is-me' : 'daino-detail__ranking-row');
-    li.append(el('span', 'daino-detail__rank', `#${entry.rank}`));
-    const who = el('span', 'daino-detail__who');
-    if (entry.user) {
-        who.append(renderAvatar(entry.user.avatar_url, entry.user.username, 28, { tag: 'span' }), el('span', null, entry.user.username));
-    }
-    li.append(who, el('span', 'daino-detail__score', `${formatPoints(entry.points)} · ${entry.percentage} %`));
-    return li;
 }
 
 // --------------------------- Publicar ---------------------------
@@ -707,8 +719,8 @@ async function publishLevel(level, btn, status) {
     if (file === null) return;
 
     btn.disabled = true;
-    const original = btn.textContent;
-    btn.textContent = 'Subiendo…';
+    const original = labelOf(btn);
+    setLabel(btn, 'Subiendo…');
     status.textContent = '';
 
     const fd = new FormData();
@@ -733,7 +745,7 @@ async function publishLevel(level, btn, status) {
         return;
     }
     btn.disabled = false;
-    btn.textContent = original;
+    setLabel(btn, original);
     status.textContent = res.status === 409 ? 'Ya tienes un nivel público con ese título.'
         : res.status === 413 ? 'Archivo demasiado grande.'
             : res.status === 422 ? (res.data?.fields?.file ?? 'El archivo no es válido.')
@@ -797,22 +809,25 @@ function renderDifficultyChoice(level, guarded, status) {
     const view = difficultyChoiceView(level);
     if (view === null) return null;
 
-    const box = el('fieldset', 'daino-difficulty');
-    const legend = el('legend', 'daino-difficulty__legend', 'Dificultad al publicar');
-    const group = el('div', 'daino-difficulty__options');
+    const box = el('fieldset', 'daino-choice daino-difficulty');
+    const legend = pixelText('Dificultad al publicar', { tag: 'legend', className: 'daino-choice__legend' });
+    const group = el('div', 'daino-seg daino-difficulty__options');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', 'Dificultad al publicar');
-    const note = el('p', 'daino-difficulty__note', view.resetsBest
+    const note = el('p', 'daino-choice__note', view.resetsBest
         ? `${view.note} Cambiarla borra tu marca de prueba.`
         : view.note);
 
     for (const option of view.options) {
         const selected = option.value === view.current;
-        const b = button('', 'daino-difficulty__option');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'daino-seg__option daino-choice__option daino-difficulty__option';
+        b.dataset.interactive = 'true';
         b.setAttribute('role', 'radio');
         b.setAttribute('aria-checked', String(selected));
         b.dataset.value = String(option.value);
-        b.append(el('span', 'daino-difficulty__label', option.label), el('span', 'daino-difficulty__hint', option.hint));
+        b.append(px(option.label, 'daino-choice__label'), px(option.hint, 'daino-choice__hint'));
         b.addEventListener('click', () => {
             if (b.getAttribute('aria-checked') !== 'true') void applyDifficulty(level, option.value, box, guarded, status);
         });
@@ -870,31 +885,33 @@ function renderSceneChoice(level, status) {
     const view = sceneChoiceView(level);
     if (view === null) return null;
 
-    const box = el('fieldset', 'daino-scene');
-    const legend = el('legend', 'daino-scene__legend', 'Escenario');
-    const group = el('div', 'daino-scene__options');
+    const box = el('fieldset', 'daino-choice daino-scene');
+    const legend = pixelText('Escenario', { tag: 'legend', className: 'daino-choice__legend' });
+    const group = el('div', 'daino-choice__scenes daino-scene__options');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', 'Escenario del nivel');
 
     for (const option of view.options) {
         const selected = option.value === view.current;
-        const b = button('', 'daino-scene__option');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'daino-seg__option daino-scene__option';
+        b.dataset.interactive = 'true';
         b.setAttribute('role', 'radio');
         b.setAttribute('aria-checked', String(selected));
         b.dataset.value = option.value;
-        const swatch = el('span', 'daino-scene__swatch');
-        swatch.setAttribute('aria-hidden', 'true');
-        const s = option.swatch;
-        swatch.style.background = `linear-gradient(to bottom, ${s.top} 0%, ${s.mid} 38%, ${s.horizon} 64%, ${s.land} 64%, ${s.land} 100%)`;
+        // La muestra de cada ambiente es su portada: lo que se va a ver al jugar.
+        const thumb = paintCover(el('span', 'daino-scene__thumb'), option.cover);
+        thumb.setAttribute('aria-hidden', 'true');
         const text = el('span', 'daino-scene__text');
-        text.append(el('span', 'daino-scene__label', option.label), el('span', 'daino-scene__hint', option.hint));
-        b.append(swatch, text);
+        text.append(pxWords(option.label, 'daino-scene__label'), el('span', 'daino-scene__hint', option.hint));
+        b.append(thumb, text);
         b.addEventListener('click', () => {
             if (b.getAttribute('aria-checked') !== 'true') void applyScene(level, option.value, box, status);
         });
         group.appendChild(b);
     }
-    box.append(legend, group, el('p', 'daino-scene__note', 'Solo cambia lo que se ve: el nivel y las marcas son los mismos.'));
+    box.append(legend, group, el('p', 'daino-choice__note', 'Solo cambia lo que se ve: el nivel y las marcas son los mismos.'));
     return box;
 }
 
@@ -938,7 +955,7 @@ function renderAnalysisPanel(level, publish) {
     const panel = el('div', 'daino-analysis');
     const head = el('div', 'daino-analysis__head');
     const title = el('strong', 'daino-analysis__title');
-    const pct = el('span', 'daino-analysis__pct');
+    const pct = px('', 'daino-analysis__pct');
     pct.setAttribute('aria-hidden', 'true');
     head.append(title, pct);
 
@@ -963,7 +980,7 @@ function renderAnalysisPanel(level, publish) {
         const working = view.progress !== null;
         bar.hidden = view.tone === 'error';
         bar.dataset.indeterminate = String(!working);
-        pct.textContent = working ? `${Math.round(view.progress * 100)} %` : '';
+        setPixelText(pct, working ? `${Math.round(view.progress * 100)} %` : '');
         if (working) {
             bar.style.setProperty('--progress', String(view.progress));
             bar.setAttribute('aria-valuenow', String(Math.round(view.progress * 100)));
@@ -985,24 +1002,6 @@ function renderAnalysisPanel(level, publish) {
         }));
     }
     return panel;
-}
-
-// --------------------------- Helpers ---------------------------
-
-function el(tag, className, text) {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-}
-
-function button(label, className) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = className;
-    b.dataset.interactive = 'true';
-    b.textContent = label;
-    return b;
 }
 
 if (import.meta.hot) {

@@ -1,0 +1,390 @@
+/*
+ * Piezas que comparte toda la interfaz (T04, doc 12): el panel, el botón, la tecla,
+ * la etiqueta, las estrellas y los controles de un formulario. Cada pantalla
+ * (menu.css, catalog.css, run.css…) las coloca; ninguna se las vuelve a inventar.
+ */
+
+/* ----- Esquinas en escalón -----
+   Una celda fuera en cada esquina: el "redondeo" del pixel art. Con un marco del
+   mismo grosor que el escalón, el marco queda cerrado en diagonal. */
+
+:is(.daino-btn, .daino-panel, .daino-key, .daino-tag, .daino-avatar, .daino-cut) {
+    clip-path: polygon(
+        var(--d-cut) 0, calc(100% - var(--d-cut)) 0, calc(100% - var(--d-cut)) var(--d-cut), 100% var(--d-cut),
+        100% calc(100% - var(--d-cut)), calc(100% - var(--d-cut)) calc(100% - var(--d-cut)), calc(100% - var(--d-cut)) 100%,
+        var(--d-cut) 100%, var(--d-cut) calc(100% - var(--d-cut)), 0 calc(100% - var(--d-cut)),
+        0 var(--d-cut), var(--d-cut) var(--d-cut));
+}
+
+/* ----- Panel -----
+   Un bloque del suelo del juego: su tierra oscura y, arriba, la línea clara del
+   suelo. Opaco: lo de detrás se ve alrededor, no a través. */
+
+.daino-panel {
+    background: var(--d-ground);
+    border: var(--d-line) solid var(--d-speck);
+    border-top-color: var(--d-edge);
+    color: var(--d-bone);
+}
+
+/* ----- Botón -----
+   Un bloque con un labio oscuro abajo que se hunde al pulsarlo. Su letra es la del
+   juego (pixel/text.js); si le llega texto normal, lo pinta en mayúsculas y con
+   peso para que no desentone. */
+
+.daino-btn {
+    --btn-bg: var(--d-raise);
+    --btn-fg: var(--d-bone);
+    --btn-line: var(--d-speck);
+    --btn-lip: var(--d-ink);
+    --cell: var(--u2);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    min-height: 2.5rem;
+    padding: 0 1rem var(--u2);
+    border: var(--d-line) solid var(--btn-line);
+    background: var(--btn-bg);
+    box-shadow: inset 0 calc(-1 * var(--u2)) 0 var(--btn-lip);
+    color: var(--btn-fg);
+    font: 700 0.8rem / 1 var(--d-font);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 90ms, border-color 90ms, color 90ms;
+}
+
+.daino-btn:hover:not(:disabled) {
+    --btn-bg: var(--d-speck);
+    --btn-line: var(--d-edge);
+}
+
+.daino-btn:active:not(:disabled) {
+    transform: translateY(var(--u2));
+    box-shadow: none;
+}
+
+/* El foco es el marco, en el color de lo tuyo y el doble de grueso. Dentro del
+   botón: sus esquinas en escalón recortarían un contorno por fuera. */
+.daino-btn:focus-visible {
+    outline: none;
+    border-color: var(--d-spike);
+    box-shadow: inset 0 0 0 var(--u2) var(--d-spike);
+}
+
+/* Un botón que todavía no se puede usar tiene que VERSE así. */
+.daino-btn:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+
+/* La acción que juega: el único bloque rosa de cada pantalla. */
+.daino-btn--primary {
+    --btn-bg: var(--d-beat);
+    --btn-fg: var(--d-ink);
+    --btn-line: var(--d-beat);
+    --btn-lip: var(--d-beat-deep);
+}
+
+.daino-btn--primary:hover:not(:disabled) {
+    --btn-bg: var(--d-beat-lit);
+    --btn-line: var(--d-beat-lit);
+}
+
+.daino-btn--primary:focus-visible {
+    border-color: var(--d-bone);
+    box-shadow: inset 0 0 0 var(--u2) var(--d-bone);
+}
+
+/* Lo que confirma algo que no es jugar (publicar, iniciar sesión): un bloque
+   claro. Dos niveles de énfasis y un solo rosa. */
+.daino-btn--strong {
+    --btn-bg: var(--d-bone);
+    --btn-fg: var(--d-ink);
+    --btn-line: var(--d-bone);
+    --btn-lip: var(--d-belly);
+}
+
+.daino-btn--strong:hover:not(:disabled) {
+    --btn-bg: #ffffff;
+    --btn-line: #ffffff;
+}
+
+.daino-btn--strong:focus-visible {
+    border-color: var(--d-spike);
+    box-shadow: inset 0 0 0 var(--u2) var(--d-spike);
+}
+
+/* Sin relleno: lo que acompaña (cerrar, volver, iniciar sesión). */
+.daino-btn--ghost {
+    --btn-bg: transparent;
+    --btn-lip: transparent;
+    --btn-fg: var(--d-belly);
+}
+
+.daino-btn--ghost:hover:not(:disabled) {
+    --btn-fg: var(--d-bone);
+}
+
+/* Lo que borra o cierra sesión: se avisa en la letra, en el color de aviso (el
+   rosa es de jugar). */
+.daino-btn--danger {
+    --btn-fg: var(--d-warn);
+}
+
+.daino-btn--danger:hover:not(:disabled) {
+    --btn-line: var(--d-warn);
+}
+
+.daino-btn--sm {
+    min-height: 2rem;
+    padding-inline: 0.7rem;
+}
+
+.daino-btn--lg {
+    min-height: 3.25rem;
+    padding-inline: 1.5rem;
+    --cell: var(--u3);
+}
+
+/* Cuadrado, para un solo signo (cerrar, detalles). */
+.daino-btn--icon {
+    width: 2.25rem;
+    min-height: 2.25rem;
+    padding: 0 0 var(--u2);
+}
+
+/* ----- Tecla -----
+   El atajo de teclado de una acción, dibujado como la tecla. */
+
+kbd,
+.daino-key {
+    --cell: var(--u1);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.4rem;
+    min-height: 1.25rem;
+    padding: 0 0.35rem var(--u2);
+    border: var(--u1) solid currentColor;
+    box-shadow: inset 0 calc(-1 * var(--u2)) 0 currentColor;
+    background: transparent;
+    font: 700 0.62rem / 1 var(--d-font);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    --d-cut: var(--u1);
+}
+
+/* Sin teclado físico, las teclas no dicen nada. */
+@media (pointer: coarse) {
+    .daino-key[data-optional="true"] { display: none; }
+}
+
+/* ----- Etiqueta -----
+   Una palabra sobre una portada o junto a un título ("OFICIAL", "LISTO"). */
+
+.daino-tag {
+    --cell: var(--u1);
+    --d-cut: var(--u1);
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.1rem;
+    padding: 0 0.4rem;
+    background: var(--d-ink);
+    color: var(--d-bone);
+    font: 700 0.62rem / 1 var(--d-font);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ----- Estrellas de dificultad ----- */
+
+.daino-stars {
+    --cell: var(--u1);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--u2);
+    color: var(--d-speck);
+}
+
+.daino-stars .is-on { color: var(--d-gold); }
+
+/* ----- Avatar -----
+   Cuadrado y en escalón, como todo; sin imagen, la inicial en la letra del juego. */
+
+.daino-avatar {
+    --cell: var(--u2);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--avatar, 2rem);
+    height: var(--avatar, 2rem);
+    overflow: hidden;
+    background: var(--d-speck);
+    color: var(--d-bone);
+}
+
+.daino-avatar > img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* ----- Controles -----
+   Deslizador: un carril de una celda de alto y un tope cuadrado. */
+
+.daino-range {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 1.5rem;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+/* Lo recorrido, en el color de lo tuyo: `--val` [0,1] lo mantiene kit.js. */
+.daino-range::-webkit-slider-runnable-track {
+    height: var(--u4);
+    background: linear-gradient(90deg, var(--d-spike) calc(var(--val, 0) * 100%), var(--d-speck) 0);
+}
+
+.daino-range::-moz-range-track {
+    height: var(--u4);
+    background: var(--d-speck);
+}
+
+.daino-range::-moz-range-progress {
+    height: var(--u4);
+    background: var(--d-spike);
+}
+
+.daino-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: var(--u12);
+    height: var(--u16);
+    margin-top: calc((var(--u4) - var(--u16)) / 2);
+    border: var(--u2) solid var(--d-ink);
+    border-radius: 0;
+    background: var(--d-bone);
+}
+
+.daino-range::-moz-range-thumb {
+    width: var(--u8);
+    height: var(--u12);
+    border: var(--u2) solid var(--d-ink);
+    border-radius: 0;
+    background: var(--d-bone);
+}
+
+.daino-range:focus-visible {
+    outline: none;
+}
+
+.daino-range:focus-visible::-webkit-slider-thumb { background: var(--d-spike); }
+.daino-range:focus-visible::-moz-range-thumb { background: var(--d-spike); }
+
+/* Casilla: un cuadro que se llena. */
+.daino-check {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    border: var(--d-line) solid var(--d-mute);
+    border-radius: 0;
+    background: var(--d-ink);
+    cursor: pointer;
+}
+
+.daino-check:checked {
+    border-color: var(--d-spike);
+    /* Relleno con un margen de una celda: se lee "encendido" sin dibujar un visto. */
+    background: var(--d-spike);
+    box-shadow: inset 0 0 0 var(--u2) var(--d-ink);
+}
+
+.daino-check:focus-visible {
+    outline: var(--u2) solid var(--d-spike);
+    outline-offset: var(--u2);
+}
+
+/* Opciones en fila (una elegida): calidad, efectos, pestañas de un formulario. */
+.daino-seg {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--u4);
+}
+
+.daino-seg__option {
+    --cell: var(--u2);
+    flex: 1 1 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.25rem;
+    padding: 0 0.5rem;
+    border: var(--d-line) solid var(--d-speck);
+    border-radius: 0;
+    background: transparent;
+    color: var(--d-mute);
+    font: 700 0.75rem / 1 var(--d-font);
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 90ms, border-color 90ms, background-color 90ms;
+}
+
+.daino-seg__option:hover:not(:disabled) {
+    color: var(--d-bone);
+    border-color: var(--d-mute);
+}
+
+.daino-seg__option[aria-checked="true"] {
+    border-color: var(--d-spike);
+    background: var(--d-raise);
+    color: var(--d-spike);
+}
+
+.daino-seg__option:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 var(--u2) var(--d-spike);
+}
+
+.daino-seg__option:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.daino-seg__option[aria-checked="true"]:disabled {
+    opacity: 0.9;
+}
+
+/* ----- Barras de desplazamiento ----- */
+
+.daino-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--d-speck) transparent;
+}
+
+/* ----- Enlaces dentro de un texto ----- */
+
+.daino-link {
+    color: var(--d-spike);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-btn,
+    .daino-seg__option { transition: none; }
+}

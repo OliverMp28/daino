@@ -1,0 +1,109 @@
+/*
+ * Marco de la página: un único <canvas> a pantalla completa (doc 06 §3, §8) y, como
+ * hermanos suyos, los contenedores DOM de la interfaz.
+ */
+
+/* Tamaños de pantalla (Sep 2026): la UI está en rem y el rem crece con la
+ * pantalla. 16 px hasta 1080 de alto (medido en su equivalente 16:9, para que
+ * una ultrapanorámica no lo infle), 20 px en 1440p y 28 px en 4K. El mundo del
+ * juego escala aparte (worldView.js). */
+html {
+    font-size: clamp(16px, calc(min(56.25vw, 100vh) * 0.0111 + 4px), 30px);
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    /* Móvil: ni rebote ni "tirar para recargar" en mitad de una partida. */
+    overscroll-behavior: none;
+    background: #05050a;
+    color: var(--d-bone);
+    font-family: var(--d-font);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+#app {
+    position: fixed;
+    inset: 0;
+    /* Sin 100vw/100vh: en móviles `100vh` incluye la barra del navegador y el
+       canvas quedaba más alto que lo visible (el suelo, debajo de la barra). */
+}
+
+#app > canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* Se juega tocando y manteniendo el dedo sobre el lienzo: el navegador no
+       tiene que esperar a ver si es un desplazamiento o un zoom (retrasa el
+       toque), ni seleccionar nada, ni abrir el menú de pulsación larga. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * Los contenedores `#menu-root`, `#hud-root` y `#modal-root` viven sobre el canvas
+ * sin afectar al layout. `pointer-events: none` en la raíz; los hijos interactivos
+ * (`data-interactive="true"`) los recuperan.
+ *
+ * Orden: canvas < menú (30) < aviso de carga (35) < HUD (40) < chip de sesión (41)
+ * < herramientas de dev (45) < modales (top layer del navegador).
+ */
+#menu-root,
+#hud-root {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+#menu-root { z-index: 30; }
+#hud-root  { z-index: 40; }
+
+/* El HUD se lee, no se selecciona: un dedo mantenido (agacharse, el propulsor)
+   no debe marcar sus textos ni abrir el menú de pulsación larga. */
+#hud-root {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+#menu-root [data-interactive="true"],
+#hud-root [data-interactive="true"] {
+    pointer-events: auto;
+}
+
+#modal-root {
+    /* Los <dialog> son `position: fixed` por sí mismos; esto solo los agrupa. */
+    position: relative;
+    z-index: 50;
+}
+
+/* Soltar un MP3 sobre la ventana: un marco de trazos, quieto y nítido. */
+body[data-drag="active"]::after {
+    content: "";
+    position: fixed;
+    inset: 1rem;
+    border: var(--u4) dashed var(--d-spike);
+    pointer-events: none;
+    z-index: 20;
+}
+
+/* Sin shader (movimiento reducido), el cielo es este degradado: el engine vuelca
+   en --daino-sky-* los colores de la hora del cielo (T01), a 2 Hz como mucho.
+   Termina en el horizonte de la escena (T02.2: en la Costa, la línea del mar). */
+@media (prefers-reduced-motion: reduce) {
+    body {
+        background: linear-gradient(to bottom,
+            var(--daino-sky-top, var(--d-ground)) 0%,
+            var(--daino-sky-mid, var(--d-ground)) 55%,
+            var(--daino-sky-horizon, var(--d-raise)) calc(100% - var(--daino-sky-horizon-offset, var(--daino-ground-offset, 22px))));
+    }
+}

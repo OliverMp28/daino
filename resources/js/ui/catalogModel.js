@@ -12,8 +12,7 @@
 import { mergeBest } from '../storage/localBests.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { DEFAULT_SCENE, SELECTABLE_SCENES, autoSceneId, playSceneId, resolveScene } from '../game/scenes/registry.js';
-import { createSkyState, seaColorAt, skyColorAt, skyStateAt } from '../game/scenes/skyModel.js';
-import { rgbToHex } from '../game/scenes/color.js';
+import { coverSpec, sceneCoverSpec } from './coverModel.js';
 import { publishView, PUBLISH_STATE } from './publishModel.js';
 
 // Los nombres viven con los perfiles del charter (Ola 5); se reexportan para
@@ -68,19 +67,6 @@ export function formatPoints(n) {
 export function difficultyView(difficulty) {
     const value = Math.min(5, Math.max(1, Math.round(Number(difficulty) || 3)));
     return { value, filled: value, name: DIFFICULTY_NAMES[value], label: `Dificultad ${value} de 5: ${DIFFICULTY_NAMES[value]}` };
-}
-
-/**
- * Tono (0-359) estable por nivel para la portada generada: el mismo nivel
- * tiene siempre el mismo color, en cualquier dispositivo.
- *
- * @param {{ id: number, audio_sha256?: string | null }} level
- * @returns {number}
- */
-export function coverHue(level) {
-    const sha = typeof level.audio_sha256 === 'string' ? level.audio_sha256 : '';
-    const seed = /^[0-9a-f]{4}/.test(sha) ? Number.parseInt(sha.slice(0, 4), 16) : (Number(level.id) || 0) * 2654435761;
-    return Math.abs(seed) % 360;
 }
 
 /**
@@ -139,10 +125,13 @@ export function cardView(level, localBest = null) {
         difficulty,
         bpm: Number.isFinite(level.bpm) && level.bpm > 0 ? `${level.bpm} BPM` : null,
         duration,
-        best: best === null ? null : { points: formatPoints(best.points), percentage: `${best.percentage} %`, completed: best.percentage >= 100 },
+        best: best === null ? null : { points: formatPoints(best.points), percentage: `${best.percentage} %`, completed: best.percentage >= 100, ratio: Math.min(1, Math.max(0, best.percentage / 100)) },
         // Solo en lo publicado: en un nivel privado el único jugador es su autor.
         players: level.is_public === true && level.players > 0 ? `${level.players} ${level.players === 1 ? 'jugador' : 'jugadores'}` : null,
-        hue: coverHue(level),
+        /** T04: la portada es el escenario del nivel a una hora del cielo (coverModel.js). */
+        cover: coverSpec(level),
+        /** Lo de la línea de datos, ya junto: "Aurora · 82 BPM · 2:44". */
+        meta: [byline, Number.isFinite(level.bpm) && level.bpm > 0 ? `${level.bpm} BPM` : null, duration].filter(Boolean).join(' · '),
         playMode,
         canPublish: publish.canPublish,
         /** Ola 4: estado de publicación y del análisis del servidor. */
@@ -155,35 +144,6 @@ export function cardView(level, localBest = null) {
 
 // --------------------------- Escenario (T02.1) ---------------------------
 
-/** Muestras ya calculadas, por escena (el cielo de su menú no cambia). */
-const swatches = new Map();
-
-/**
- * Colores de la muestra de un ambiente en el selector: su cielo a la hora del
- * menú (el ocaso, la noche en la ciudad) y, abajo, lo que tiene delante del
- * horizonte (el mar, la nieve o las montañas y los edificios). Sale del mismo
- * modelo que pinta el juego, con su cielo encapotado si lo tiene.
- *
- * @param {import('../game/scenes/registry.js').SceneDef} scene
- * @returns {{ top: string, mid: string, horizon: string, land: string }}
- */
-export function sceneSwatch(scene) {
-    let swatch = swatches.get(scene.id);
-    if (swatch) return swatch;
-    const state = skyStateAt(scene.menuHour, scene, createSkyState());
-    let land = state.mountains.far;
-    if (scene.sea) land = seaColorAt(state, 0.35);
-    else if (scene.arc?.snow) land = state.arc.snowColor;
-    swatch = Object.freeze({
-        top: rgbToHex(state.sky.top),
-        mid: rgbToHex(skyColorAt(state, 0.55)),
-        horizon: rgbToHex(skyColorAt(state, 1)),
-        land: rgbToHex(land),
-    });
-    swatches.set(scene.id, swatch);
-    return swatch;
-}
-
 /**
  * Selector del escenario de un nivel propio (T02.1). Cualquier nivel tuyo, en
  * cualquier estado: el escenario no toca ni el chart ni las marcas, así que se
@@ -194,7 +154,8 @@ export function sceneSwatch(scene) {
  * Cordillera si ninguno encaja claramente. La opción enseña la propuesta.
  *
  * @param {object} level  Fila de GET /api/levels.
- * @returns {{ current: string, options: Array<{ value: string, label: string, hint: string, swatch: ReturnType<typeof sceneSwatch> }> } | null}
+ * @returns {{ current: string, options: Array<{ value: string, label: string, hint: string, cover: import('./coverModel.js').CoverSpec }> } | null}
+ *          `cover`: la muestra del ambiente es su portada, a su hora de siempre.
  */
 export function sceneChoiceView(level) {
     if (level?.is_mine !== true) return null;
@@ -204,8 +165,8 @@ export function sceneChoiceView(level) {
     return {
         current: chosen ? chosen.id : 'auto',
         options: [
-            { value: 'auto', label: `Automático: ${auto.label}`, hint: autoSceneHint(level, proposed !== null), swatch: sceneSwatch(auto) },
-            ...SELECTABLE_SCENES.map((s) => ({ value: s.id, label: s.label, hint: s.blurb, swatch: sceneSwatch(s) })),
+            { value: 'auto', label: `Automático: ${auto.label}`, hint: autoSceneHint(level, proposed !== null), cover: sceneCoverSpec(auto) },
+            ...SELECTABLE_SCENES.map((s) => ({ value: s.id, label: s.label, hint: s.blurb, cover: sceneCoverSpec(s) })),
         ],
     };
 }

@@ -13,7 +13,7 @@ import {
 import { timingWindowS } from '../../resources/js/game/systems/playability.js';
 import { createLocalBests, mergeBest, MAX_ENTRIES } from '../../resources/js/storage/localBests.js';
 import {
-    cardView, coverHue, difficultyView, emptyView, formatDuration, playModeFor, tabsFor, PLAY_MODE,
+    cardView, difficultyView, emptyView, formatDuration, playModeFor, tabsFor, PLAY_MODE,
 } from '../../resources/js/ui/catalogModel.js';
 import { buildChart } from '../../resources/js/game/levels/charter.js';
 import { ANALYZER_KEY, isChartableAnalysis } from '../../resources/js/game/levels/analyze.js';
@@ -168,7 +168,7 @@ test('tarjeta de un oficial: sin autor, pulsarla juega y con marca local si no h
     assert.match(view.actionLabel, /^Jugar «HOPE»\. Dificultad 4 de 5: Difícil\. 1:19\.$/, 'la tarjeta anuncia lo que hace: jugar');
     assert.equal(view.duration, '1:19');
     assert.equal(view.bpm, '161 BPM');
-    assert.deepEqual(view.best, { points: (1234).toLocaleString('es-ES'), percentage: '42 %', completed: false });
+    assert.deepEqual(view.best, { points: (1234).toLocaleString('es-ES'), percentage: '42 %', completed: false, ratio: 0.42 });
     assert.equal(view.players, null);
     assert.equal(view.canPublish, false);
 });
@@ -208,15 +208,12 @@ test('pestañas: una vista para todo lo jugable y "Míos" solo con sesión; vac�
     for (const tab of ['public', 'mine']) assert.equal(emptyView(tab).action, 'upload');
 });
 
-test('formatos y portada: duración, estrellas acotadas y tono estable por nivel', () => {
+test('formatos: duración y estrellas acotadas', () => {
     assert.equal(formatDuration(0), '0:00');
     assert.equal(formatDuration(59.6), '1:00');
     assert.equal(formatDuration(215.6), '3:36');
     assert.equal(difficultyView(9).value, 5);
     assert.equal(difficultyView(undefined).value, 3);
-    assert.equal(coverHue(official), coverHue({ ...official }), 'mismo nivel, mismo color');
-    assert.ok(coverHue(official) >= 0 && coverHue(official) < 360);
-    assert.ok(coverHue({ id: 5 }) >= 0 && coverHue({ id: 5 }) < 360, 'sin hash usa el id');
 });
 
 // --------------------------- Horneado de oficiales ---------------------------

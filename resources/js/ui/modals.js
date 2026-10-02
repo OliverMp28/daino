@@ -1,19 +1,18 @@
-// Sistema de modales slide-in (PS5-style). <dialog> nativo + Tailwind/CSS.
+// Paneles de la interfaz. <dialog> nativo + CSS (resources/css/ui/dialogs.css).
 //
-// Doc 06 §5 + §10: paneles deslizantes desde la derecha, no páginas nuevas.
-// El shader del fondo nunca se oculta — solo se desatura un poco vía backdrop.
+// Doc 06 §5 + §10: paneles que entran desde la derecha, no páginas nuevas. La
+// escena de detrás sigue viva y nítida: solo se oscurece (T04: sin desenfoque).
 //
 // API:
 //   - createModal(id, { title, body, footer })  → instancia un <dialog> y lo
-//     monta en #modal-root. Idempotente: si ya existe el id, devuelve el viejo.
-//   - openProfileModal()      — hidrata desde client.getUser(). Si null, CTA login.
+//     monta en #modal-root. Idempotente: si ya existe el id, lo reutiliza.
+//   - openProfileModal()      — quién eres, o cómo iniciar sesión.
 //   - openRankingModal()      — ranking global.
-//   - openSettingsModal()     — funcional con localStorage.
+//   - openSettingsModal()     — ajustes, guardados en este navegador.
 //   - closeAllModals()        — cierra cualquier <dialog> abierto.
 //
-// El catálogo de niveles vive en `catalog.js` desde la Ola 2 (pantalla casi
-// completa, no un panel lateral). La pausa y los resultados de una partida, en
-// `runPanel.js` (reintentos, Sep 2026).
+// El catálogo de niveles vive en `catalog.js` (pantalla casi completa) y la pausa
+// y los resultados de una partida, en `runPanel.js`.
 
 import { getUser, logout, isAuthenticated, request as apiRequest } from '../api/client.js';
 import { isBridgeEmbedded } from '../iframe/bridge.js';
@@ -27,6 +26,11 @@ import {
     listKeys, clearAll,
 } from './settings.js';
 import { DINO_SKINS, normalizeSkinId } from '../game/assets/pixelart.js';
+import { button, closeButton, el, linkButton, px, range, segmented, setLabel } from './kit.js';
+import { pixelText, setPixelText } from './pixel/text.js';
+import { spriteEl } from './pixel/sprite.js';
+import { formatPoints } from './catalogModel.js';
+import { rankingGhosts, rankingRow } from './rankingRow.js';
 
 const MODAL_ROOT_ID = 'modal-root';
 
@@ -52,6 +56,11 @@ export function createModal(id, opts) {
     dialog.id = `modal-${id}`;
     dialog.className = 'daino-modal';
     dialog.setAttribute('aria-labelledby', `modal-${id}-title`);
+    // Clic en el velo cierra: el `::backdrop` no es clicable, pero un clic cuyo
+    // destino es el propio <dialog> (no un hijo) cayó fuera del panel.
+    dialog.addEventListener('click', (ev) => {
+        if (ev.target === dialog) dialog.close();
+    });
 
     rebuildModalContent(dialog, opts);
     root.appendChild(dialog);
@@ -60,51 +69,27 @@ export function createModal(id, opts) {
 
 function rebuildModalContent(dialog, opts) {
     const { title, body, footer } = opts;
-    dialog.innerHTML = '';
 
-    const shell = document.createElement('div');
-    shell.className = 'modal-shell';
+    const shell = el('div', 'modal-shell');
 
-    const header = document.createElement('header');
-    header.className = 'modal-header';
-    const h2 = document.createElement('h2');
+    const header = el('header', 'modal-header');
+    const h2 = pixelText(title, { tag: 'h2' });
     h2.id = `${dialog.id}-title`;
-    h2.textContent = title;
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'modal-close';
-    closeBtn.setAttribute('type', 'button');
-    closeBtn.setAttribute('aria-label', 'Cerrar');
-    closeBtn.dataset.interactive = 'true';
-    closeBtn.textContent = '×';
-    closeBtn.addEventListener('click', () => dialog.close());
-    header.appendChild(h2);
-    header.appendChild(closeBtn);
-    shell.appendChild(header);
+    const close = closeButton(() => dialog.close());
+    close.classList.add('modal-close');
+    header.append(h2, close);
 
-    const bodyEl = document.createElement('section');
-    bodyEl.className = 'modal-body';
-    if (typeof body === 'string') {
-        bodyEl.textContent = body;
-    } else if (body instanceof HTMLElement) {
-        bodyEl.appendChild(body);
-    }
-    shell.appendChild(bodyEl);
+    const bodyEl = el('section', 'modal-body daino-scroll');
+    if (typeof body === 'string') bodyEl.textContent = body;
+    else if (body instanceof HTMLElement) bodyEl.appendChild(body);
 
+    shell.append(header, bodyEl);
     if (footer) {
-        const footerEl = document.createElement('footer');
-        footerEl.className = 'modal-footer';
+        const footerEl = el('footer', 'modal-footer');
         footerEl.appendChild(footer);
         shell.appendChild(footerEl);
     }
-
-    dialog.appendChild(shell);
-
-    // Click en backdrop cierra el modal. <dialog>::backdrop no es clicable
-    // directamente, pero el click en el dialog cuando el target es el dialog
-    // mismo (no un hijo) implica click sobre el área negra.
-    dialog.addEventListener('click', (ev) => {
-        if (ev.target === dialog) dialog.close();
-    });
+    dialog.replaceChildren(shell);
 }
 
 /** Cierra cualquier <dialog> abierto dentro de #modal-root. */
@@ -116,84 +101,42 @@ export function closeAllModals() {
     }
 }
 
-// --------------------------- Modal: PERFIL ---------------------------
+// --------------------------- PERFIL ---------------------------
 
 export function openProfileModal() {
     const user = getUser();
-    const body = document.createElement('div');
-    body.className = 'flex flex-col gap-4';
+    const body = el('div', 'daino-profile');
 
     if (user !== null) {
-        // Usuario logueado — mostrar info + LOGOUT.
-        const avatarRow = document.createElement('div');
-        avatarRow.className = 'flex items-center gap-3';
-
-        const avatar = renderAvatar(user.avatar_url, user.username, 56, { tag: 'div' });
-        avatarRow.appendChild(avatar);
-
-        const meta = document.createElement('div');
-        meta.className = 'flex flex-col';
-        const username = document.createElement('strong');
-        username.textContent = user.username;
-        username.style.fontSize = '1.1rem';
-        const voutId = document.createElement('span');
-        voutId.textContent = `vout_id: ${user.vout_id}`;
-        voutId.style.fontSize = '0.75rem';
-        voutId.style.opacity = '0.6';
-        voutId.style.fontFamily = 'monospace';
-        meta.appendChild(username);
-        meta.appendChild(voutId);
-        avatarRow.appendChild(meta);
-
-        body.appendChild(avatarRow);
-
-        const note = document.createElement('p');
-        note.style.fontSize = '0.9rem';
-        note.style.opacity = '0.75';
-        note.textContent = 'Has iniciado sesión con Vout. Tus marcas se guardan y cuentan para el ranking.';
-        body.appendChild(note);
+        const who = el('div', 'daino-profile__who');
+        const meta = el('div');
+        meta.append(el('strong', 'daino-profile__name', user.username), el('span', 'daino-profile__id', `vout_id: ${user.vout_id}`));
+        who.append(renderAvatar(user.avatar_url, user.username, 56, { tag: 'div' }), meta);
+        body.append(who, el('p', null, 'Has iniciado sesión con Vout. Tus marcas se guardan y cuentan para el ranking.'));
     } else {
-        // Anónimo — CTA login.
-        const note = document.createElement('p');
-        note.textContent = 'No has iniciado sesión. Daino es jugable sin cuenta, pero el ranking global y los niveles compartidos requieren login con Vout.';
-        body.appendChild(note);
+        body.appendChild(el('p', null, 'Daino se juega sin cuenta. Con tu sesión de Vout, tus marcas entran en el ranking y puedes guardar y publicar tus niveles.'));
     }
 
-    const footer = document.createElement('div');
-    footer.style.display = 'flex';
-    footer.style.gap = '0.5rem';
-    footer.style.width = '100%';
-    footer.style.justifyContent = 'flex-end';
-
-    if (user !== null) {
-        if (isBridgeEmbedded()) {
-            // En iframe el LOGOUT no aplica — la sesión la maneja Vout.
-            // Botón "Volver al portal" cierra el iframe via postMessage.
-            const exitBtn = button('Volver al portal', 'daino-btn');
-            exitBtn.addEventListener('click', () => {
-                window.parent?.postMessage({ type: 'EXIT' }, '*');  // OJO: parent valida origin de su lado
-            });
-            footer.appendChild(exitBtn);
-        } else {
-            const logoutBtn = button('Cerrar sesión', 'daino-btn daino-btn--danger');
-            logoutBtn.addEventListener('click', async () => {
-                logoutBtn.disabled = true;
-                logoutBtn.textContent = 'Cerrando…';
-                await logout();
-                // El handler de daino:auth:logout en auth.js repintará el chip.
-                // Cerramos el modal y rehacemos contenido para reflejar estado.
-                const modal = document.getElementById('modal-profile');
-                if (modal instanceof HTMLDialogElement) modal.close();
-            });
-            footer.appendChild(logoutBtn);
-        }
+    let footer;
+    if (user === null) {
+        footer = linkButton('Iniciar sesión con Vout', '/auth/login', 'daino-btn daino-btn--strong');
+    } else if (isBridgeEmbedded()) {
+        // En iframe cerrar sesión no aplica: la sesión la lleva Vout. Este botón
+        // pide al portal que cierre el juego.
+        footer = button('Volver al portal');
+        footer.addEventListener('click', () => {
+            window.parent?.postMessage({ type: 'EXIT' }, '*');  // OJO: parent valida origin de su lado
+        });
     } else {
-        const loginLink = document.createElement('a');
-        loginLink.href = '/auth/login';
-        loginLink.className = 'daino-btn daino-btn--primary';
-        loginLink.dataset.interactive = 'true';
-        loginLink.textContent = 'Iniciar sesión con Vout';
-        footer.appendChild(loginLink);
+        footer = button('Cerrar sesión', 'daino-btn daino-btn--danger');
+        footer.addEventListener('click', async () => {
+            footer.disabled = true;
+            setLabel(footer, 'Cerrando…');
+            await logout();
+            // auth.js repinta el chip al recibir daino:auth:logout.
+            const modal = document.getElementById('modal-profile');
+            if (modal instanceof HTMLDialogElement) modal.close();
+        });
     }
 
     const dialog = createModal('profile', {
@@ -204,53 +147,49 @@ export function openProfileModal() {
     dialog.showModal();
 }
 
-// --------------------------- Modal: RANKING ---------------------------
+// --------------------------- RANKING ---------------------------
+
+/** Filas vacías que se enseñan mientras llega el ranking (mismo alto: nada salta). */
+const RANKING_GHOSTS = 6;
 
 /**
- * Ranking: top 10 global desde GET /api/ranking. Sin sesión también es
- * accesible — el user ve el leaderboard pero no figura en él. Si está
- * logueado y no aparece, mostramos un hint discreto al final.
+ * Ranking: top 10 global desde GET /api/ranking. Sin sesión también se ve; quien
+ * la tiene y no aparece recibe una nota al final.
  */
 export function openRankingModal() {
-    const body = document.createElement('div');
-    body.className = 'daino-ranking';
-
-    const list = document.createElement('div');
-    list.className = 'daino-ranking__list';
-    body.appendChild(list);
+    const body = el('div', 'daino-ranking');
+    const list = el('ol', 'daino-ranking__list');
+    const note = el('p', 'daino-ranking__note');
+    note.hidden = true;
+    body.append(list, note);
 
     const dialog = createModal('ranking', { title: 'Ranking global', body });
     dialog.showModal();
 
-    void loadRanking(list);
+    void loadRanking(list, note);
 }
 
-async function loadRanking(container) {
-    container.innerHTML = '';
-    container.setAttribute('aria-busy', 'true');
-    const loading = document.createElement('p');
-    loading.className = 'daino-ranking__loading';
-    loading.textContent = 'Cargando ranking…';
-    container.appendChild(loading);
+async function loadRanking(list, note) {
+    list.setAttribute('aria-busy', 'true');
+    list.replaceChildren(...rankingGhosts(RANKING_GHOSTS));
 
     const res = await apiRequest('GET', '/api/ranking?limit=10');
-    container.removeAttribute('aria-busy');
-    container.innerHTML = '';
+    list.removeAttribute('aria-busy');
+    list.replaceChildren();
+    const say = (text, tone) => {
+        note.textContent = text;
+        note.hidden = false;
+        if (tone) note.dataset.tone = tone;
+    };
 
     if (!res.ok) {
-        const err = document.createElement('p');
-        err.className = 'daino-ranking__error';
-        err.textContent = `Error ${res.status}: no se pudo cargar el ranking.`;
-        container.appendChild(err);
+        say('No se pudo cargar el ranking. Inténtalo de nuevo en un momento.', 'error');
         return;
     }
 
     const items = res.data?.items ?? [];
     if (items.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'daino-ranking__empty';
-        empty.textContent = 'Nadie ha jugado todavía. Sé el primero.';
-        container.appendChild(empty);
+        say('Nadie ha dejado marca todavía. La primera puede ser la tuya.');
         return;
     }
 
@@ -259,262 +198,158 @@ async function loadRanking(container) {
     for (const entry of items) {
         const isMine = me !== null && entry.user?.vout_id === me.vout_id;
         if (isMine) foundMe = true;
-        container.appendChild(renderRankingRow(entry, isMine));
+        list.appendChild(renderRankingRow(entry, isMine));
     }
 
     if (me !== null && !foundMe) {
-        const hint = document.createElement('p');
-        hint.className = 'daino-ranking__hint';
-        hint.textContent = 'Aún no estás en el top 10. ¡Sigue jugando!';
-        container.appendChild(hint);
+        say('Aún no estás entre los diez primeros.');
     } else if (me === null) {
-        const cta = document.createElement('p');
-        cta.className = 'daino-ranking__hint';
-        cta.innerHTML = '<a href="/auth/login" class="daino-btn daino-btn--primary" data-interactive="true">Inicia sesión</a> para que tus partidas cuenten.';
-        container.appendChild(cta);
+        note.hidden = false;
+        const link = el('a', 'daino-link', 'Inicia sesión');
+        link.href = '/auth/login';
+        link.dataset.interactive = 'true';
+        note.replaceChildren(link, document.createTextNode(' para que tus partidas cuenten.'));
     }
 }
 
 function renderRankingRow(entry, isMine) {
-    const row = document.createElement('article');
-    row.className = 'daino-ranking__row' + (isMine ? ' is-me' : '');
-
-    const rank = document.createElement('span');
-    rank.className = 'daino-ranking__rank';
-    rank.textContent = `#${entry.rank}`;
-
-    const userBlock = document.createElement('div');
-    userBlock.className = 'daino-ranking__user';
-    if (entry.user) {
-        const avatar = renderAvatar(entry.user.avatar_url, entry.user.username, 32, { tag: 'span' });
-        userBlock.appendChild(avatar);
-        const name = document.createElement('span');
-        name.className = 'daino-ranking__username';
-        name.textContent = entry.user.username;
-        userBlock.appendChild(name);
-    }
-
-    const stats = document.createElement('div');
-    stats.className = 'daino-ranking__stats';
-    const points = document.createElement('strong');
-    points.textContent = entry.total_points.toLocaleString();
-    points.title = 'Puntos totales';
-    const detail = document.createElement('span');
-    detail.className = 'daino-ranking__detail';
-    detail.textContent = `${entry.levels_played} niveles · ${entry.avg_percentage}% promedio`;
-    stats.appendChild(points);
-    stats.appendChild(detail);
-
-    row.appendChild(rank);
-    row.appendChild(userBlock);
-    row.appendChild(stats);
-    return row;
+    const levels = entry.levels_played === 1 ? '1 nivel' : `${entry.levels_played} niveles`;
+    return rankingRow({
+        rank: entry.rank,
+        user: entry.user,
+        score: formatPoints(entry.total_points),
+        detail: `${levels} · ${entry.avg_percentage} % de media`,
+        isMe: isMine,
+    });
 }
 
-// --------------------------- Modal: AJUSTES (funcional con localStorage) ---------------------------
+// --------------------------- AJUSTES ---------------------------
+
+/**
+ * Un campo de AJUSTES: su nombre (en la letra del juego), a su derecha un valor o
+ * un control pequeño, debajo el control ancho y una línea que lo explica.
+ *
+ * @param {{ label: string, labelFor?: string, aside?: HTMLElement, control?: HTMLElement, hint?: string | HTMLElement }} cfg
+ */
+function field({ label, labelFor, aside, control, hint }) {
+    const box = el('section', 'daino-field');
+    const head = el('div', 'daino-field__head');
+    const name = pixelText(label, { tag: labelFor ? 'label' : 'span', className: 'daino-field__label' });
+    if (labelFor) name.htmlFor = labelFor;
+    head.appendChild(name);
+    if (aside) head.appendChild(aside);
+    box.appendChild(head);
+    if (control) box.appendChild(control);
+    if (hint instanceof HTMLElement) box.appendChild(hint);
+    else if (hint) box.appendChild(el('p', 'daino-field__hint', hint));
+    return box;
+}
 
 /**
  * @param {{ getActiveAudioEngine?: () => any | null }} [opts]
- *   getActiveAudioEngine: callback para obtener el AudioEngine activo y
- *   aplicar volumen en vivo. Lo inyecta el menú al wirear (evita import
- *   circular UI ↔ AppController).
+ *   getActiveAudioEngine: para aplicar el volumen en vivo sin que la UI importe
+ *   al AppController (import circular).
  */
 export function openSettingsModal(opts = {}) {
     const getEngine = opts.getActiveAudioEngine ?? (() => null);
+    const body = el('div', 'daino-settings');
 
-    const body = document.createElement('div');
-    body.className = 'daino-settings';
-
-    // ----- Volumen master -----
-    const volRow = document.createElement('section');
-    volRow.className = 'daino-settings__row';
-    const volLabel = document.createElement('label');
-    volLabel.className = 'daino-settings__label';
-    volLabel.textContent = 'Volumen';
-    const volValue = document.createElement('span');
-    volValue.className = 'daino-settings__value';
-    const initialVol = getVolume();
-    volValue.textContent = `${Math.round(initialVol * 100)}%`;
-    const volSlider = document.createElement('input');
-    volSlider.type = 'range';
-    volSlider.min = '0';
-    volSlider.max = '1';
-    volSlider.step = '0.01';
-    volSlider.value = String(initialVol);
-    volSlider.dataset.interactive = 'true';
-    volSlider.setAttribute('aria-label', 'Volumen master');
-    volSlider.addEventListener('input', () => {
-        const v = Number.parseFloat(volSlider.value);
-        setVolume(v, getEngine());
-        volValue.textContent = `${Math.round(v * 100)}%`;
+    // ----- Volumen -----
+    const percent = (v) => `${Math.round(v * 100)} %`;
+    const volValue = px(percent(getVolume()), 'daino-field__value');
+    const volSlider = range({
+        id: 'daino-settings-vol',
+        value: getVolume(),
+        onInput: (v) => {
+            setVolume(v, getEngine());
+            setPixelText(volValue, percent(v));
+        },
     });
-    volLabel.setAttribute('for', 'daino-settings-vol');
-    volSlider.id = 'daino-settings-vol';
-    volRow.appendChild(volLabel);
-    volRow.appendChild(volSlider);
-    volRow.appendChild(volValue);
-    body.appendChild(volRow);
+    body.appendChild(field({ label: 'Volumen', labelFor: volSlider.id, aside: volValue, control: volSlider }));
 
-    // ----- Personaje (skin del dino) -----
-    const skinRow = document.createElement('section');
-    skinRow.className = 'daino-settings__row';
-    const skinLabel = document.createElement('label');
-    skinLabel.className = 'daino-settings__label';
-    skinLabel.htmlFor = 'daino-settings-skin';
-    skinLabel.textContent = 'Personaje';
-    const skinSelect = document.createElement('select');
-    skinSelect.id = 'daino-settings-skin';
-    skinSelect.dataset.interactive = 'true';
-    skinSelect.className = 'daino-settings__select';
-    for (const [id, def] of Object.entries(DINO_SKINS)) {
-        const opt = document.createElement('option');
-        opt.value = id;
-        opt.textContent = def.label;
-        skinSelect.appendChild(opt);
-    }
-    skinSelect.value = normalizeSkinId(getSkin());
-    skinSelect.addEventListener('change', () => {
-        setSkin(normalizeSkinId(skinSelect.value));
-    });
-    const skinNote = document.createElement('p');
-    skinNote.className = 'daino-settings__hint';
-    skinNote.textContent = 'El dino del menú cambia al instante; la partida lo usa al empezar.';
-    skinRow.appendChild(skinLabel);
-    skinRow.appendChild(skinSelect);
-    skinRow.appendChild(skinNote);
-    body.appendChild(skinRow);
+    // ----- Personaje: los Dinos, tal como se juegan -----
+    body.appendChild(field({
+        label: 'Personaje',
+        control: segmented({
+            label: 'Personaje',
+            options: Object.entries(DINO_SKINS).map(([id, def]) => ({
+                value: id,
+                label: def.label,
+                className: 'daino-skin',
+                node: spriteEl('dinoRunA', { skin: id }),
+            })),
+            value: normalizeSkinId(getSkin()),
+            onChange: (id) => setSkin(normalizeSkinId(id)),
+        }),
+        hint: 'El Dino del menú cambia al momento; la partida lo usa al empezar.',
+    }));
 
     // ----- Calidad gráfica (Ola 1) -----
-    const qualityRow = document.createElement('section');
-    qualityRow.className = 'daino-settings__row';
-    const qualityLabel = document.createElement('label');
-    qualityLabel.className = 'daino-settings__label';
-    qualityLabel.htmlFor = 'daino-settings-quality';
-    qualityLabel.textContent = 'Calidad gráfica';
-    const qualitySelect = document.createElement('select');
-    qualitySelect.id = 'daino-settings-quality';
-    qualitySelect.dataset.interactive = 'true';
-    qualitySelect.className = 'daino-settings__select';
-    for (const [value, text] of [
-        ['auto', 'Automática'],
-        ['high', 'Alta'],
-        ['medium', 'Media'],
-        ['low', 'Baja'],
-    ]) {
-        const opt = document.createElement('option');
-        opt.value = value;
-        opt.textContent = text;
-        qualitySelect.appendChild(opt);
-    }
-    qualitySelect.value = getQuality();
-    qualitySelect.addEventListener('change', () => {
-        setQuality(qualitySelect.value);
-    });
-    const qualityNote = document.createElement('p');
-    qualityNote.className = 'daino-settings__hint';
-    qualityNote.textContent = 'Automática baja la calidad sola si detecta tirones. Elegir una fija desactiva ese ajuste.';
-    qualityRow.appendChild(qualityLabel);
-    qualityRow.appendChild(qualitySelect);
-    qualityRow.appendChild(qualityNote);
-    body.appendChild(qualityRow);
+    body.appendChild(field({
+        label: 'Calidad gráfica',
+        control: segmented({
+            label: 'Calidad gráfica',
+            options: [
+                { value: 'auto', label: 'Auto' },
+                { value: 'high', label: 'Alta' },
+                { value: 'medium', label: 'Media' },
+                { value: 'low', label: 'Baja' },
+            ],
+            value: getQuality(),
+            onChange: setQuality,
+        }),
+        hint: 'Auto baja la calidad sola si detecta tirones. Elegir una la deja fija.',
+    }));
+
+    // ----- Efectos visuales (T03.1): cuánto de lo que late con la música -----
+    body.appendChild(field({
+        label: 'Efectos visuales',
+        control: segmented({
+            label: 'Efectos visuales',
+            options: [
+                { value: 'full', label: 'Completos' },
+                { value: 'soft', label: 'Suaves' },
+                { value: 'min', label: 'Mínimos' },
+            ],
+            value: getFxLevel(),
+            onChange: setFxLevel,
+        }),
+        hint: 'Suaves: los efectos de la música a media fuerza y sin destellos de pantalla. Mínimos: solo el pulso del suelo y las líneas de velocidad, sin relámpagos.',
+    }));
 
     // ----- Reintento automático (reintentos, Sep 2026) -----
-    const retryRow = document.createElement('section');
-    retryRow.className = 'daino-settings__row';
-    const retryLabel = document.createElement('label');
-    retryLabel.className = 'daino-settings__label';
-    retryLabel.htmlFor = 'daino-settings-autoretry';
-    retryLabel.textContent = 'Reintentar al instante al chocar';
     const retryToggle = document.createElement('input');
     retryToggle.type = 'checkbox';
+    retryToggle.className = 'daino-check';
     retryToggle.id = 'daino-settings-autoretry';
     retryToggle.dataset.interactive = 'true';
     retryToggle.checked = getAutoRetry();
     retryToggle.addEventListener('change', () => setAutoRetry(retryToggle.checked));
-    const retryNote = document.createElement('p');
-    retryNote.className = 'daino-settings__hint';
-    retryNote.textContent = 'Sin panel de resultados: el nivel vuelve a empezar solo. La pausa (Esc o ❚❚) sigue dejando salir.';
-    retryRow.appendChild(retryLabel);
-    retryRow.appendChild(retryToggle);
-    retryRow.appendChild(retryNote);
-    body.appendChild(retryRow);
-
-    // ----- Efectos visuales (T03.1): cuánto de lo que late con la música -----
-    const fxRow = document.createElement('section');
-    fxRow.className = 'daino-settings__row';
-    const fxLabel = document.createElement('label');
-    fxLabel.className = 'daino-settings__label';
-    fxLabel.htmlFor = 'daino-settings-fx';
-    fxLabel.textContent = 'Efectos visuales';
-    const fxSelect = document.createElement('select');
-    fxSelect.id = 'daino-settings-fx';
-    fxSelect.dataset.interactive = 'true';
-    fxSelect.className = 'daino-settings__select';
-    for (const [value, text] of [
-        ['full', 'Completos'],
-        ['soft', 'Suaves'],
-        ['min', 'Mínimos'],
-    ]) {
-        const opt = document.createElement('option');
-        opt.value = value;
-        opt.textContent = text;
-        fxSelect.appendChild(opt);
-    }
-    fxSelect.value = getFxLevel();
-    fxSelect.addEventListener('change', () => {
-        setFxLevel(fxSelect.value);
-    });
-    const fxNote = document.createElement('p');
-    fxNote.className = 'daino-settings__hint';
-    fxNote.textContent = 'Suaves: los efectos de la música a media fuerza y sin destellos de pantalla. Mínimos: solo el pulso del suelo y las líneas de velocidad, sin relámpagos.';
-    fxRow.appendChild(fxLabel);
-    fxRow.appendChild(fxSelect);
-    fxRow.appendChild(fxNote);
-    body.appendChild(fxRow);
+    body.appendChild(field({
+        label: 'Reintentar al chocar',
+        labelFor: retryToggle.id,
+        aside: retryToggle,
+        hint: 'Sin panel de resultados: el nivel vuelve a empezar solo. La pausa (Esc o el botón de arriba) sigue dejando salir.',
+    }));
 
     // ----- Borrar datos locales -----
-    const clearRow = document.createElement('section');
-    clearRow.className = 'daino-settings__row';
-    const clearLabel = document.createElement('div');
-    clearLabel.className = 'daino-settings__label';
-    clearLabel.textContent = 'Borrar datos locales';
-    const clearNote = document.createElement('p');
-    clearNote.className = 'daino-settings__hint';
     const keys = listKeys();
-    clearNote.textContent = keys.length === 0
-        ? 'Aún no hay datos locales que borrar.'
-        : `Borrará ${keys.length} entradas de localStorage (${keys.join(', ')}).`;
-    const clearBtn = document.createElement('button');
-    clearBtn.type = 'button';
-    clearBtn.className = 'daino-btn daino-btn--danger';
-    clearBtn.dataset.interactive = 'true';
-    clearBtn.textContent = 'Borrar';
+    const clearNote = el('p', 'daino-field__hint', keys.length === 0
+        ? 'No hay nada guardado en este navegador.'
+        : 'Volumen, preferencias y las marcas que hiciste sin sesión, guardados en este navegador.');
+    const clearBtn = button('Borrar', 'daino-btn daino-btn--sm daino-btn--danger');
     clearBtn.disabled = keys.length === 0;
     clearBtn.addEventListener('click', () => {
         const sure = window.confirm('¿Borrar todos los datos locales de Daino? Esto incluye volumen, preferencias y las marcas guardadas sin sesión.');
         if (!sure) return;
-        const removed = clearAll();
-        clearNote.textContent = `Borradas ${removed} entradas. Recarga para aplicar valores por defecto.`;
+        clearAll();
+        clearNote.textContent = 'Borrados. Recarga la página para volver a los valores de fábrica.';
         clearBtn.disabled = true;
     });
-    clearRow.appendChild(clearLabel);
-    clearRow.appendChild(clearNote);
-    clearRow.appendChild(clearBtn);
-    body.appendChild(clearRow);
+    body.appendChild(field({ label: 'Datos locales', aside: clearBtn, hint: clearNote }));
 
     const dialog = createModal('settings', { title: 'Ajustes', body });
     dialog.showModal();
-}
-
-// --------------------------- Helpers internos ---------------------------
-
-function button(label, className) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = className;
-    b.dataset.interactive = 'true';
-    b.textContent = label;
-    return b;
 }
 
 if (import.meta.hot) {

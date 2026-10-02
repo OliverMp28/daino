@@ -1,0 +1,327 @@
+/*
+ * Panel de partida — pausa y resultados (reintentos, Sep 2026; aspecto, T04).
+ *
+ * Un panel centrado sobre la escena, que sigue nítida detrás (el Dino caído junto
+ * al obstáculo, o trotando tras superar el nivel). De un vistazo: el porcentaje es
+ * lo más grande; debajo, el camino de la canción con el Dino donde llegaste y un
+ * banderín en tu mejor marca; REINTENTAR es el único bloque rosa y ocupa todo el
+ * ancho; Niveles y Menú, debajo y en pequeño.
+ *
+ * El color dice cómo fue: verde, superado; oro, récord; sin color, un intento más.
+ */
+
+dialog.daino-run {
+    position: fixed;
+    inset: 0;
+    width: min(27rem, calc(100vw - 2rem));
+    height: fit-content;
+    max-height: calc(100dvh - 1.5rem);
+    margin: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--d-bone);
+    overflow: visible;
+    opacity: 0;
+    transform: translateY(var(--u8));
+    transition: opacity 120ms ease-out, transform 160ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+dialog.daino-run[open] {
+    opacity: 1;
+    transform: none;
+}
+
+@starting-style {
+    dialog.daino-run[open] {
+        opacity: 0;
+        transform: translateY(var(--u8));
+    }
+}
+
+/* Tras chocar, la escena se ve más: es la foto de dónde caíste. */
+dialog.daino-run[data-mode="results"]::backdrop {
+    background: rgb(11 12 26 / 0.5);
+}
+
+.daino-run__card {
+    --accent: var(--d-bone);
+    --fill: var(--d-spike);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: calc(100dvh - 1.5rem);
+    overflow-y: auto;
+    padding: 1.5rem 1.5rem 1.25rem;
+    text-align: center;
+}
+
+dialog.daino-run[data-tone="record"] .daino-run__card { --accent: var(--d-gold); --fill: var(--d-gold); }
+dialog.daino-run[data-tone="win"] .daino-run__card { --accent: var(--d-cactus); --fill: var(--d-cactus); }
+
+/* ----- Cabecera: la canción, qué pasó y hasta dónde ----- */
+
+.daino-run__head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.daino-run__title {
+    max-width: 100%;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--d-mute);
+}
+
+.daino-run__heading {
+    --cell: var(--u2);
+    margin: 0;
+    color: var(--accent);
+}
+
+dialog.daino-run[data-mode="pause"] .daino-run__heading {
+    --cell: var(--u4);
+}
+
+.daino-run__pct {
+    --cell: var(--u8);
+    margin: 0.15rem 0 0;
+    color: var(--accent);
+    animation: daino-run-pop 240ms steps(3, end) both;
+}
+
+@keyframes daino-run-pop {
+    from { transform: scale(1.35); }
+    to   { transform: none; }
+}
+
+/* ----- El camino de la canción -----
+   La barra es el suelo: sus tramos (más claros cuanto más intensos, el clímax en
+   rosa), lo que alcanzaste relleno, el Dino de pie donde llegaste y un banderín en
+   tu mejor intento. */
+
+.daino-run__track {
+    --cell: var(--u2);
+    position: relative;
+    padding-top: calc(21 * var(--cell));
+    margin-bottom: 0.9rem;
+}
+
+.daino-run__dino {
+    position: absolute;
+    bottom: var(--u8);
+    left: clamp(0px, calc(var(--at) * 100% - 11 * var(--cell)), calc(100% - 21 * var(--cell)));
+    animation: daino-run-land 1ms linear 420ms both;
+}
+
+/* Aparece cuando la barra termina de llenarse. */
+@keyframes daino-run-land {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.daino-run__bar {
+    position: relative;
+    height: var(--u8);
+    background: var(--d-ink);
+}
+
+.daino-run__road {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+.daino-run__seg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--d-edge);
+    opacity: 0.14;
+}
+
+.daino-run__seg[data-level="2"] { opacity: 0.26; }
+.daino-run__seg[data-level="3"] { opacity: 0.4; }
+.daino-run__seg[data-climax="true"] { background: var(--d-beat); opacity: 0.55; }
+
+.daino-run__fill {
+    --amount: 0;
+    position: absolute;
+    inset: 0;
+    background: var(--fill);
+    transform-origin: left center;
+    transform: scaleX(var(--amount));
+    animation: daino-run-fill 420ms steps(14, end) both;
+}
+
+/* Se llena a saltos, como una barra de carga de 8 bits. */
+@keyframes daino-run-fill {
+    from { transform: scaleX(0); }
+}
+
+/* Banderín de tu mejor marca: un poste que sobresale y su nombre debajo. */
+.daino-run__best {
+    position: absolute;
+    top: calc(-1 * var(--u4));
+    bottom: calc(-1 * var(--u4));
+    width: var(--u2);
+    margin-left: calc(-1 * var(--u1));
+    background: var(--d-gold);
+}
+
+.daino-run__best > .px {
+    --cell: var(--u1);
+    position: absolute;
+    top: calc(100% + var(--u4));
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--d-gold);
+}
+
+.daino-run__note {
+    margin: 0;
+    font-size: 0.92rem;
+    color: var(--d-belly);
+}
+
+.daino-run__note[hidden] { display: none; }
+
+/* ----- Datos de la partida ----- */
+
+.daino-run__stats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem 1.75rem;
+    margin: 0;
+}
+
+.daino-run__stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.daino-run__stat dt {
+    --cell: var(--u1);
+    color: var(--d-mute);
+}
+
+.daino-run__stat dd {
+    --cell: var(--u2);
+    margin: 0;
+    color: var(--d-bone);
+}
+
+/* ----- Acciones ----- */
+
+.daino-run__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.daino-run__primary {
+    width: 100%;
+}
+
+/* Con salto de línea: en un móvil vertical tres botones no caben en fila. */
+.daino-run__secondary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.daino-run__secondary-btn {
+    flex: 1 1 6.5rem;
+    min-width: 0;
+    min-height: 2.75rem;
+    padding-inline: 0.5rem;
+}
+
+/* En la pausa, Reintentar ocupa su fila: con su tecla no cabe junto a los otros dos. */
+dialog.daino-run[data-mode="pause"] .daino-run__secondary-btn[data-action="retry"] {
+    flex-basis: 100%;
+}
+
+/* Recién abierto no acepta toques (quien choca suele seguir pulsando). */
+dialog.daino-run[data-armed="false"] :is(button, input) {
+    pointer-events: none;
+}
+
+/* ----- Pie: reintento automático (resultados) o volumen (pausa) ----- */
+
+.daino-run__foot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding-top: 1rem;
+    border-top: var(--d-line) solid var(--d-ink);
+}
+
+.daino-run__switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+    font-size: 0.85rem;
+    color: var(--d-belly);
+    cursor: pointer;
+}
+
+.daino-run__volume {
+    --cell: var(--u1);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    color: var(--d-mute);
+    cursor: pointer;
+}
+
+/* Móvil apaisado: dos columnas (marca a la izquierda, acciones a la derecha)
+   para que todo quepa en 360-420 px de alto sin desplazarse. */
+@media (max-height: 520px) and (min-width: 560px) {
+    dialog.daino-run { width: min(44rem, calc(100vw - 2rem)); }
+
+    .daino-run__card {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr;
+        grid-template-areas:
+            "head    actions"
+            "track   actions"
+            "note    actions"
+            "stats   actions"
+            "foot    foot";
+        column-gap: 1.5rem;
+        row-gap: 0.5rem;
+        padding: 1rem 1.25rem 0.9rem;
+        align-items: center;
+    }
+
+    .daino-run__head { grid-area: head; gap: 0.5rem; }
+    .daino-run__track { grid-area: track; --cell: var(--u1); margin-bottom: 0.75rem; }
+    .daino-run__note { grid-area: note; font-size: 0.85rem; }
+    .daino-run__stats { grid-area: stats; gap: 0.4rem 1.2rem; }
+    .daino-run__actions { grid-area: actions; align-self: center; }
+    .daino-run__foot { grid-area: foot; flex-direction: row; justify-content: center; padding-top: 0.6rem; }
+    .daino-run__secondary-btn { min-height: 2.5rem; }
+    .daino-run__pct { --cell: var(--u6); }
+    dialog.daino-run[data-mode="pause"] .daino-run__heading { --cell: var(--u3); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    dialog.daino-run,
+    dialog.daino-run[open] { transition: none; transform: none; }
+    .daino-run__pct,
+    .daino-run__fill,
+    .daino-run__dino { animation: none; }
+}

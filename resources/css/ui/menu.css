@@ -1,0 +1,205 @@
+/*
+ * Menú principal (doc 06 §4.1) y chip de sesión.
+ *
+ * El escenario del juego sigue vivo detrás (el Dino trota, el cielo es el del
+ * atardecer): el menú es el rótulo del juego y una lista de acciones, como en una
+ * consola. JUGAR es el único bloque rosa. Oculto, es inerte (menu.js).
+ */
+
+.daino-menu {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    align-items: center;
+    justify-items: center;
+    padding: max(4rem, calc(var(--safe-top) + 3.5rem)) max(2rem, var(--safe-right)) max(2rem, var(--safe-bottom)) max(2rem, var(--safe-left));
+    visibility: visible;
+    transition: opacity 200ms ease-out, visibility 0s linear 0s;
+}
+
+/* Oculto = fuera de juego del todo, no solo transparente. `#menu-root
+   [data-interactive]` reactiva los clics de los botones, así que un menú con
+   opacidad 0 seguía capturando clics y toques en pleno juego. Aquí: sin eventos,
+   `visibility: hidden` al acabar el fundido y, en JS, `inert`. */
+.daino-menu[data-visible="false"] {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 200ms ease-out, visibility 0s linear 200ms;
+}
+
+#menu-root .daino-menu[data-visible="false"],
+#menu-root .daino-menu[data-visible="false"] [data-interactive="true"] {
+    pointer-events: none;
+}
+
+.daino-menu__main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 24rem;
+}
+
+/* El rótulo: la letra del juego, grande, con su sombra dura. */
+.daino-menu__title {
+    --cell: var(--u12);
+    --px-shadow: var(--d-ink);
+    margin: 0;
+    color: var(--d-bone);
+    user-select: none;
+}
+
+.daino-menu__subtitle {
+    --cell: var(--u2);
+    --px-shadow: var(--d-ink);
+    margin: 1.75rem 0 0;
+    color: var(--d-belly);
+    user-select: none;
+}
+
+.daino-menu__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+    margin-top: 2.25rem;
+}
+
+.daino-menu__action {
+    width: 100%;
+    min-height: 2.75rem;
+}
+
+/* El cursor de la lista: señala la acción que tienes debajo o enfocada. */
+.daino-menu__cursor {
+    position: absolute;
+    left: 0.9rem;
+    top: 50%;
+    margin-top: calc(-3.5 * var(--cell) - var(--u1));
+    opacity: 0;
+}
+
+.daino-menu__action:hover .daino-menu__cursor,
+.daino-menu__action:focus-visible .daino-menu__cursor {
+    opacity: 1;
+}
+
+/* JUGAR manda. */
+.daino-menu__action--primary {
+    --cell: var(--u3);
+    min-height: 3.75rem;
+}
+
+/* SUBIR MI CANCIÓN: aparte del bloque de juego y con una línea que dice qué hace
+   antes de pulsarla. */
+.daino-menu__action--upload {
+    flex-direction: column;
+    gap: 0.4rem;
+    min-height: 3.75rem;
+    margin-top: 0.75rem;
+}
+
+.daino-menu__action-hint {
+    font: 500 0.74rem / 1 var(--d-font);
+    letter-spacing: 0.01em;
+    text-transform: none;
+    color: var(--d-mute);
+}
+
+.daino-menu__action--upload:hover .daino-menu__action-hint {
+    color: var(--d-belly);
+}
+
+.daino-menu__secondary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+}
+
+.daino-menu__secondary .daino-menu__action {
+    padding-inline: 0.25rem;
+}
+
+/* En los tres pequeños no cabe el cursor: basta el marco. */
+.daino-menu__secondary .daino-menu__cursor {
+    display: none;
+}
+
+/* Pantallas bajas (móvil apaisado, portátil con la ventana a media altura): todo el
+   menú cabe sin desplazarse. Medido en 844 × 390 y 667 × 375. */
+@media (max-height: 620px) {
+    .daino-menu__title { --cell: var(--u8); }
+    .daino-menu__subtitle { margin-top: 1rem; }
+    .daino-menu__actions { margin-top: 1.25rem; }
+}
+
+@media (max-height: 480px) {
+    .daino-menu {
+        padding-top: max(0.75rem, var(--safe-top));
+        padding-bottom: max(0.5rem, var(--safe-bottom));
+    }
+    .daino-menu__title { --cell: var(--u6); }
+    .daino-menu__subtitle { margin-top: 0.6rem; --cell: var(--u1); }
+    .daino-menu__actions { margin-top: 0.75rem; gap: 0.35rem; }
+    .daino-menu__action { min-height: 2.25rem; }
+    .daino-menu__action--primary { min-height: 2.75rem; --cell: var(--u2); }
+    .daino-menu__action--upload { min-height: 2.75rem; margin-top: 0.25rem; gap: 0.3rem; }
+    .daino-menu__secondary { gap: 0.35rem; }
+}
+
+@media (max-height: 340px) {
+    .daino-menu__subtitle,
+    .daino-menu__action-hint { display: none; }
+    .daino-menu__action--upload { min-height: 2.25rem; }
+}
+
+@media (max-width: 420px) {
+    .daino-menu { padding-inline: max(1rem, var(--safe-right)) max(1rem, var(--safe-left)); }
+    .daino-menu__title { --cell: var(--u8); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .daino-menu { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Chip de sesión — arriba a la derecha, solo en el menú. En iframe no se monta
+ * (Vout ya enseña quién eres).
+ * ------------------------------------------------------------------------- */
+
+#auth-anchor {
+    position: fixed;
+    top: max(1rem, var(--safe-top));
+    right: max(1rem, var(--safe-right));
+    z-index: 41;
+    pointer-events: auto;
+    transition: opacity 200ms ease-out;
+}
+
+/* Fuera del menú, inerte: no se abre un panel que se quedaría atravesado. */
+body:not([data-app-state="MENU"]) #auth-anchor {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+    transition: opacity 200ms ease-out, visibility 0s linear 200ms;
+}
+
+.daino-auth-chip {
+    display: inline-flex;
+    align-items: center;
+}
+
+.daino-auth-chip__button {
+    --avatar: 1.5rem;
+    padding-inline: 0.4rem 0.75rem;
+    gap: 0.5rem;
+}
+
+.daino-auth-chip__name {
+    max-width: 14ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font: 600 0.85rem / 1.2 var(--d-font);
+    letter-spacing: 0;
+    text-transform: none;
+}

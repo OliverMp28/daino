@@ -1,0 +1,72 @@
+/*
+ * Daino — la materia de la interfaz (T04, doc 12).
+ *
+ * La interfaz está hecha de lo mismo que el juego. Sus colores son los de la paleta
+ * del pixel art (resources/js/game/assets/palette.js) y cada uno hace un solo
+ * papel; sus medidas son celdas enteras; sus esquinas, escalones.
+ *
+ * QUÉ SIGNIFICA CADA COLOR
+ *   --d-beat    rosa del ptero      el pulso: la acción que juega (JUGAR, REINTENTAR) y, en el
+ *                                   camino de la canción, su clímax. Ningún otro bloque es rosa.
+ *   --d-spike   cian de las púas    lo tuyo: tu marca, tu fila del ranking, el foco, lo elegido.
+ *   --d-gold    oro                 la dificultad (estrellas) y un récord.
+ *   --d-cactus  verde del cactus    un nivel superado.
+ *   --d-warn    naranja del orbe    lo que falla o borra (un análisis fallido, cerrar sesión).
+ *   --d-edge    línea del suelo     la estructura: el canto de un panel, una pestaña activa.
+ *   --d-bone / --d-belly / --d-mute  el Dino, su panza y un gris azulado: los tres niveles de texto.
+ *   --d-ground / --d-raise / --d-speck / --d-ink  la tierra del suelo, lo que sobresale, sus motas y lo más hondo.
+ *
+ * QUÉ NO HAY: degradados, desenfoques, resplandores, sombras blandas ni esquinas
+ * redondas. El pixel art del juego no los tiene, y un panel de cristal esmerilado
+ * encima lo emborrona (y cuesta una pasada de GPU por fotograma).
+ */
+
+:root {
+    color-scheme: dark;
+
+    --d-ink: #0b0c1a;
+    --d-ground: #12152e;
+    --d-raise: #1c2147;
+    --d-speck: #333b66;
+    --d-edge: #8b9aff;
+
+    --d-bone: #f2f5ff;
+    --d-belly: #b9c6ea;
+    --d-mute: #7d88ba;
+
+    --d-beat: #ff5d7e;
+    --d-beat-lit: #ff7a96;
+    --d-beat-deep: #c73a5c;
+    --d-spike: #7fe6ff;
+    --d-gold: #ffd166;
+    --d-cactus: #3ddc84;
+    --d-warn: #ffb057;
+
+    /* Lo que se lee de corrido va en la letra del sistema: sin descargar nada, la
+       de cada equipo (Segoe UI, San Francisco, Roboto). Lo que dice el juego va en
+       su letra de celdas (resources/js/ui/pixel/font.js). */
+    --d-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+    /* Unidades de la rejilla: --uN ≈ N/16 de rem. pixel/grid.js las sustituye por
+       su valor redondeado a píxeles de pantalla enteros; estas son la reserva. */
+    --u1: 0.0625rem;
+    --u2: 0.125rem;
+    --u3: 0.1875rem;
+    --u4: 0.25rem;
+    --u5: 0.3125rem;
+    --u6: 0.375rem;
+    --u8: 0.5rem;
+    --u10: 0.625rem;
+    --u12: 0.75rem;
+    --u16: 1rem;
+
+    /* Grosor de un marco y tamaño del escalón de una esquina. */
+    --d-line: var(--u2);
+    --d-cut: var(--u2);
+
+    /* Márgenes seguros (notch, barra de gestos). `viewport-fit=cover` en el layout. */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+}

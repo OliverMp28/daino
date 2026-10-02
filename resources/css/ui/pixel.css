@@ -1,0 +1,108 @@
+/*
+ * Lo que se dibuja en celdas: la letra del juego, sus sprites y las portadas.
+ *
+ * Todo mide un número de celdas por `--cell` (lo que mide una celda). `--cell` se
+ * hereda: un componente dice el tamaño de su letra una vez y lo que lleve dentro
+ * lo sigue. Los valores son unidades de la rejilla (--u1, --u2…), enteras en
+ * píxeles de pantalla (resources/js/ui/pixel/grid.js).
+ */
+
+:root {
+    --cell: var(--u2);
+}
+
+/* ----- Letra (pixel/text.js) ----- */
+
+.px {
+    position: relative;
+    display: inline-block;
+    flex: none;
+    line-height: 0;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.px > svg {
+    display: block;
+    width: calc(var(--w, 0) * var(--cell));
+    height: calc(7 * var(--cell));
+    overflow: visible;                 /* las tildes suben de la caja */
+    shape-rendering: crispEdges;
+    fill: currentColor;
+}
+
+/* Sombra dura (de una celda o de media): para lo que va sobre la escena. */
+.px__shadow {
+    fill: var(--px-shadow, var(--d-ink));
+}
+
+/* El texto de verdad, para lectores de pantalla y `textContent`. */
+.px__sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* Un texto con un carácter sin dibujar: entero en la letra del sistema, con el
+   mismo peso y en mayúsculas para que no desentone. */
+.px--plain {
+    font: 700 calc(var(--cell) * 6.4) / 1.1 var(--d-font);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+/* Varias palabras que pueden partirse en líneas (kit.js `pxWords`): entre palabras,
+   el ancho de un espacio; entre líneas, media mayúscula. */
+.px-words {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: calc(4 * var(--cell)) calc(4 * var(--cell));
+}
+
+.px-xs { --cell: var(--u1); }
+.px-s  { --cell: var(--u2); }
+.px-m  { --cell: var(--u3); }
+.px-l  { --cell: var(--u4); }
+.px-xl { --cell: var(--u6); }
+
+/* ----- Sprites del juego (pixel/sprite.js) ----- */
+
+.px-art {
+    display: inline-block;
+    flex: none;
+    width: calc(var(--cols) * var(--cell));
+    height: calc(var(--rows) * var(--cell));
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    image-rendering: pixelated;
+}
+
+/* El Dino que trota: sus dos poses, a saltos (sin fundido entre ellas). */
+.px-runner {
+    animation: px-run 0.3s steps(1, end) infinite;
+}
+
+@keyframes px-run {
+    0%   { background-image: var(--frame-a); }
+    50%  { background-image: var(--frame-b); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .px-runner { animation: none; }
+}
+
+/* ----- Portada de un nivel (pixel/coverImage.js) -----
+   El dibujo es más ancho que cualquier caja: se enseña la parte que cabe, con el
+   suelo abajo y algo corrida a la derecha (ahí están el sol y la luna). Si la caja
+   es más alta que el dibujo, arriba sigue el color de lo alto del cielo. */
+
+.px-cover {
+    background-color: var(--cover-top, var(--d-ink));
+    background-repeat: no-repeat;
+    background-position: 66% 100%;
+    background-size: calc(var(--cover-cols) * var(--cell)) calc(var(--cover-rows) * var(--cell));
+    image-rendering: pixelated;
+}
