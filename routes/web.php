@@ -14,6 +14,12 @@ declare(strict_types=1);
 // identidad (submit ranking, comentar, subir MP3 público).
 $router->get('/', 'HomeController@index');
 
+// Direcciones de las pantallas del juego (T06). Es la misma página: qué se abre
+// lo decide el cliente (resources/js/ui/routeModel.js). El servidor solo pone el
+// título y la descripción del nivel para quien recibe el enlace.
+$router->get('/niveles', 'HomeController@levels');
+$router->get('/niveles/{ref}', 'HomeController@level');
+
 // --- OAuth flow contra Vout ----------------------------------------------
 // CSRF aplica solo a POST/PUT/PATCH/DELETE. /auth/login y /auth/callback son
 // GET — el `state` OAuth ya nos protege contra CSRF en esos.

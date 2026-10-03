@@ -33,14 +33,17 @@ async function boot() {
         console.info('[daino] modo iframe — bridge activo');
     }
 
+    // Quién mira se pregunta YA, mientras arranca el motor (un segundo largo): al
+    // montar la interfaz lo normal es saberlo, y un enlace a «Míos» o a un nivel
+    // propio se abre sin esperar otra petición (T06). No bloquea: si tarda, el
+    // chip arranca anónimo y se repinta cuando llega `daino:auth:login`.
+    void client.init();
+
     const mount = document.getElementById('app') ?? document.body;
     const engineApi = await startEngine(mount);
 
     setupUpload();
 
-    // Hidratar identidad antes de montar la UI dependiente. Es no-bloqueante:
-    // el chip arranca anónimo y se repinta cuando llega `daino:auth:login`.
-    void client.init();
     const authAnchor = document.getElementById('auth-anchor');
     if (authAnchor !== null) auth.mount(authAnchor);
 

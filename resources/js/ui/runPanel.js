@@ -19,6 +19,7 @@ import { button, el, range } from './kit.js';
 import { getSkin } from './settings.js';
 import { runningDinoEl, spriteEl } from './pixel/sprite.js';
 import { pixelText } from './pixel/text.js';
+import { canLockLandscape, lockLandscape, ROTATE_BY_HAND } from './screenLock.js';
 
 const DIALOG_ID = 'modal-run';
 
@@ -139,6 +140,7 @@ function renderCard(view, handlers, fire) {
     summary.id = `${DIALOG_ID}-summary`;
     if (!view.note) summary.hidden = true;
     card.appendChild(summary);
+    if (view.rotate) card.appendChild(rotateRow(summary));
 
     const stats = el('dl', 'daino-run__stats');
     for (const s of view.stats) {
@@ -204,6 +206,36 @@ function renderTrack(view) {
     }
     track.append(dino, bar);
     return track;
+}
+
+/**
+ * Móvil en vertical: un botón que lo pone en horizontal donde el navegador lo
+ * permite, y cómo hacerlo a mano donde no (o si no le dejan).
+ *
+ * @param {HTMLElement} summary  La nota del panel ("Gira el móvil…").
+ */
+function rotateRow(summary) {
+    const row = el('div', 'daino-run__rotate');
+    const byHand = () => { summary.textContent = `Daino se juega en horizontal. ${ROTATE_BY_HAND}`; };
+    if (!canLockLandscape()) {
+        byHand();
+        row.hidden = true;
+        return row;
+    }
+    const b = button('Poner en horizontal', 'daino-btn daino-btn--sm');
+    b.addEventListener('click', async () => {
+        b.disabled = true;
+        if (await lockLandscape() === 'locked') {
+            // Ya en horizontal: la nota y el botón sobran.
+            summary.hidden = true;
+            row.hidden = true;
+            return;
+        }
+        byHand();
+        row.hidden = true;
+    });
+    row.appendChild(b);
+    return row;
 }
 
 function actionButton(action, className, fire) {

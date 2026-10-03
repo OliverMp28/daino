@@ -410,6 +410,13 @@ dialog.daino-rotate {
     color: var(--d-belly);
 }
 
+.daino-rotate__card .daino-rotate__help {
+    font-size: 0.84rem;
+    color: var(--d-bone);
+}
+
+.daino-rotate__help[hidden] { display: none; }
+
 /* Un móvil que se tumba: a saltos, como un sprite de dos poses. */
 .daino-rotate__phone {
     width: 2.25rem;

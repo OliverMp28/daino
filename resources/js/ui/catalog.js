@@ -30,6 +30,10 @@
 //   - Jugar solo PIDE (`playRequests.js`); AppController carga y arranca.
 //   - Es un `<dialog>` en #modal-root: foco atrapado y Esc nativos, y el
 //     engine baja el presupuesto de render mientras está abierto (Ola 1).
+//   - Tiene dirección (T06): `/niveles`, `/niveles/mios` y `/niveles/12-titulo`
+//     para la ficha. El catálogo no toca el historial: dice qué enseña
+//     (`catalogView`, `onCatalogView`) y el router pone la dirección; y abre la
+//     ficha de un nivel por su número cuando alguien llega con un enlace.
 
 import { isAuthenticated, request as apiRequest, upload as apiUpload, getUser } from '../api/client.js';
 import {
@@ -46,6 +50,8 @@ import { rankingGhosts, rankingRow } from './rankingRow.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { createModal } from './modals.js';
 import { showToast } from './toast.js';
+import { routePath } from './routeModel.js';
+import { shareLink } from './share.js';
 import { analysisView, difficultyChoiceView, PUBLISH_STATE } from './publishModel.js';
 import {
     LEVEL_UPDATED_EVENT, changeDifficulty, changeScene, confirmPublish, retryAnalysis, subscribeAnalysis, trackPending,
@@ -75,7 +81,37 @@ const ui = {
     focusLevelId: null,
     /** Nivel recién jugado: su tarjeta se resalta mientras el catálogo siga abierto. */
     recentLevelId: null,
+    /** Nivel cuya ficha se está abriendo por su número (un enlace) y aún no ha llegado. */
+    pendingLevelId: null,
 };
+
+/** Quien quiere saber cuándo cambia lo que enseña el catálogo (el router, T06). */
+const viewListeners = new Set();
+
+/**
+ * Qué enseña el catálogo ahora: cerrado, la rejilla de una pestaña o la ficha de
+ * un nivel (`level`; solo con su número mientras llega de un enlace).
+ *
+ * @returns {{ open: boolean, tab: 'public' | 'mine', level: { id: number, title: string | null } | null }}
+ */
+export function catalogView() {
+    const open = ui.dialog?.open === true;
+    const level = ui.detail ?? (ui.pendingLevelId !== null ? { id: ui.pendingLevelId, title: null } : null);
+    return { open, tab: ui.tab, level: open ? level : null };
+}
+
+/**
+ * @param {() => void} fn  Se llama cada vez que cambia `catalogView()`.
+ * @returns {() => void}   Deja de avisar.
+ */
+export function onCatalogView(fn) {
+    viewListeners.add(fn);
+    return () => viewListeners.delete(fn);
+}
+
+function viewChanged() {
+    for (const fn of viewListeners) fn();
+}
 
 /** Suelta las suscripciones de la vista anterior antes de pintar otra. */
 function releaseSubscriptions() {
@@ -88,15 +124,17 @@ function releaseSubscriptions() {
 /**
  * Abre el catálogo, en la rejilla o directamente en la ficha de un nivel.
  *
- * @param {{ tab?: 'public' | 'mine', level?: object, focusLevelId?: number | null }} [opts]
+ * @param {{ tab?: 'public' | 'mine', level?: object, levelId?: number, focusLevelId?: number | null }} [opts]
  *        `focusLevelId`: tarjeta que recibe el foco y se trae a la vista (al
  *        volver de una partida con "Niveles", el nivel que se acaba de jugar).
+ *        `levelId`: abre la ficha de ese nivel sin tenerlo aún (un enlace).
  */
 export function openCatalog(opts = {}) {
     const dialog = ensureDialog();
     const wanted = opts.tab ?? ui.tab;
     ui.tab = tabsFor(isAuthenticated()).some((t) => t.id === wanted) ? wanted : 'public';
     ui.detail = null;
+    ui.pendingLevelId = null;
     ui.focusLevelId = opts.focusLevelId ?? null;
     ui.recentLevelId = opts.focusLevelId ?? null;
     renderShell();
@@ -104,9 +142,58 @@ export function openCatalog(opts = {}) {
     if (opts.level) {
         ui.returnFocus = `.daino-card__open[data-level-id="${CSS.escape(String(opts.level.id))}"]`;
         openDetail(opts.level, null);
+    } else if (opts.levelId != null) {
+        void openDetailById(opts.levelId);
     } else {
         void renderGrid();
     }
+    viewChanged();
+}
+
+/**
+ * La ficha de un nivel del que solo se sabe el número: alguien abrió su enlace.
+ * Si no existe (o es privado y no es de quien mira), se dice y queda el catálogo.
+ *
+ * @param {number} id
+ * @param {{ fresh?: boolean }} [opts]  `fresh`: pedirlo siempre (cambió la sesión).
+ */
+async function openDetailById(id, opts = {}) {
+    const show = (level) => {
+        // Un nivel propio sin publicar vive en «Míos»: "Volver" lleva ahí.
+        const tab = level.is_mine === true && level.is_public !== true ? 'mine' : 'public';
+        if (tab !== ui.tab && tabsFor(isAuthenticated()).some((t) => t.id === tab)) {
+            ui.tab = tab;
+            renderShell();
+        }
+        ui.returnFocus = `.daino-card__open[data-level-id="${CSS.escape(String(level.id))}"]`;
+        openDetail(level, null);
+    };
+
+    // ¿Está ya entre lo que se ha cargado? (volver con "adelante" a una ficha).
+    for (const tab of opts.fresh ? [] : ['public', 'mine']) {
+        const known = peekLevels(tab)?.items.find((l) => l.id === id);
+        if (known) {
+            show(known);
+            return;
+        }
+    }
+
+    ui.detail = null;
+    ui.pendingLevelId = id;
+    const seq = ++ui.renderSeq;
+    releaseSubscriptions();
+    paintSkeleton(mainEl());
+    const res = await apiRequest('GET', `/api/levels/${id}`);
+    if (seq !== ui.renderSeq || ui.dialog?.open !== true) return;   // ya se está en otra cosa
+    ui.pendingLevelId = null;
+    if (res.ok && res.data && typeof res.data.id === 'number') {
+        show(res.data);
+    } else {
+        void renderGrid();
+        // Mismo aviso si no existe que si es privado: no se dice cuál de los dos.
+        showToast(res.status === 404 ? 'Ese nivel no existe o no está publicado.' : 'No se pudo abrir ese nivel.');
+    }
+    viewChanged();
 }
 
 /**
@@ -170,9 +257,11 @@ function ensureDialog() {
     });
     dialog.addEventListener('close', () => {
         ui.detail = null;
+        ui.pendingLevelId = null;
         ui.renderSeq++;
         // El seguimiento del análisis continúa (publishTracker); solo se deja de pintar.
         releaseSubscriptions();
+        viewChanged();
     });
 
     root.appendChild(dialog);
@@ -183,8 +272,12 @@ function ensureDialog() {
     const onAuthChange = () => {
         if (!dialog.open) return;
         if (ui.tab === 'mine' && !isAuthenticated()) ui.tab = 'public';
+        const levelId = ui.detail?.id ?? ui.pendingLevelId;
         renderShell();
-        if (ui.detail === null) void renderGrid();
+        // Con una ficha abierta se vuelve a pedir el nivel: con otra sesión cambia lo
+        // que es tuyo (tu marca, si el nivel es tuyo), o deja de poder verse.
+        if (levelId != null) void openDetailById(levelId, { fresh: true });
+        else void renderGrid();
     };
     window.addEventListener('daino:auth:login', onAuthChange);
     window.addEventListener('daino:auth:logout', onAuthChange);
@@ -237,8 +330,10 @@ function renderShell() {
                 if (ui.tab === tab.id && ui.detail === null) return;
                 ui.tab = tab.id;
                 ui.detail = null;
+                ui.pendingLevelId = null;
                 for (const b of tabs.children) b.setAttribute('aria-selected', String(b.dataset.tab === tab.id));
                 void renderGrid();
+                viewChanged();
             });
             tabs.appendChild(btn);
         }
@@ -490,6 +585,8 @@ function playFromCatalog(level, mode, fromButton) {
  */
 function openDetail(level, fromButton, opts = {}) {
     ui.detail = level;
+    ui.pendingLevelId = null;
+    viewChanged();
     if (fromButton?.dataset.levelId) {
         // Volver deja el foco en el MISMO botón (el de detalles o la tarjeta).
         const kind = fromButton.classList.contains('daino-card__details') ? '.daino-card__details' : '.daino-card__open';
@@ -562,6 +659,13 @@ function openDetail(level, fromButton, opts = {}) {
     }
     if (view.playMode === PLAY_MODE.NEEDS_FILE) {
         status.textContent = 'Es privado: su audio está en tu equipo. Para jugarlo, elige el MP3 con el que lo creaste.';
+    }
+
+    // Un nivel publicado tiene una dirección que cualquiera puede abrir (T06).
+    if (level.is_public === true) {
+        const share = button('Compartir', 'daino-btn daino-detail__share');
+        share.addEventListener('click', () => { void shareLevel(level, status); });
+        actions.appendChild(share);
     }
 
     if (publish.canRetry) {
@@ -639,8 +743,21 @@ function openDetail(level, fromButton, opts = {}) {
     });
 }
 
+/**
+ * Comparte la dirección de un nivel: por la hoja de compartir del sistema si la
+ * hay (un móvil) o copiándola. Si no se puede ni eso, se enseña para copiarla a mano.
+ */
+async function shareLevel(level, status) {
+    const url = new URL(routePath({ name: 'level', id: level.id, title: level.title }), window.location.origin).href;
+    const result = await shareLink({ title: `${level.title} · Daino`, text: `Juega «${level.title}» en Daino`, url });
+    if (result === 'copied') showToast('Enlace copiado.');
+    else if (result === 'failed') status.textContent = url;
+}
+
 function closeDetail() {
     ui.detail = null;
+    ui.pendingLevelId = null;
+    viewChanged();
     void renderGrid().then(() => {
         if (ui.returnFocus !== null) mainEl()?.querySelector(ui.returnFocus)?.focus();
     });

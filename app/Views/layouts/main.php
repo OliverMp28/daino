@@ -4,6 +4,10 @@
  *
  * Contrato de variables (todas pasadas por View::render):
  *   - string $title         Título de la pestaña.
+ *   - string $description   Qué es esta página, en una frase (T06). Es lo que
+ *                           enseña una aplicación de mensajería bajo el enlace.
+ *   - string $canonicalUrl  Dirección absoluta de la página, o '' si no se conoce
+ *                           el dominio (APP_URL).
  *   - string $voutOrigin    Origin completo de Vout (ej. https://vout.local).
  *                           Lo lee bridge.js para validar postMessage. Si está
  *                           vacío, el bridge ignorará todos los mensajes — útil
@@ -24,6 +28,8 @@ use App\Core\View;
 use App\Core\ViteAssets;
 
 /** @var string $title */
+/** @var string $description */
+/** @var string $canonicalUrl */
 /** @var string $voutOrigin */
 /** @var int $uploadMaxMb */
 /** @var string $content */
@@ -44,6 +50,19 @@ use App\Core\ViteAssets;
     <meta name="daino:upload-max-mb" content="<?= View::e($uploadMaxMb) ?>">
 
     <title><?= View::e($title) ?></title>
+
+    <!-- Lo que ve quien recibe un enlace (T06): el nombre del nivel y qué es Daino. -->
+<?php if (($description ?? '') !== ''): ?>
+    <meta name="description" content="<?= View::e($description) ?>">
+    <meta property="og:description" content="<?= View::e($description) ?>">
+<?php endif; ?>
+    <meta property="og:site_name" content="Daino">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="<?= View::e($title) ?>">
+<?php if (($canonicalUrl ?? '') !== ''): ?>
+    <meta property="og:url" content="<?= View::e($canonicalUrl) ?>">
+    <link rel="canonical" href="<?= View::e($canonicalUrl) ?>">
+<?php endif; ?>
 
     <?= ViteAssets::render(['resources/js/main.js', 'resources/css/main.css']) ?>
 </head>

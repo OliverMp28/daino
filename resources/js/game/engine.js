@@ -195,6 +195,11 @@ export async function startEngine(mountTarget = document.body) {
     });
 
     mountTarget.appendChild(app.canvas);  // OJO: app.canvas en v8 (no app.view).
+    // Pixi (su sistema de eventos, que el juego no usa) deja `touch-action: none`
+    // escrito en el propio lienzo, y lo escrito ahí gana a la hoja de estilos: en
+    // un móvil, un dedo sobre el fondo no podía tirar para recargar ni en el menú.
+    // Se quita, y lo decide el CSS según el estado de la app (base.css).
+    app.canvas.style.removeProperty('touch-action');
 
     // Dimensionado con window.innerWidth/Height (no app.screen) porque tras
     // `await app.init({ resizeTo: window })` el internal resize de Pixi puede

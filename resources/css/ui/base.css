@@ -18,13 +18,23 @@ body {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    /* Móvil: ni rebote ni "tirar para recargar" en mitad de una partida. */
-    overscroll-behavior: none;
     background: #05050a;
     color: var(--d-bone);
     font-family: var(--d-font);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+}
+
+/*
+ * Los gestos del navegador en un móvil (tirar hacia abajo para recargar, el rebote
+ * al llegar al borde) valen en todas las pantallas MENOS jugando: ahí un dedo que
+ * se desliza es un salto mantenido, no un gesto. El estado lo pone AppController
+ * en <html> y en <body> (`data-app-state`); va en los dos porque el navegador lee
+ * del elemento raíz lo que hace la página entera al llegar al borde.
+ */
+html[data-app-state="PLAYING"],
+html[data-app-state="PLAYING"] body {
+    overscroll-behavior: none;
 }
 
 #app {
@@ -38,14 +48,19 @@ body {
     display: block;
     width: 100%;
     height: 100%;
-    /* Se juega tocando y manteniendo el dedo sobre el lienzo: el navegador no
-       tiene que esperar a ver si es un desplazamiento o un zoom (retrasa el
-       toque), ni seleccionar nada, ni abrir el menú de pulsación larga. */
-    touch-action: none;
+    /* Fuera de la partida, el fondo se comporta como una página: deslizar hacia
+       abajo recarga. Sin zoom de doble toque ni de pellizco (no es `auto`). */
+    touch-action: pan-y;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
+}
+
+/* Se juega tocando y manteniendo el dedo sobre el lienzo: el navegador no tiene
+   que esperar a ver si es un desplazamiento (retrasa el toque) ni hacer nada con él. */
+html[data-app-state="PLAYING"] #app > canvas {
+    touch-action: none;
 }
 
 /*

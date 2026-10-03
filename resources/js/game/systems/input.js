@@ -21,6 +21,11 @@
 //   - Touch: el lado se decide en touchstart y se recuerda por touch id — el
 //     touchend del mismo dedo emite el End del canal que abrió, aunque el
 //     dedo se haya deslizado al otro lado.
+//   - El juego solo se queda un toque cuando es SUYO: hay una partida escuchando,
+//     no hay un diálogo encima y el dedo cae en el lienzo (`takesTouch`). Todo lo
+//     demás —un botón, un panel, el menú— es de la interfaz y sigue su curso
+//     normal: su clic, su desplazamiento, tirar para recargar. La misma regla que
+//     el teclado.
 //   - Nada se queda pulsado: si la ventana pierde el foco o la pestaña se oculta
 //     con una tecla o un dedo abajo, su `keyup`/`touchend` no llega nunca. Al
 //     perder el foco se suelta todo lo que estuviera mantenido.
@@ -31,6 +36,31 @@ import { setOnGameAction, isBridgeEmbedded } from '../../iframe/bridge.js';
 const KEYS_JUMP = new Set(['Space', 'ArrowUp']);
 const KEYS_DUCK = new Set(['ArrowDown', 'KeyS']);
 const KEYS_PAUSE = new Set(['Escape']);
+
+/** Donde se juega: el lienzo de Pixi (`<div id="app">`). */
+const PLAY_SURFACE = '#app';
+
+/**
+ * ¿Este toque es del juego?
+ *
+ * Hasta Oct 2026 la pregunta era la contraria ("¿cae sobre la interfaz?"), con una
+ * lista de lo que era interfaz y `target instanceof HTMLElement`. Los rótulos de
+ * los botones son un `<svg>` desde la T04, y un `<svg>` NO es un HTMLElement: el
+ * toque sobre el rótulo se tomaba por uno del juego, se anulaba, y el botón no
+ * recibía su clic (solo funcionaba tocándolo por el borde). Y como los listeners
+ * se quedan montados tras la primera partida, pasaba en todas las pantallas.
+ *
+ * Ahora se pregunta por lo único que es del juego, el lienzo: cualquier cosa que
+ * se ponga encima en el futuro es interfaz sin tener que apuntarla en ningún sitio.
+ *
+ * @param {{ closest?: (selector: string) => unknown } | null} target  Donde cayó el dedo.
+ * @param {boolean} playing     Hay una partida escuchando.
+ * @param {boolean} dialogOpen  Hay un `<dialog>` abierto (pausa, resultados, catálogo…).
+ */
+export function takesTouch(target, playing, dialogOpen) {
+    if (!playing || dialogOpen) return false;
+    return typeof target?.closest === 'function' && target.closest(PLAY_SURFACE) !== null;
+}
 
 /** Duración del "tap" sintético de salto/agacharse que llega por el bridge
  *  (postMessage no trae keyup — cerramos el gesto tras este delay). */
@@ -136,15 +166,9 @@ class InputHub {
         document.addEventListener('visibilitychange', this._onHidden);
 
         this._touchStart = (ev) => {
-            // Si el tap viene encima de UI DOM (toasts, menú, modales, HUD,
-            // chip de auth, cualquier botón/enlace), lo dejamos burbujear sin
-            // emitir ni preventDefault — sino el tap no genera click y la UI
-            // deja de responder en táctil.
-            if (ev.target instanceof HTMLElement && ev.target.closest(
-                '[role="alert"], button, a, input, label, select, dialog, #menu-root, #modal-root, #hud-root, #auth-anchor',
-            )) {
-                return;
-            }
+            // Solo los toques del juego. Anular cualquier otro dejaría sin clic al
+            // botón que hay debajo y sin gesto al navegador (tirar para recargar).
+            if (!takesTouch(ev.target, this.has('jump'), document.querySelector('dialog[open]') !== null)) return;
             ev.preventDefault();
             const half = window.innerWidth / 2;
             for (const t of ev.changedTouches) {

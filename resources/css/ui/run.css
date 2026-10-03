@@ -193,6 +193,14 @@ dialog.daino-run[data-mode="pause"] .daino-run__heading {
 
 .daino-run__note[hidden] { display: none; }
 
+/* Móvil en vertical: el botón que lo pone en horizontal, bajo la nota. */
+.daino-run__rotate {
+    display: flex;
+    justify-content: center;
+}
+
+.daino-run__rotate[hidden] { display: none; }
+
 /* ----- Datos de la partida ----- */
 
 .daino-run__stats {

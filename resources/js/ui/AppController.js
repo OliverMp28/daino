@@ -28,6 +28,13 @@
 // 0.36 s, sin red ni análisis). "Niveles" vuelve al catálogo con ese nivel a la
 // vista. Un reintento desde la pausa, igual que salir, no guarda progreso.
 //
+// Direcciones (T06): la URL es una proyección de todo esto. Aquí se dice dónde
+// está la app (`currentPlace`: el menú, el catálogo, la ficha de un nivel, o
+// jugando) y el router (ui/router.js) mantiene la dirección al día. Cuando es el
+// navegador el que se mueve —atrás, adelante, un enlace—, `handleNavigate` decide:
+// en el menú se va a ese sitio; jugando, "atrás" es una pausa y no se va a ningún
+// lado (lo mismo que Esc).
+//
 // El AppController es el único dueño de `activeSession`.
 
 import { readSeedFromUrl } from '../game/levels/Seed.js';
@@ -42,7 +49,10 @@ import { createLocalBests, mergeBest } from '../storage/localBests.js';
 import * as menu from './menu.js';
 import { fadeOverlay } from './transitions.js';
 import { closeAllModals, openSettingsModal } from './modals.js';
-import { openCatalog } from './catalog.js';
+import { catalogView, onCatalogView, openCatalog } from './catalog.js';
+import { createRouter } from './router.js';
+import { MENU } from './routeModel.js';
+import { isBridgeEmbedded } from '../iframe/bridge.js';
 import { PLAY_REQUEST_EVENT, PREFETCH_REQUEST_EVENT } from './playRequests.js';
 import { showToast } from './toast.js';
 import { hideLoader, showLoader } from './loader.js';
@@ -50,7 +60,7 @@ import { Input } from '../game/systems/input.js';
 import { SCENERY } from '../game/config.js';
 import { DEFAULT_SCENE, playSceneId } from '../game/scenes/registry.js';
 import { resolveFxIdentity } from '../game/fx/identity.js';
-import { fetchBinary, getUser, request as apiRequest } from '../api/client.js';
+import { fetchBinary, getUser, init as clientInit, request as apiRequest } from '../api/client.js';
 import { invalidateLevels } from '../api/levelsCache.js';
 import {
     getSkin, getQuality, getVolume, setVolume, getAutoRetry, setAutoRetry, countRunAndShouldHint,
@@ -102,6 +112,20 @@ let run = null;
 
 /** Destino pedido desde la pausa cuando la partida ya estaba superada (se cierra como victoria antes). */
 let pendingExit = null;
+
+/** El router (T06) y la baja de su aviso del catálogo. */
+let router = null;
+let offCatalogView = null;
+/**
+ * Lo que se está cargando para jugar, antes de que exista `run`: el nivel del
+ * catálogo (su dirección es la de la partida) o una canción propia (`id` null).
+ * @type {{ id: number | null, title: string | null, tab: 'public' | 'mine' } | null}
+ */
+let loadingPlay = null;
+/** Adónde se está saliendo de la partida, mientras dura el fundido. @type {import('./routeModel.js').Route | null} */
+let leavingTo = null;
+/** Lo que se espera a saber quién mira antes de abrir un enlace («Míos», un nivel propio sin publicar). */
+const INITIAL_AUTH_WAIT_MS = 4000;
 
 /** Cuenta atrás al reanudar desde la pausa: de cuánto, cada cuánto y cuándo se comprueba que el audio volvió. */
 const RESUME_COUNTDOWN = Object.freeze({ from: 3, stepMs: 420, watchMs: 500 });
@@ -215,6 +239,11 @@ export function start(cfg) {
     window.addEventListener(FX_LEVEL_EVENT, (ev) => {
         engineApi.setFxPref?.(ev.detail?.level ?? getFxLevel());
     });
+
+    // Direcciones (T06). Incrustado en Vout el historial es el de su página: no se toca.
+    router = createRouter({ place: currentPlace, navigate: handleNavigate, passive: isBridgeEmbedded() });
+    offCatalogView = onCatalogView(() => router?.sync());
+    void openInitialPlace(router.start());
 }
 
 export function dispose() {
@@ -225,6 +254,10 @@ export function dispose() {
     if (onAudioPause) window.removeEventListener('audio:pause', onAudioPause);
     cancelResume();
     if (onViewportChange) window.removeEventListener('resize', onViewportChange);
+    offCatalogView?.();
+    offCatalogView = null;
+    router?.dispose();
+    router = null;
     onPlayRequest = null;
     onGameState = null;
     onPrefetch = null;
@@ -256,6 +289,96 @@ export function getActiveAudioEngine() {
     return lastAudioEngine;
 }
 
+// --------------------------- Direcciones (T06) ---------------------------
+
+/**
+ * Dónde está la app ahora mismo. La dirección del navegador sale de aquí.
+ *
+ * @returns {import('./routeModel.js').Place}
+ */
+function currentPlace() {
+    // Saliendo de una partida: ya se está donde se va (el fundido es solo eso).
+    if (leavingTo !== null) return { route: leavingTo, playing: false };
+
+    // Cargando manda lo que se carga (puede quedar la partida anterior en `run`).
+    let play = null;
+    if (state === STATE.LOADING) play = loadingPlay;
+    else if (run !== null) play = { id: run.catalogLevelId, title: run.loaded.title ?? null, tab: run.catalogTab };
+    if (state !== STATE.MENU && play !== null) {
+        return {
+            route: play.id !== null ? { name: 'level', id: play.id, title: play.title, tab: play.tab } : MENU,
+            playing: true,
+        };
+    }
+
+    const view = catalogView();
+    if (!view.open) return { route: MENU, playing: false };
+    if (view.level !== null) return { route: { name: 'level', id: view.level.id, title: view.level.title, tab: view.tab }, playing: false };
+    return { route: { name: 'levels', tab: view.tab }, playing: false };
+}
+
+/**
+ * El navegador ha ido a otra entrada (atrás, adelante). Qué se hace depende de lo
+ * que se esté haciendo: en plena partida, "atrás" es una pausa —lo mismo que Esc—
+ * y no se sale de ella; el router repone la entrada de la partida al ver que la
+ * app sigue ahí.
+ *
+ * @param {import('./routeModel.js').Place} place
+ */
+function handleNavigate(place) {
+    switch (state) {
+        case STATE.PLAYING:
+            handlePauseRequested();
+            return;
+        case STATE.PAUSED:
+        case STATE.GAME_OVER:
+            return;
+        case STATE.RESULTS:
+            void leaveTo(place.route.name === 'menu' ? 'menu' : 'levels');
+            return;
+        case STATE.LOADING:
+            cancelLoading();
+            break;
+        default:
+            break;
+    }
+    showPlace(place);
+}
+
+/** Enseña un lugar desde el menú: lo cierra todo, abre el catálogo o la ficha de un nivel. */
+function showPlace(place) {
+    const { route } = place;
+    const view = catalogView();
+    if (route.name === 'levels') {
+        if (!view.open || view.level !== null || view.tab !== route.tab) openCatalog({ tab: route.tab });
+    } else if (route.name === 'level') {
+        if (!view.open || view.level?.id !== route.id) openCatalog({ levelId: route.id });
+    } else {
+        closeAllModals();
+    }
+}
+
+/** La página se ha abierto en una dirección que no es la del menú: se enseña. */
+async function openInitialPlace(place) {
+    if (place.route.name === 'menu') return;
+    // «Míos» y la ficha de un nivel propio sin publicar dependen de quién mira.
+    await Promise.race([clientInit(), new Promise((resolve) => { window.setTimeout(resolve, INITIAL_AUTH_WAIT_MS); })]);
+    if (state !== STATE.MENU || catalogView().open) return;   // ya está en otra cosa
+    showPlace(place);
+}
+
+/** Deja de preparar la partida que se estaba cargando (se fue atrás durante la carga). */
+function cancelLoading() {
+    playRequestSeq++;
+    loadingPlay = null;
+    run = null;
+    engineApi.setRenderPaused(false);
+    hideHint();
+    closeAllModals();
+    menu.setVisible(true);
+    setState(STATE.MENU);
+}
+
 // --------------------------- Handlers ---------------------------
 
 /**
@@ -270,6 +393,10 @@ async function handlePlayRequest(request) {
     if (state === STATE.GAME_OVER) return;
 
     const seq = ++playRequestSeq;
+    // Dónde se va a jugar (para la dirección): en la de su nivel, o en la del menú.
+    loadingPlay = request.level
+        ? { id: request.level.id, title: request.level.title ?? null, tab: catalogTabFor(request.level) }
+        : { id: null, title: null, tab: 'public' };
 
     if (activeSession) {
         activeSession.stop();
@@ -738,6 +865,8 @@ async function leaveTo(destination) {
         ? { tab: run.catalogTab, focusLevelId: run.catalogLevelId }
         : { tab: run?.catalogTab };
 
+    // La dirección pasa ya a la del destino: el fundido no es un sitio.
+    leavingTo = destination === 'levels' ? { name: 'levels', tab: catalogOpts.tab ?? 'public' } : MENU;
     setState(STATE.GAME_OVER);
     closeRunPanel();
     await transitionToMenu(() => {
@@ -765,6 +894,7 @@ async function transitionToMenu(onMenu) {
             engineApi.setWorldSpeed?.(SCENERY.menuSpeed);
             lastAudioEngine = null;
             run = null;
+            leavingTo = null;
 
             closeAllModals();
             menu.setVisible(true);
@@ -781,8 +911,11 @@ async function transitionToMenu(onMenu) {
 
 function setState(next) {
     state = next;
-    // `<body data-app-state>` permite al CSS mostrar/ocultar UI por modo.
+    // `<body data-app-state>` permite al CSS mostrar/ocultar UI por modo. También
+    // en <html>: los gestos del navegador (tirar para recargar) se permiten o no
+    // según el estado, y eso se decide en el elemento raíz (base.css).
     document.body.dataset.appState = next;
+    document.documentElement.dataset.appState = next;
 
     // Fuera del menú, el chip de sesión no solo se ve transparente: no recibe
     // clics ni foco (una capa invisible encima del juego no debe hacer nada).
@@ -803,6 +936,9 @@ function setState(next) {
     // Presupuesto de render del estado (Ola 1). Las claves de STATE y de
     // RENDER_PROFILES coinciden a propósito.
     engineApi?.setRenderProfile?.(next);
+
+    // La dirección del navegador, al día con el estado nuevo (T06).
+    router?.sync();
 }
 
 // El aviso de "preparando nivel" (el Dino que trota y la fase) vive en ui/loader.js.

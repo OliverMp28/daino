@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia), y la **Ola 6c** ✅ (anillos de salto, vuelo en frases encadenadas con la altura de la melodía, efectos nuevos del chart y exigencia por dificultad igual en cualquier canción). La Ola 7 (ediciones del autor y editor) queda **aplazada como futura actualización**. El trabajo **T05** (rendimiento en cualquier equipo, Oct 2026) vive al final de la sección 3: T05.1-T05.3 ✅, T05.4 a falta de la prueba en un móvil real.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia), y la **Ola 6c** ✅ (anillos de salto, vuelo en frases encadenadas con la altura de la melodía, efectos nuevos del chart y exigencia por dificultad igual en cualquier canción). La Ola 7 (ediciones del autor y editor) queda **aplazada como futura actualización**. Los trabajos **T05** (rendimiento en cualquier equipo, Oct 2026: T05.1-T05.4 ✅, probado en un Android) y **T06** (una dirección para cada pantalla, Oct 2026: T06.1 ✅) viven al final de la sección 3.
 
 ---
 
@@ -1908,11 +1908,12 @@ Intel UHD 620 (gráfica integrada de portátil), 1920×1080, Chrome con la GPU r
   | Formas trianguladas | 3 (el destello del drop; el túnel, dos veces) | 1 (el rectángulo del destello del drop: 4 vértices) |
   | Texturas subidas | 43 | 21 (cambios de pose de unas pocas celdas) |
 
-#### T05.4 — Móviles de verdad ⬜ (hecho lo que se puede desde aquí)
+#### T05.4 — Móviles de verdad ✅
 
 - **Lectura en pantalla con `?perf=1`** (`ui/perfReadout.js`, en un chunk aparte de 0,27 KB que solo se descarga con ese parámetro; también en producción): "60 FPS · 0,4 % tardíos · JS 1,8 ms · Alta · cielo 6 · 60 Hz". Y una fila **"Rendimiento"** en el panel de resultados (en desarrollo o con `?perf=1`), como la "Precisión". `ui/perfModel.js` (puro) da los textos.
 - **Panel dev "Rendimiento"** (`ui/devPerfPanel.js`): la misma lectura en vivo, el tamaño del búfer y sus bandas, y selectores de Calidad, Cielo (nativo, 6, 4, 2) y Ritmo del cielo (cada fotograma, 30, 15, 10, quieto) para compararlos JUGANDO. "Nativo" + "cada fotograma" es como se pintaba antes.
-- **Falta**: la prueba en el Android del user (build de producción, `http://<IP del PC>:8090/?perf=1`, un nivel fácil y uno difícil en horizontal) y, con sus números, ajustar `GOVERNOR_RULES` y el nivel de salida en táctil.
+- **Panel táctil con `?perf=1`** (el mismo chunk, 1,3 KB): un botón 🛠 abajo a la izquierda con "Sin colisiones" (para medir un nivel entero sin tener que esquivar nada: quien mide no puede estar pendiente de los números y de los cactus a la vez) y los selectores de Calidad, Cielo y Ritmo del cielo.
+- **La prueba en el Android del user**: hecha; ver "Lo que salió al probarlo en el móvil", más abajo.
 
 #### Lo medido después
 
@@ -1957,7 +1958,7 @@ Antes y después en la misma máquina y seguidos (Time, Nieve de noche; "antes" 
 
 #### Límites, dichos claro
 
-- **Los móviles están emulados** (más píxeles, procesador frenado) hasta que el user pruebe su Android. iPhone y Safari no se han probado.
+- **Probado en UN móvil, un Android rápido** (60-62 FPS, 0,0-0,1 % de tardíos, JS 1,6-1,8 ms). Un móvil modesto sigue estando solo emulado (más píxeles, procesador frenado). iPhone y Safari no se han probado.
 - **El ritmo a la mitad en pantallas de 120/144 Hz** solo está probado con tests.
 - **El cielo a 30 imágenes por segundo se da por invisible**; si alguien nota algo, es un número (`RENDER_PROFILES.PLAYING.skyHz`), y el panel dev lo deja comparar jugando.
 - **En 1080p con calidad Alta la ganancia en % de gráfica es moderada** (74 → 51 %): a 6 texeles el búfer tiene el 73 % de los píxeles. La ganancia grande está donde hacía falta: pantallas con más píxeles, móviles (Media) y el menú.
@@ -1977,7 +1978,92 @@ Antes y después en la misma máquina y seguidos (Time, Nieve de noche; "antes" 
 - [x] **T05.1** El cielo en su búfer, a texeles por celda y repartido por bandas.
 - [x] **T05.2** Calidad automática por fotogramas tardíos, escalera con el cielo primero, ritmo propio y memoria.
 - [x] **T05.3** Precalentado bajo el fundido del arranque.
-- [ ] **T05.4** Móviles de verdad: lectura `?perf=1` y fila "Rendimiento" hechas; **falta la prueba en el Android del user** y calibrar con ella.
+- [x] **T05.4** Móviles de verdad: lectura `?perf=1`, panel táctil y fila "Rendimiento"; probado en el Android del user (nada que calibrar).
+
+#### Lo que salió al probarlo en el móvil ✅ (Oct 2026)
+
+El user jugó tres niveles en su Android (build de producción, `?perf=1`, panel táctil con "Sin colisiones"):
+
+| Nivel | FPS | Tardíos | JS por fotograma |
+|---|---|---|---|
+| One Day | 60 | 0,0 % | 1,8 ms |
+| Last Christmas | 61 | 0,1 % | 1,7 ms |
+| What's Up Danger | 62 | 0,1 % | 1,6 ms |
+
+"Lo noté normal, fluido." La calidad automática no tuvo que actuar y nada se ajusta: la salida en táctil se queda en Media (a la vista es igual que Alta) y `GOVERNOR_RULES`, como estaba. **Es un solo teléfono, y rápido** (su JS por fotograma es el de este portátil): un móvil modesto sigue estando solo emulado.
+
+Jugando encontró tres fallos de la interfaz en táctil, que no eran de rendimiento:
+
+**1. Los botones solo respondían al tocarlos por el borde.** `input.js` decidía si un toque era de la interfaz con una lista de lo que era interfaz y `target instanceof HTMLElement`. Desde la T04 el rótulo de un botón es un `<svg>`, y un `<svg>` no es un `HTMLElement`: el toque sobre el rótulo se tomaba por uno del juego, se anulaba (`preventDefault`) y el botón no recibía su clic. Como los listeners se quedan montados tras la primera partida, pasaba en todas las pantallas a partir de ahí. Reproducido con toques de verdad (CDP, `Input.dispatchTouchEvent`): antes de jugar, clic; después, "sin clic" en el rótulo y clic en el borde.
+- Ahora se pregunta al revés, por lo único que es del juego: `takesTouch(target, playing, dialogOpen)` — hay una partida escuchando, no hay un diálogo abierto y el dedo cae en el lienzo (`#app`). Todo lo demás es interfaz sin apuntarlo en ninguna lista. Es la misma regla que ya tenía el teclado.
+
+**2. "Poner en horizontal" no ponía nada en horizontal.** El aviso "Gira el móvil" solo esperaba a que se girase; con el giro del teléfono bloqueado no pasaba nada y nada decía por qué.
+- `ui/screenLock.js`: `lockLandscape()` = pantalla completa + `screen.orientation.lock('landscape')` (un navegador solo deja fijar la orientación en pantalla completa). Gira aunque el teléfono tenga el giro bloqueado. Si el navegador no puede (`canLockLandscape()`: Safari en un iPhone) el botón no se ofrece y se dice cómo girarlo a mano; si puede y se niega, se deshace la pantalla completa y se dice lo mismo. El botón está en el aviso de antes de jugar y en el panel de pausa cuando se gira a vertical en plena partida.
+
+**3. Tirar hacia abajo no recargaba la página en ninguna pantalla.** `overscroll-behavior: none` en toda la página, `touch-action: none` en el lienzo (y Pixi lo escribe además en el propio `<canvas>`, donde gana a la hoja de estilos) y el `preventDefault` del punto 1.
+- Los gestos del navegador valen en todas las pantallas **menos jugando**: el estado de la app va también en `<html data-app-state>` y el CSS quita el gesto solo en `PLAYING` (`base.css`). El `touch-action` en línea de Pixi se retira al arrancar.
+
+Verificado con toques y deslizamientos de verdad a tamaño de móvil (antes y después de jugar, en el menú, el catálogo, la pausa y la partida) y el aviso de girar con un navegador que no deja (el botón se cambia por la explicación) y con uno que sí (pide pantalla completa y orientación, y al girar la pantalla empieza el nivel). **Lo que solo se puede comprobar en un teléfono**: que la pantalla gira de verdad con el botón y que el gesto de recargar aparece (un Chrome de escritorio no tiene ninguna de las dos cosas). Tests: `mobile-touch.test.mjs` (8).
+
+**Decisiones (vinculantes):**
+- **El juego solo se queda lo que es suyo**: los toques sobre su lienzo, mientras se juega y sin un diálogo encima. Igual que las teclas.
+- **Lo que la interfaz ofrece, lo hace**; lo que no puede hacer, no lo ofrece y lo explica.
+- **Los gestos del navegador (recargar, atrás) funcionan en todas las pantallas menos en plena partida.**
+
+---
+
+### T06 — Una dirección para cada pantalla ✅ (Oct 2026)
+
+> Trabajo **T06** del índice (`TRABAJOS.md`). Refina el doc 06: Daino sigue siendo una sola página a pantalla completa (el menú, el catálogo y la partida son estados de la misma aplicación), pero cada sitio donde se puede estar tiene ahora su dirección.
+
+**De dónde sale.** Del mismo playtest en el móvil: "que la vista de niveles pueda tener una url para acceder directamente, y que la vista de un nivel tenga una url identificativa por si alguien quiere compartirlo". Y de que recargar (ahora que el gesto funciona) devolvía siempre al menú.
+
+| Dirección | Qué es |
+|---|---|
+| `/` | El menú |
+| `/niveles` | El catálogo |
+| `/niveles/mios` | El catálogo, en «Míos» (sin sesión, el catálogo) |
+| `/niveles/12-one-day` | La ficha de un nivel: lo que se comparte. El número es el nivel; lo que sigue al guion es solo para leerlo (`/niveles/12` es lo mismo) |
+
+Jugar no tiene dirección propia: se juega "encima" de la del nivel (o de la del menú, con una canción propia), en una entrada del historial aparte.
+
+#### Cómo está hecho
+
+- **`ui/routeModel.js`** (puro). `parsePath`, `routePath`, `slugify`, y los **lugares** (una ruta + "¿se está jugando?"), que forman un árbol: menú → catálogo → ficha → jugando. `planMove(clave, pila, destino)` decide qué hacer con el historial: **apilar** al bajar, **volver** a una entrada que ya está en la pila al subir (así "atrás" no la encuentra dos veces) y **sustituir** en lo demás (cambiar de pestaña, subir desde un enlace abierto directamente). Cada entrada guarda las claves de las que tiene debajo.
+- **`ui/router.js`**. No decide nada de la aplicación: se le da `place()` (dónde está la app ahora) y `navigate(place)` (el navegador fue a otra entrada). **La dirección es una proyección del estado**: nadie "navega"; la app cambia y el router la sigue. Varios cambios en la misma tarea se resuelven una vez, y mientras llega una vuelta atrás (`history.go`) no se pide otra (dos seguidas calculadas con la misma entrada se sumarían y sacarían de la página). Conserva lo que la dirección lleve detrás (`?perf=1`). Incrustado en Vout no toca el historial (es el de su página), pero lee la dirección al arrancar.
+- **`AppController`**: `currentPlace()` (del estado, la partida y lo que enseña el catálogo) y `handleNavigate(place)`: en el menú se va a ese sitio; **jugando, "atrás" es una pausa** —lo mismo que Esc— y el router repone la entrada de la partida; en resultados lleva al catálogo; durante la carga, la cancela.
+- **`ui/catalog.js`** no toca el historial: dice qué enseña (`catalogView`, `onCatalogView`) y abre la ficha de un nivel por su número (`openCatalog({ levelId })`). Un nivel que no existe y uno privado ajeno dan el mismo aviso.
+- **Compartir** (`ui/share.js`): botón en la ficha de un nivel publicado. La hoja de compartir del sistema donde la hay (un móvil), y si no, al portapapeles (abierto por la IP de la red local no existe ninguna de las dos API: se copia por el camino antiguo, comprobado); si ni eso, se enseña la dirección para copiarla a mano. En un móvil apaisado la barra de direcciones no se ve: sin botón, la dirección existiría y nadie podría pasarla.
+- **Servidor**: `GET /niveles` y `GET /niveles/{ref}` (`HomeController`) sirven la misma página. Para la ficha de un nivel **público** cambian el título, la descripción y las etiquetas `og:` (lo que enseña una aplicación de mensajería bajo el enlace): "Juega «One Day» en Daino… Dificultad: Relajado · 2:28". Un nivel privado y uno que no existe reciben la misma página, sin su nombre. Lo que no es una dirección de Daino es un 404.
+- Quién mira se pregunta al arrancar, en paralelo con el motor (`main.js`): un enlace a «Míos» o a un nivel propio sin publicar se abre sin esperar otra petición.
+
+#### Verificación
+
+- Tests: `routes.test.mjs` (17: el modelo, el router con un navegador de mentira y compartir) y `tests/php/PageRouteTest.php` (6). **JS 512, PHP 91** (Python, 115, sin cambios: no se ha tocado ni el analizador ni el charter).
+- En el navegador (build de producción): la dirección sigue a JUGAR, a la ficha, a Esc y a cerrar; atrás y adelante llevan a su pantalla sin apilar de más; un enlace a un nivel abre su ficha y pone la dirección canónica; "Volver" desde un enlace sustituye; un nivel que no existe avisa y deja el catálogo; jugando, "atrás" pausa y la entrada se repone (también con una canción propia: antes "atrás" sacaba de la página); en resultados lleva al catálogo; durante la carga la cancela, y la carga cancelada no arranca después; recargar en plena partida deja en la ficha del nivel y "atrás" sigue funcionando. Con sesión simulada: «Míos», un nivel propio sin publicar por su enlace ("Volver" lleva a «Míos») y un título sin letras escribibles (la dirección se queda en el número).
+- Bundle principal 110,1 KB gzip (+3,0 con lo del móvil).
+
+#### Decisiones (vinculantes)
+
+- **Daino sigue siendo una sola página**; las direcciones son sitios donde estar dentro de ella. Una pantalla nueva con dirección = una ruta en `routeModel.js`, su rama en `currentPlace`/`showPlace` y su ruta en `routes/web.php`.
+- **La dirección es una proyección del estado.** Nada llama a "navegar": los módulos cambian lo que enseñan y avisan; el router pone la dirección. Solo él toca `history`.
+- **"Atrás" hace lo que Esc**: cierra lo que hay abierto, y jugando pausa. Nunca saca de una partida.
+- **Recargar deja donde se estaba** (en plena partida, en la ficha de su nivel: el audio no puede arrancar sin un toque).
+- **La dirección de un nivel es su número**; el título que lleva detrás es para leerlo y no identifica nada.
+- **Desde fuera no se distingue un nivel privado de uno que no existe**, ni en la página ni en el aviso.
+- **Las direcciones van en español**, como la interfaz (`/niveles`); la API sigue en inglés.
+
+#### Límites
+
+- **"Atrás" del sistema en un Android y la hoja de compartir** solo se pueden probar en el teléfono (aquí se ha probado `history.back()`, que es lo que hace el botón cuando no hay un diálogo abierto, y Esc, que es lo que hace cuando lo hay).
+- Ranking, Perfil, Ajustes y "Subir mi canción" no tienen dirección: son paneles sobre el menú.
+- Tras iniciar sesión se vuelve al menú, no a la dirección desde la que se entró.
+- La vista previa de un enlace no lleva imagen (`og:image`): haría falta pintar la portada del nivel en el servidor.
+
+#### Casillas
+
+- [x] **T06.1** Direcciones, historial, enlaces a niveles y compartir.
+- [ ] **T06.2** Probarlo en el móvil: atrás del sistema, compartir y recargar.
 
 ---
 
@@ -2003,7 +2089,7 @@ Ola 3 (chart + sincronía) ◀─────────┘
 
 Si hay que elegir una sola cosa: **Ola 3**. Es la que cambia cómo se siente el juego.
 
-La **T05** (rendimiento) no depende de ninguna ola del motor de niveles: toca el render (engine, cielo, ritmo de fotogramas) y deja intactos charter, física y formato de chart.
+La **T05** (rendimiento) no depende de ninguna ola del motor de niveles: toca el render (engine, cielo, ritmo de fotogramas) y deja intactos charter, física y formato de chart. La **T06** (direcciones) tampoco: toca la interfaz (catálogo, AppController) y dos rutas del servidor.
 
 ---
 

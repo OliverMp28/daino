@@ -471,6 +471,10 @@ dialog.daino-catalog[open] {
     min-height: 1.2em;
     font-size: 0.85rem;
     color: var(--d-belly);
+    /* A veces lleva una dirección para copiarla a mano: que quepa y se pueda marcar. */
+    overflow-wrap: anywhere;
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 .daino-detail__status:empty { display: none; }

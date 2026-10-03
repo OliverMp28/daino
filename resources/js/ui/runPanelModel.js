@@ -99,6 +99,8 @@ export function runPanelView(run) {
         percentLabel: `${pct} %`,
         newBest,
         note,
+        /** Móvil en vertical: el panel ofrece ponerlo en horizontal (ui/screenLock.js). */
+        rotate: run.rotate === true,
         bar: {
             fill: pct / 100,
             best: prevPct > 0 && prevPct < 100 ? prevPct / 100 : null,
