@@ -11,11 +11,13 @@
 // el chart cambian: un efecto es solo visual.
 //
 // FAMILIAS = HUECOS. Un nivel lleva como mucho un efecto de cada familia
-// `exclusive` (un espectro, una firma): por construcción no se amontonan.
+// `exclusive` (un espectro, una firma): por construcción no se amontonan. El
+// espectro lo pone la escena (con su paisaje); la firma, la canción (`cast`).
 //   pulse      lo que late con el pulso; el astro que lo lleva lo elige la hora
 //              (el sol de día, las estrellas de noche).
 //   spectrum   lo que suena, visto: uno por escena, hecho con su paisaje.
-//   signature  la firma de la canción (T03.3: aurora, lluvia de estrellas).
+//   signature  la firma de la canción (T03.3): una luz del cielo nocturno que
+//              solo tienen las canciones a las que les pega (fx/casting.js).
 //   air        lo que flota: motas y líneas de velocidad.
 //   moment     un instante de la estructura: drop, lift, marcha, portal.
 //   tone       el color del cielo con la estructura: clímax, break, tonalidad.
@@ -38,7 +40,9 @@
 export const FX_FAMILIES = Object.freeze({
     pulse: Object.freeze({ label: 'Pulso', exclusive: false, fixed: false }),
     spectrum: Object.freeze({ label: 'Espectro', exclusive: true, fixed: false }),
-    signature: Object.freeze({ label: 'Firma', exclusive: true, fixed: false }),
+    // `cast`: de esta familia solo se ve el efecto que le toca a la canción
+    // (director.js, `signature`); sin reparto, ninguno.
+    signature: Object.freeze({ label: 'Firma', exclusive: true, fixed: false, cast: true }),
     air: Object.freeze({ label: 'Aire', exclusive: false, fixed: false }),
     moment: Object.freeze({ label: 'Momentos', exclusive: false, fixed: false }),
     tone: Object.freeze({ label: 'Tono', exclusive: false, fixed: false }),
@@ -116,6 +120,29 @@ export const FX = deepFreeze({
         arc: [0.14, 0.42],
     },
 
+    // ---------- Firma ----------
+    // Luces del cielo nocturno: necesitan noche. Los ambientes de cielo cerrado
+    // (Lluvia, Tormenta) las vetan en su política: la firma de ese nivel es su
+    // clima. Viven en lo alto, sobre lo que se juega.
+    //
+    // Aurora: cortinas de luz, para las canciones que fluyen. Entra con el cuerpo
+    // de la canción y despacio, como entra una aurora. Se ve también entre la
+    // nevada (la Nieve esconde las estrellas, no el cielo).
+    aurora: {
+        label: 'Aurora', family: 'signature', plane: 'sky', cost: 'mid', guard: 'limiter',
+        when: (s) => ramp(s.sky.night, 0.15, 0.6), whenWhy: 'no es de noche',
+        arc: [0.12, 0.36],
+        rise: 0.7, fall: 0.5,
+    },
+    // Lluvia de estrellas: en el clímax, tandas de fugaces en cada primer tiempo,
+    // para las canciones que estallan. Son estrellas: con las del escenario
+    // ocultas (un cielo cubierto, la nevada) no hay.
+    meteors: {
+        label: 'Lluvia de estrellas', family: 'signature', plane: 'sky', cost: 'cheap', guard: 'local',
+        when: (s) => ramp(s.sky.stars, 0.3, 0.7), whenWhy: 'no es de noche o el cielo está cubierto',
+        rise: 2, fall: 1,
+    },
+
     // ---------- Aire ----------
     motes: {
         label: 'Motas', family: 'air', plane: 'world', cost: 'cheap', guard: 'world', ambient: true,
@@ -181,7 +208,8 @@ export const DEFAULT_FX_PREF = 'full';
 /**
  * Colores de los efectos por defecto ("neón"): el rosa del pulso y el cian de los
  * agudos. Espejo de los tokens de @theme en main.css. Una escena puede fijar los
- * suyos (`scene.fx.colors`); desde la T03.3, cada canción elige su paleta.
+ * suyos (`scene.fx.colors`) y cada canción tiene su paleta (fx/palettes.js: esta
+ * es "Neón", la de una canción sin reparto).
  *
  * Son una intención, no lo que se pinta: el director los pone a juego con el
  * cielo de cada hora (tones.js). Sobre el azul del día este rosa es un magenta.

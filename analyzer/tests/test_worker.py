@@ -644,12 +644,58 @@ def test_the_automatic_scene_is_stored_with_the_analysis_it_comes_from(conn, tmp
     assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", level_id)["scene_auto"] == "snow"
 
 
+def test_the_fx_identity_is_stored_with_the_analysis_it_comes_from(conn, tmp_path):
+    """T03.3: la paleta y la firma de la canción viajan con el chart, como el escenario."""
+    def with_fx(fx):
+        return lambda *args, **kwargs: {**chart_from_analysis(*args, **kwargs), "fxAuto": fx}
+
+    level_id, path = make_level(conn, tmp_path)
+    enqueue(conn, level_id, path)
+    w = worker(_connect, tmp_path, FakeAnalyzer())
+    w.charter = with_fx({"signature": "meteors", "palette": "ultra"})
+    assert w.run_once() == "ready"
+    stored = row(conn, "SELECT fx_auto FROM levels WHERE id = %s", level_id)["fx_auto"]
+    assert stored == '{"palette":"ultra","signature":"meteors"}', "claves en orden y sin espacios"
+
+    # Lo que no tiene forma de id no llega a la BD; sin nada propio, NULL.
+    for fx, expected in [({"palette": "../../etc", "signature": "aurora"}, '{"signature":"aurora"}'),
+                         ({"palette": None, "signature": None}, None), (None, None), ("ultra", None), ({"color": "x"}, None)]:
+        w.charter = with_fx(fx)
+        enqueue(conn, level_id, path, purpose="rechart")
+        assert w.run_once() == "chart_updated"
+        assert row(conn, "SELECT fx_auto FROM levels WHERE id = %s", level_id)["fx_auto"] == expected, fx
+
+    # Con el chart de un nivel publicado congelado, su análisis guardado no cambia
+    # y la identidad (que sale de ese análisis) tampoco.
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE levels SET is_public = TRUE, chart_variants_json = NULL, fx_auto = '{"palette":"ice"}' WHERE id = %s""",
+                    (level_id,))
+    conn.commit()
+    w.charter = with_fx({"palette": "rose"})
+    enqueue(conn, level_id, path, purpose="publish")
+    assert w.run_once() == "chart_frozen"
+    assert row(conn, "SELECT fx_auto FROM levels WHERE id = %s", level_id)["fx_auto"] == '{"palette":"ice"}'
+
+
+def test_fx_auto_text_is_canonical():
+    from daino_analyzer.jobs import fx_auto_or_none
+
+    assert fx_auto_or_none({"signature": "aurora", "palette": "rose"}) == '{"palette":"rose","signature":"aurora"}'
+    assert fx_auto_or_none('{"signature": "aurora"}') == '{"signature":"aurora"}', "un texto ya guardado"
+    assert fx_auto_or_none({"palette": "ice", "extra": 1}) == '{"palette":"ice"}'
+    for nothing in (None, {}, [], "no es json", 7, {"palette": "MAL"}, {"palette": ["ice"]}):
+        assert fx_auto_or_none(nothing) is None, nothing
+
+
 def test_the_real_charter_proposes_the_scene_of_a_real_song():
     """El contrato Node → Python con un análisis de verdad (el horneado de HOPE)."""
     baked = json.loads((BAKED / "hope.json").read_text(encoding="utf-8"))
     out = chart_from_analysis(baked["analysis"], baked["audio"]["sha256"])
     assert out["sceneAuto"] == baked["sceneAuto"] == "coast"
     assert out["sceneCasting"]["reason"] == "clear"
+    # T03.3: y la identidad de sus efectos, por el mismo camino.
+    assert out["fxAuto"] == baked["fxAuto"] == {"palette": "rose", "signature": "aurora"}
+    assert out["fxCasting"]["paletteCasting"]["reason"] == "clear"
 
 
 def _insert_level_with_analysis(conn, title: str, analysis: dict | None, scene_auto: str | None = None) -> int:
@@ -666,7 +712,7 @@ def _insert_level_with_analysis(conn, title: str, analysis: dict | None, scene_a
 
 
 def test_cast_scenes_recasts_the_levels_that_have_an_analysis(conn):
-    from daino_analyzer.scenes import cast_scenes
+    from daino_analyzer.casting import cast_scenes
 
     hope = json.loads((BAKED / "hope.json").read_text(encoding="utf-8"))["analysis"]
     stale = _insert_level_with_analysis(conn, "HOPE", hope, scene_auto="storm")
@@ -686,3 +732,28 @@ def test_cast_scenes_recasts_the_levels_that_have_an_analysis(conn):
     assert row(conn, "SELECT scene_auto FROM levels WHERE id = %s", none)["scene_auto"] is None
     assert cast_scenes(conn)["changed"] == [], "idempotente"
     assert cast_scenes(conn, level_ids=[stale])["total"] == 1
+
+
+def test_cast_recasts_the_fx_identity_too(conn):
+    """T03.3: la misma pasada recalcula `fx_auto`."""
+    from daino_analyzer.casting import cast_levels
+
+    hope = json.loads((BAKED / "hope.json").read_text(encoding="utf-8"))["analysis"]
+    stale = _insert_level_with_analysis(conn, "HOPE", hope)
+    browser = _insert_level_with_analysis(conn, "Local", {"formatVersion": 1, "durationSec": 60, "bpm": 120, "onsets": []})
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE levels SET fx_auto = '{"palette":"ultra"}' WHERE id = %s""", (browser,))
+    conn.commit()
+
+    dry = cast_levels(conn, dry_run=True)
+    want = '{"palette":"rose","signature":"aurora"}'
+    assert sorted((c[0], c[2], c[3]) for c in dry["fx_changed"]) == sorted([(stale, None, want), (browser, '{"palette":"ultra"}', None)])
+    assert row(conn, "SELECT fx_auto FROM levels WHERE id = %s", stale)["fx_auto"] is None, "dry-run no escribe"
+
+    done = cast_levels(conn)
+    assert len(done["fx_changed"]) == 2
+    assert row(conn, "SELECT fx_auto FROM levels WHERE id = %s", stale)["fx_auto"] == want
+    assert row(conn, "SELECT fx_auto FROM levels WHERE id = %s", browser)["fx_auto"] is None, \
+        "con análisis del navegador no hay identidad"
+    again = cast_levels(conn)
+    assert again["changed"] == [] and again["fx_changed"] == [], "idempotente"

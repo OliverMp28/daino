@@ -49,6 +49,7 @@ import { hideLoader, showLoader } from './loader.js';
 import { Input } from '../game/systems/input.js';
 import { SCENERY } from '../game/config.js';
 import { DEFAULT_SCENE, playSceneId } from '../game/scenes/registry.js';
+import { resolveFxIdentity } from '../game/fx/identity.js';
 import { fetchBinary, getUser, request as apiRequest } from '../api/client.js';
 import { invalidateLevels } from '../api/levelsCache.js';
 import {
@@ -400,6 +401,9 @@ async function handlePlayRequest(request) {
         attempt: 0,
         sections: loaded.chart.events.filter((e) => e.type === 'section'),
         scene,
+        // La identidad de los efectos de la canción (T03.3): su paleta y su firma,
+        // repartidas por el servidor. Una canción local lleva lo de siempre.
+        fx: resolveFxIdentity(levelMeta),
     };
 
     await fadeOverlay({
@@ -437,6 +441,7 @@ function startAttempt() {
     // El escenario del nivel ANTES de crear la sesión: su plan del cielo usa el
     // ciclo de la escena vigente. En un reintento es la misma (no hace nada).
     engineApi.setScene(run.scene);
+    engineApi.setFxIdentity?.(run.fx);
     // La sesión arranca ella misma la reproducción cuando termina de
     // montarse: es la única dueña del reloj de la partida.
     activeSession = new GameSession({
@@ -783,6 +788,7 @@ function setState(next) {
     // ve el salto.
     if (next === STATE.MENU) {
         engineApi?.setScene?.(DEFAULT_SCENE);
+        engineApi?.setFxIdentity?.(null);
         engineApi?.setSkyHour?.(null);
     }
 

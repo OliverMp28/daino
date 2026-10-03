@@ -92,6 +92,9 @@ final class LevelPresenter
             // T02.5: lo que Automático propone por cómo suena la canción (null: la
             // Cordillera, o sin análisis del servidor todavía).
             'scene_auto'     => $level->sceneAuto,
+            // T03.3: la identidad de los efectos de la canción (`{ palette?, signature? }`)
+            // o null: lo de siempre. El juego ignora los ids que no conoce.
+            'fx_auto'        => FxIdentity::decode($level->fxAuto),
             'generator_seed' => $level->generatorSeed,
             'is_public'      => $level->isPublic,
             'is_official'    => $level->isOfficial,

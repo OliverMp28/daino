@@ -44,9 +44,14 @@ test('con todo por defecto, los efectos de siempre salen a 1: mover el control a
     const day = playing();
     settle(d, day);
     for (const id of FX_IDS) {
-        if (id === 'starPulse') continue;
+        // Las firmas las reparte la canción (T03.3): sin reparto, ninguna.
+        if (id === 'starPulse' || FX[id].family === 'signature') continue;
         assert.equal(d.levels[id], 1, `${id} de día`);
         assert.equal(d.reasonOf(id), '', id);
+    }
+    for (const id of FX_IDS.filter((x) => FX[x].family === 'signature')) {
+        assert.equal(d.levels[id], 0, id);
+        assert.match(d.reasonOf(id), /firma/);
     }
     // El astro del pulso lo elige la hora: de día el sol, de noche las estrellas.
     assert.equal(d.levels.starPulse, 0);
@@ -125,7 +130,7 @@ test('el tier de calidad apaga los efectos más caros de lo que admite', () => {
     const s = playing();
     settle(d, s);
     for (const id of FX_IDS) {
-        if (id === 'starPulse') continue;
+        if (id === 'starPulse' || FX[id].family === 'signature') continue;
         assert.equal(d.levels[id] > 0, FX[id].cost === 'cheap', `${id} (${FX[id].cost})`);
     }
 });
@@ -248,11 +253,14 @@ test('One Day entero: nada toca su horizonte, su sol ni su mar; late el suelo y,
     const hushAt = (t) => holds.reduce((h, w) => Math.max(h, Math.min(1, Math.min((t - w.t0 + 0.5) / 0.5, (w.t1 + 0.5 - t) / 0.5))), 0);
 
     const d = createFxDirector();
-    d.configure({ scene });
+    // Con la identidad que el reparto le da por cómo suena (T03.3): su escena no
+    // la deja pasar. Ni firma, ni paleta: sus colores son los de su historia.
+    assert.deepEqual(baked.fxAuto, { palette: 'ice', signature: 'aurora' }, 'lo que el reparto propone para la canción');
+    d.configure({ scene, signature: baked.fxAuto.signature, palette: { warm: [0.76, 0.69, 1], cool: [0.64, 0.86, 1] } });
     const s = createFxSignals();
     s.playing = true;
     const sky = createSkyState();
-    const denied = ['horizonGlow', 'sunPulse', 'sunGlow', 'spectrum', 'beatPump', 'ridgePulse', 'motes', 'climaxTint', 'keyHue'];
+    const denied = ['horizonGlow', 'sunPulse', 'sunGlow', 'spectrum', 'beatPump', 'ridgePulse', 'motes', 'climaxTint', 'keyHue', 'aurora', 'meteors'];
     const peak = Object.fromEntries(FX_IDS.map((id) => [id, 0]));
     let hushed = 0;
     for (let t = 0; t < D; t += 1 / 30) {
@@ -268,6 +276,7 @@ test('One Day entero: nada toca su horizonte, su sol ni su mar; late el suelo y,
         readSkySignals(sky, scene, s);
         d.update(s, 1 / 30);
         for (const id of denied) assert.equal(d.levels[id], 0, `${id} a los ${t.toFixed(1)} s`);
+        assert.deepEqual(d.colors.warm, hexToRgb(scene.fx.colors.warm), 'su oro');
         for (const id of FX_IDS) peak[id] = Math.max(peak[id], d.levels[id]);
         if (s.hush >= 1 && d.levels.speedLines === 0) hushed++;
     }

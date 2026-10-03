@@ -8,14 +8,10 @@
 // de club o una pieza quieta, y eso es lo que se usa (levels/songTraits.js).
 //
 // Cada ambiente declara en SCENE_CASTING una o varias RUTAS: un retrato de las
-// canciones que le pegan, hecho de condiciones sobre los rasgos. El encaje de
-// una ruta es el PRODUCTO de sus condiciones (todas tienen que cumplirse: un
-// solo rasgo no basta para proponer nada), y el de un ambiente, el de su mejor
-// ruta. Se propone el mejor ambiente si
-//   - encaja de verdad (`minFit`), y
-//   - le saca ventaja al segundo (`minMargin`): una canción que pega igual con
-//     dos ambientes distintos no tiene un encaje claro.
-// Si no, null: la Cordillera. Una propuesta equivocada es peor que ninguna.
+// canciones que le pegan, hecho de condiciones sobre los rasgos. Cómo se mide el
+// encaje y cuándo se propone algo (encaje mínimo, ventaja sobre el segundo, y si
+// no la red: la Cordillera) está en levels/portraits.js, el motor que comparten
+// todos los repartos. Una propuesta equivocada es peor que ninguna.
 //
 // Quien sube un nivel ve la propuesta en el selector de su ficha y la cambia si
 // quiere; el escenario no toca el juego (§2.9). Se calcula donde se chartea con
@@ -28,8 +24,9 @@
 //
 // Puro: mismo análisis ⇒ misma propuesta.
 
-import { buildMusicModel } from '../levels/musicModel.js';
-import { ramp, songTraits } from '../levels/songTraits.js';
+import { pickPortrait, rankPortraits, route, routeFit, traitsOfAnalysis } from '../levels/portraits.js';
+
+export { routeFit };
 
 export const SCENE_CASTING_VERSION = 1;
 
@@ -109,10 +106,6 @@ export const SCENE_CASTING = Object.freeze({
     ]),
 });
 
-function route(id, why, when) {
-    return Object.freeze({ id, why, when: Object.freeze(when.map((c) => Object.freeze(c))) });
-}
-
 /**
  * @typedef {Object} Casting
  * @property {number} version       SCENE_CASTING_VERSION.
@@ -125,13 +118,13 @@ function route(id, why, when) {
  * @property {string | null} route  Ruta por la que entra el mejor ambiente.
  * @property {string | null} why    Cómo suena por esa ruta.
  * @property {Array<{ scene: string, fit: number, route: string }>} ranking  Todos, de más a menos encaje.
- * @property {ReturnType<typeof songTraits>} traits
+ * @property {ReturnType<typeof import('../levels/songTraits.js').songTraits>} traits
  */
 
 /**
  * Propuesta de escenario a partir de los rasgos.
  *
- * @param {ReturnType<typeof songTraits>} traits
+ * @param {ReturnType<typeof import('../levels/songTraits.js').songTraits>} traits
  * @param {{ casting?: typeof SCENE_CASTING, rules?: typeof CASTING_RULES }} [opts]
  * @returns {Casting}
  */
@@ -141,31 +134,16 @@ export function castFromTraits(traits, opts = {}) {
     if (traits === null) {
         return { version: SCENE_CASTING_VERSION, scene: null, reason: 'no-analysis', fit: 0, route: null, why: null, ranking: [], traits: null };
     }
-    const ranking = [];
-    for (const [scene, routes] of Object.entries(casting)) {
-        let best = null;
-        for (const r of routes) {
-            const fit = routeFit(r, traits);
-            if (best === null || fit > best.fit) best = { fit, route: r };
-        }
-        if (best !== null) ranking.push({ scene, fit: round3(best.fit), route: best.route.id, why: best.route.why });
-    }
-    // Orden estable: por encaje y, a igualdad, por el orden de la tabla.
-    ranking.sort((a, b) => b.fit - a.fit);
-    const [first, second] = ranking;
-    // Sin ningún encaje, ninguna ruta dice nada de la canción.
-    const top = first !== undefined && first.fit > 0 ? first : { scene: null, fit: 0, route: null, why: null };
-    let reason = 'clear';
-    if (top.fit < rules.minFit) reason = 'weak';
-    else if (second !== undefined && top.fit - second.fit < rules.minMargin) reason = 'ambiguous';
+    const ranking = rankPortraits(traits, casting);
+    const pick = pickPortrait(ranking, rules);
     return {
         version: SCENE_CASTING_VERSION,
-        scene: reason === 'clear' ? top.scene : null,
-        reason,
-        fit: top.fit,
-        route: top.route,
-        why: top.why,
-        ranking: ranking.map(({ scene, fit, route: r }) => ({ scene, fit, route: r })),
+        scene: pick.id,
+        reason: pick.reason,
+        fit: pick.fit,
+        route: pick.route,
+        why: pick.why,
+        ranking: ranking.map(({ id, fit, route: r }) => ({ scene: id, fit, route: r })),
         traits,
     };
 }
@@ -176,30 +154,10 @@ export function castFromTraits(traits, opts = {}) {
  * chartear un nivel.
  *
  * @param {object} analysis
+ * @param {ReturnType<typeof traitsOfAnalysis>} [measured]  Los rasgos, si ya se midieron (se calculan una vez por canción).
  * @returns {Casting & { error?: string }}
  */
-export function castScene(analysis) {
-    let traits = null;
-    if (analysis !== null && typeof analysis === 'object' && analysis.formatVersion >= 2) {
-        try {
-            traits = songTraits(buildMusicModel(analysis));
-        } catch (err) {
-            return { ...castFromTraits(null), reason: 'error', error: String(err?.message ?? err) };
-        }
-    }
-    return castFromTraits(traits);
-}
-
-/** Encaje de una ruta: producto de sus condiciones. */
-export function routeFit(r, traits) {
-    let fit = 1;
-    for (const [name, from, to] of r.when) {
-        fit *= ramp(traits[name], from, to);
-        if (fit === 0) break;
-    }
-    return fit;
-}
-
-function round3(v) {
-    return Math.round(v * 1000) / 1000;
+export function castScene(analysis, measured = traitsOfAnalysis(analysis)) {
+    if (measured.error !== null) return { ...castFromTraits(null), reason: 'error', error: measured.error };
+    return castFromTraits(measured.traits);
 }

@@ -16,12 +16,18 @@
 // T02.5: también el escenario Automático (scenes/sceneCasting.js): el ambiente
 // que pega con cómo suena la canción, o null (la Cordillera). No toca el chart;
 // va aquí porque es donde el servidor tiene su análisis.
+//
+// T03.3: y la identidad de sus efectos (fx/casting.js): la paleta y la firma que
+// le pegan, o nada (lo de siempre). Tampoco toca el chart. Los rasgos de la
+// canción se miden una vez para los dos repartos.
 
 import { buildChart } from '../../resources/js/game/levels/charter.js';
 import { normalizeChart, seedFromSha256 } from '../../resources/js/game/levels/chartFormat.js';
 import { chartStats, difficultyFromStats, difficultyScore } from '../../resources/js/game/levels/chartStats.js';
 import { difficultyCeiling } from '../../resources/js/game/levels/difficultyCeiling.js';
 import { DIFFICULTY_AUTO, difficultyOptions, normalizeRequestedDifficulty } from '../../resources/js/game/levels/difficulty.js';
+import { castFx, fxAutoOf } from '../../resources/js/game/fx/casting.js';
+import { traitsOfAnalysis } from '../../resources/js/game/levels/portraits.js';
 import { castScene } from '../../resources/js/game/scenes/sceneCasting.js';
 import { SCENES } from '../../resources/js/game/scenes/registry.js';
 import { placeStory, songOutline } from '../../resources/js/game/scenes/stories/index.js';
@@ -76,7 +82,9 @@ export function chartFromAnalysis(analysis, sha256, opts = {}) {
 
     const stats = chartStats(normalizeChart(built).chart);
     const ceiling = difficultyCeiling(analysis);
-    const casting = castScene(analysis);
+    const measured = traitsOfAnalysis(analysis);
+    const casting = castScene(analysis, measured);
+    const fxCasting = castFx(analysis, measured);
     return {
         chart: built,
         report,
@@ -95,5 +103,9 @@ export function chartFromAnalysis(analysis, sha256, opts = {}) {
         sceneAuto: casting.scene,
         /** Por qué: rasgos de la canción y encaje de cada ambiente (informe, horneado, registro del worker). */
         sceneCasting: casting,
+        /** Identidad de los efectos (T03.3): `{ palette?, signature? }`, o null: lo de siempre. */
+        fxAuto: fxAutoOf(fxCasting),
+        /** Por qué: encaje de cada paleta y de cada firma (los rasgos van en `sceneCasting`). */
+        fxCasting,
     };
 }

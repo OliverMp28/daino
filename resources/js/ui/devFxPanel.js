@@ -11,12 +11,15 @@
 // desarrollo entienden igual.
 //
 // Arriba: el maestro (ver el escenario sin efectos), la preferencia del jugador
-// simulada (Completos, Suaves, Mínimos, sin tocar la guardada) y las señales en
-// vivo (pulso, graves, agudos, intensidad del tramo).
+// simulada (Completos, Suaves, Mínimos, sin tocar la guardada), la identidad de la
+// canción (T03.3: la paleta y la firma que trae el nivel, y selectores para probar
+// cualquier otra en vivo) y las señales en vivo (pulso, graves, agudos, tramo).
 //
 // No guarda estado del juego: empuja lo elegido con `engine.setFxOverrides` y lee
 // `engine.getFx()` al refrescar.
 
+import { SIGNATURE_IDS, fxIdentityOf } from '../game/fx/identity.js';
+import { FX_PALETTES } from '../game/fx/palettes.js';
 import { FX, FX_FAMILIES, FX_IDS, FX_PREFS } from '../game/fx/registry.js';
 import { getFxLevel } from './settings.js';
 
@@ -50,6 +53,43 @@ export function mountFxPanel(panel, { el, checkRow }) {
     prefSelect.addEventListener('change', () => engine()?.setFxPref?.(prefSelect.value || getFxLevel()));
     prefRow.appendChild(prefSelect);
     panel.appendChild(prefRow);
+
+    // La identidad de la canción (T03.3): lo que trae el nivel y, para probar,
+    // cualquier otra paleta o firma. Un nivel nuevo vuelve a poner la suya.
+    const select = (label, options) => {
+        const row = el('label', 'daino-devtools__row', `${label} `);
+        const node = document.createElement('select');
+        for (const [value, text] of options) {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = text;
+            node.appendChild(opt);
+        }
+        row.appendChild(node);
+        panel.appendChild(row);
+        return node;
+    };
+    const OF_LEVEL = '';
+    const NONE = '-';
+    const paletteSelect = select('Paleta', [[OF_LEVEL, 'la del nivel'], ...Object.entries(FX_PALETTES).map(([id, p]) => [id, `${p.label} (${p.blurb})`])]);
+    const signatureSelect = select('Firma', [[OF_LEVEL, 'la del nivel'], [NONE, 'ninguna'], ...SIGNATURE_IDS.map((id) => [id, FX[id].label])]);
+    /** La identidad que puso el juego (la del nivel) y la última que empujó el panel. */
+    let ofLevel = null;
+    let pushed = null;
+    const pushIdentity = () => {
+        const fx = engine()?.getFx?.();
+        if (!fx) return;
+        if (ofLevel === null) ofLevel = fx.identity;
+        pushed = fxIdentityOf({
+            palette: paletteSelect.value === OF_LEVEL ? ofLevel.paletteId : paletteSelect.value,
+            signature: signatureSelect.value === OF_LEVEL ? ofLevel.signature : signatureSelect.value === NONE ? null : signatureSelect.value,
+        });
+        engine().setFxIdentity?.(pushed);
+    };
+    paletteSelect.addEventListener('change', pushIdentity);
+    signatureSelect.addEventListener('change', pushIdentity);
+    const identityLine = el('p', 'daino-devtools__plan', '');
+    panel.appendChild(identityLine);
 
     const signalsLine = el('p', 'daino-devtools__plan', '');
     panel.appendChild(signalsLine);
@@ -117,6 +157,17 @@ export function mountFxPanel(panel, { el, checkRow }) {
                 const level = fx.levels[id] ?? 0;
                 r.meter.style.width = `${Math.round(Math.min(1, level / 2) * 100)}%`;
                 r.why.textContent = fx.reasonOf(id);
+            }
+            // Otro nivel (o el menú) puso su identidad: lo que se probaba ya no vale.
+            if (pushed !== null && fx.identity !== pushed) {
+                pushed = null;
+                ofLevel = null;
+                paletteSelect.value = OF_LEVEL;
+                signatureSelect.value = OF_LEVEL;
+            }
+            const id = fx.identity;
+            if (id) {
+                identityLine.textContent = `Canción: ${FX_PALETTES[id.paletteId].label} · ${id.signature === null ? 'sin firma' : FX[id.signature].label}${pushed !== null ? ' (probando)' : ''}`;
             }
             const s = fx.signals;
             signalsLine.textContent = s.playing

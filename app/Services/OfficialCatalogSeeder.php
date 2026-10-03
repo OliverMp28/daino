@@ -132,6 +132,14 @@ final class OfficialCatalogSeeder
             throw new SeedSkip('horneado con un escenario automático que no es un ambiente elegible');
         }
 
+        // Identidad de los efectos (T03.3): la paleta y la firma que le pegan a la
+        // canción. Un horneado anterior no la trae: lo de siempre.
+        try {
+            $fxAuto = FxIdentity::encode(FxIdentity::parse($baked['fxAuto'] ?? null));
+        } catch (\InvalidArgumentException $e) {
+            throw new SeedSkip('horneado con una identidad de efectos mal formada: ' . $e->getMessage());
+        }
+
         $audioColumns = [
             'audio_sha256'   => $sha,
             'duration_sec'   => max(1, (int) round($chart['durationSec'])),
@@ -152,6 +160,7 @@ final class OfficialCatalogSeeder
             'file_path'  => FileUploadService::OFFICIAL_PREFIX . $file,
             'scene'      => $scene,
             'scene_auto' => $sceneAuto,
+            'fx_auto'    => $fxAuto,
         ];
 
         $level = Level::findOfficialBySlug($slug);
@@ -171,7 +180,7 @@ final class OfficialCatalogSeeder
             // el hash anterior: el cargador del cliente lo detecta y rechaza el
             // audio (no se juega desincronizado). Hay que decidirlo a propósito.
             // Lo que solo se ve (título, artista, escenario) sí se aplica.
-            $level->updateMetadata(['title' => $title, 'artist' => $artist, 'scene' => $scene, 'scene_auto' => $sceneAuto]);
+            $level->updateMetadata(['title' => $title, 'artist' => $artist, 'scene' => $scene, 'scene_auto' => $sceneAuto, 'fx_auto' => $fxAuto]);
             throw new SeedSkip($level->audioSha256 !== $sha
                 ? 'el audio cambió: usa --rechart para sustituir audio y chart (invalida la comparación de marcas)'
                 : 'hay un chart nuevo: usa --rechart para aplicarlo (invalida la comparación de marcas)');

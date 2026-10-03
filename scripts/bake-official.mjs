@@ -25,6 +25,9 @@
 // por qué (`sceneCasting`: rasgos y encaje de cada ambiente). Lo importa el
 // seeder a `levels.scene_auto`. Un `scene` en el manifiesto manda sobre él.
 //
+// T03.3: y la identidad de sus efectos (`fxAuto`: paleta y firma) con su porqué
+// (`fxCasting`). El seeder la importa a `levels.fx_auto`.
+//
 // Alternativa sin Docker: `--reanalyze-js` analiza con el analizador JS del
 // navegador (formato 1, menos rico: sin beats, secciones ni techo de dificultad).
 
@@ -85,7 +88,7 @@ for (const entry of manifest.levels) {
         }
         if (args.check) {
             stale++;
-            console.log(`  STALE ${entry.slug}: el charter o la escala de dificultad dan otro resultado`);
+            console.log(`  STALE ${entry.slug}: el charter, la escala de dificultad o un reparto dan otro resultado`);
             continue;
         }
         await writeFile(bakedPath, text);
@@ -94,7 +97,8 @@ for (const entry of manifest.levels) {
         console.log(`  HECHO ${entry.slug}: ${obstacles} obstáculos, ${analysis.bpm.toFixed(1)} BPM `
             + `(velocidad ${baked.chart.world.speedPxS}→${top} px/s), ${baked.stats.actionsPerMin} acc/min `
             + `(pico ${baked.stats.peakActionsPerMin}), ${baked.difficulty}★ (medida ${baked.measuredDifficulty}★), `
-            + `techo ${baked.difficultyCeiling ?? '—'}, escenario ${baked.sceneAuto ?? 'Cordillera'} [${baked.bakedWith.analyzer}]`);
+            + `techo ${baked.difficultyCeiling ?? '—'}, escenario ${baked.sceneAuto ?? 'Cordillera'}, `
+            + `efectos ${baked.fxAuto?.palette ?? 'neon'}${baked.fxAuto?.signature ? ` + ${baked.fxAuto.signature}` : ''} [${baked.bakedWith.analyzer}]`);
     } catch (err) {
         failures++;
         console.error(`  FALLO ${entry.slug}: ${err.message}`);
@@ -135,6 +139,8 @@ function bake(entry, sha, bytes, analysis) {
         chart: out.chart,
         sceneAuto: out.sceneAuto,
         sceneCasting: out.sceneCasting,
+        fxAuto: out.fxAuto,
+        fxCasting: out.fxCasting,
         analysis,
     };
 }

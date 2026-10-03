@@ -302,10 +302,11 @@ class Worker:
                 charter_version=int(charted["chart"]["charter"]["version"]),
                 variants=charted.get("variants"),
                 scene_auto=jobs.scene_id_or_none(charted.get("sceneAuto")),
+                fx_auto=jobs.fx_auto_or_none(charted.get("fxAuto")),
             )
             outcome = jobs.complete(conn, job, self.config.worker_id, result)
             self.log("job_done", job=job.id, level=job.level_id, outcome=outcome, cached_analysis=cached,
-                     events=len(result.chart["events"]), scene_auto=result.scene_auto,
+                     events=len(result.chart["events"]), scene_auto=result.scene_auto, fx_auto=result.fx_auto,
                      ms=int((time.monotonic() - started) * 1000))
             return outcome
         except Cancelled:

@@ -7,7 +7,8 @@
 //   escena      su política (`scene.fx`, policy.js): qué veta, cuánto atenúa.
 //   jugador     "Efectos visuales" de AJUSTES (FX_PREFS): Completos, Suaves, Mínimos.
 //   equipo      el tier de calidad: el bajo no pinta los efectos caros.
-//   reparto     qué efectos tiene esta canción (T03.3; hasta entonces, todos).
+//   reparto     la firma de esta canción (T03.3, fx/casting.js): de la familia
+//               `signature` solo se ve la suya; sin reparto, ninguna.
 //   hora        `when` del efecto: el sol late si hay sol; las estrellas, de noche.
 //   arco        `arc`: entra con la intensidad del tramo.
 //   historia    `hush`: en un instante clave de una historia, las familias que su
@@ -18,8 +19,8 @@
 // cada fotograma, con fundido: un efecto no aparece ni desaparece de golpe.
 //
 // También da los colores de los efectos: los de la escena si los fija (una
-// historia de autor: son parte de su paleta y no se tocan), o los de la canción,
-// girados por sus cambios de tonalidad y puestos A JUEGO CON EL CIELO de la hora
+// historia de autor: son parte de su paleta y no se tocan), o los de la paleta
+// de la canción (fx/palettes.js), girados por sus cambios de tonalidad y puestos A JUEGO CON EL CIELO de la hora
 // (tones.js): sobre el azul del día el rosa se va al magenta; en el ocaso rosa
 // sigue siendo rosa. Un color de efecto lejos del tono de lo que tiene detrás se
 // vuelve gris al mezclarse con él.
@@ -79,8 +80,8 @@ export function createFxDirector() {
     let policy = sceneFxPolicy(null);
     let pref = FX_PREFS[DEFAULT_FX_PREF];
     let costRank = FX_COSTS.length - 1;
-    /** Efectos de la canción (T03.3). null = todos. */
-    let cast = null;
+    /** La firma de la canción (T03.3): el único efecto de su familia que se ve. null = ninguna. */
+    let signature = null;
     let palette = FX_COLORS;
     const dev = { master: true, off: new Set(), solo: null, gain: {} };
 
@@ -98,7 +99,7 @@ export function createFxDirector() {
             else if (dev.off.has(id)) { g = 0; reason = 'apagado (panel dev)'; }
             else if (!family.fixed) {
                 if (!policy.allows(id)) { g = 0; reason = 'la escena no lo permite'; }
-                else if (cast !== null && family.exclusive && !cast.includes(id)) { g = 0; reason = 'no está en el reparto de la canción'; }
+                else if (family.cast === true && signature !== id) { g = 0; reason = signature === null ? 'la canción no tiene firma' : 'no es la firma de esta canción'; }
                 else if (FX_COSTS.indexOf(def.cost) > costRank) { g = 0; reason = 'calidad gráfica'; }
                 else if (pref.only !== null && !pref.only.includes(id)) { g = 0; reason = `preferencia del jugador (${pref.label})`; }
                 else if (def.screen === true && !pref.screen) { g = 0; reason = `preferencia del jugador (${pref.label})`; }
@@ -117,13 +118,15 @@ export function createFxDirector() {
         /**
          * Lo que casi nunca cambia. Solo las claves que se pasan.
          *
-         * @param {{ scene?: object | null, pref?: string, costRank?: number, cast?: string[] | null, palette?: { warm: number[], cool: number[] } }} o
+         * @param {{ scene?: object | null, pref?: string, costRank?: number, signature?: string | null,
+         *   palette?: { warm: ArrayLike<number>, cool: ArrayLike<number> } | null }} o
+         *   `signature` y `palette`: la identidad de la canción (fx/identity.js); null = lo de siempre.
          */
         configure(o) {
             if (o.scene !== undefined) policy = sceneFxPolicy(o.scene);
             if (o.pref !== undefined) pref = FX_PREFS[o.pref] ?? FX_PREFS[DEFAULT_FX_PREF];
             if (o.costRank !== undefined) costRank = o.costRank;
-            if (o.cast !== undefined) cast = o.cast;
+            if (o.signature !== undefined) signature = o.signature;
             if (o.palette !== undefined) palette = o.palette ?? FX_COLORS;
             refix();
         },

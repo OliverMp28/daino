@@ -34,7 +34,7 @@ export const FFT_BINS = 256;
  *     fftBuffer: Uint8Array,
  *     fftSource: BufferImageSource,
  *     setUniforms: (u: { time?: number, debugMode?: number, horizon?: number, frame?: number[], cell?: number, band?: number[] }) => void,
- *     setFx: (amounts: { a: Float32Array, b: Float32Array, c: Float32Array }, colors: { warm: number[], cool: number[] }) => void,
+ *     setFx: (amounts: { a: Float32Array, b: Float32Array, c: Float32Array, d: Float32Array }, colors: { warm: number[], cool: number[] }) => void,
  *     uploadFft: () => void,
  * }}
  */
@@ -73,6 +73,9 @@ export function createAudioFilter() {
                 uFxA:        { value: new Float32Array(4), type: 'vec4<f32>' },
                 uFxB:        { value: new Float32Array([0, 0, 26, 0]), type: 'vec4<f32>' },
                 uFxC:        { value: new Float32Array(4), type: 'vec4<f32>' },
+                // Relojes de las firmas del cielo (T03.3): fase y vaivén de la
+                // aurora, tanda de la lluvia de estrellas y segundos desde ella.
+                uFxD:        { value: new Float32Array([0, 0, 0, 60]), type: 'vec4<f32>' },
                 uFxWarm:     { value: new Float32Array([0.88, 0.22, 0.38]), type: 'vec3<f32>' },
                 uFxCool:     { value: new Float32Array([0.56, 0.88, 1.0]), type: 'vec3<f32>' },
                 // Limitador de la franja jugable (fx/limiter.js): uv de su techo,
@@ -139,7 +142,7 @@ export function createAudioFilter() {
      * Las cantidades de los efectos del cielo y sus colores, cada fotograma
      * (fx/skyAmounts.js y el director de efectos). Copia: sin asignaciones.
      *
-     * @param {{ a: Float32Array, b: Float32Array, c: Float32Array }} amounts
+     * @param {{ a: Float32Array, b: Float32Array, c: Float32Array, d: Float32Array }} amounts
      * @param {{ warm: ArrayLike<number>, cool: ArrayLike<number> }} colors
      */
     function setFx(amounts, colors) {
@@ -147,6 +150,7 @@ export function createAudioFilter() {
         u.uFxA.set(amounts.a);
         u.uFxB.set(amounts.b);
         u.uFxC.set(amounts.c);
+        u.uFxD.set(amounts.d);
         u.uFxWarm.set(colors.warm);
         u.uFxCool.set(colors.cool);
     }

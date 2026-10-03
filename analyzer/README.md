@@ -75,27 +75,37 @@ análisis en caché, ~2 s).
 `ANALYZER_ENABLED=false` en `.env` desactiva el flujo: publicar vuelve a ser
 inmediato con el chart del navegador (el sistema degrada, no se rompe).
 
-### Escenario Automático (T02.5)
+### Lo que sale del carácter de la canción: escenario y efectos (T02.5, T03.3)
 
-Al chartear, el worker guarda también `levels.scene_auto`: el ambiente que pega
-con cómo suena la canción, o NULL (la Cordillera). Lo decide
-`resources/js/game/scenes/sceneCasting.js` (JS, como el charter; rasgos en
-`levels/songTraits.js`) con el mismo análisis que se guarda. No toca el chart ni
+Al chartear, el worker guarda también dos cosas que salen de cómo suena la
+canción, con el mismo análisis que se guarda:
+
+- `levels.scene_auto`: el ambiente que le pega, o NULL (la Cordillera). Lo decide
+  `resources/js/game/scenes/sceneCasting.js`.
+- `levels.fx_auto`: la identidad de sus efectos, su paleta y su firma
+  (`{"palette":"ice","signature":"aurora"}`), o NULL (la paleta de siempre y sin
+  firma). Lo decide `resources/js/game/fx/casting.js`.
+
+Los dos repartos son JS, como el charter, y comparten motor
+(`levels/portraits.js`) y rasgos (`levels/songTraits.js`). No tocan el chart ni
 las marcas, así que un nivel publicado también se actualiza.
 
-Tras cambiar las reglas (`SCENE_CASTING_VERSION`) o crear la columna, se vuelve a
-repartir lo que ya tiene análisis, sin reanalizar ni re-chartear (segundos):
+Tras cambiar las reglas (`SCENE_CASTING_VERSION`, `FX_CASTING_VERSION`) o crear
+una de las columnas, se vuelve a repartir lo que ya tiene análisis, sin reanalizar
+ni re-chartear (segundos):
 
 ```bash
-docker compose exec -T analyzer python -m daino_analyzer cast-scenes --dry-run   # qué cambiaría
-docker compose exec -T analyzer python -m daino_analyzer cast-scenes             # aplicarlo
-docker compose exec -T analyzer python -m daino_analyzer cast-scenes --level=12,15
-bun run bake:official && docker compose exec -T php composer seed:official       # los oficiales (horneado)
-bun run scenes:report                                                             # rasgos y encaje de cada oficial
+docker compose exec -T analyzer python -m daino_analyzer cast --dry-run   # qué cambiaría
+docker compose exec -T analyzer python -m daino_analyzer cast             # aplicarlo
+docker compose exec -T analyzer python -m daino_analyzer cast --level=12,15
+bun run bake:official && docker compose exec -T php composer seed:official   # los oficiales (horneado)
+bun run cast:report                                                           # rasgos y encajes de cada oficial
 ```
 
+(`cast-scenes` y `bun run scenes:report` siguen valiendo: son los mismos comandos.)
+
 Para ver qué propondría con cualquier canción: `analyze <mp3> --out x.json` (arriba)
-y `bun run scenes:report -- x.json`.
+y `bun run cast:report -- x.json`.
 
 ## Catálogo oficial en un despliegue nuevo
 
@@ -115,7 +125,7 @@ bun run bake:official -- --check                           # ¿horneados al día
 docker compose exec -T php composer seed:official -- --rechart   # aplicar charts nuevos (invalida marcas)
 ```
 
-Si solo cambia el charter, la escala de dificultad o el reparto de escenarios,
+Si solo cambia el charter, la escala de dificultad o un reparto (escenarios, efectos),
 basta `bun run bake:official` (re-chartea desde el análisis guardado, sin audio ni
 Python) y `seed:official` (sin `--rechart` si el chart no cambió). La dificultad de cada
 oficial la fija `difficulty` en `database/seeds/official/manifest.json` (`auto` si

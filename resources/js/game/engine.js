@@ -52,10 +52,11 @@ import {
 import { createAudioFilter, FFT_BINS } from './shaders/audioFilter.js';
 import { computeBands } from './audio/features.js';
 import { createFxDirector } from './fx/director.js';
+import { DEFAULT_FX_IDENTITY } from './fx/identity.js';
 import { FX_LIMIT } from './fx/limiter.js';
 import { DEFAULT_FX_PREF, FX_COSTS } from './fx/registry.js';
 import { applyMusicFrame, clearMusicSignals, createFxSignals, readSkySignals } from './fx/signals.js';
-import { createSkyAmounts, skyAmounts } from './fx/skyAmounts.js';
+import { advanceSkyClocks, createSkyAmounts, createSkyClocks, resetSkyClocks, skyAmounts } from './fx/skyAmounts.js';
 import { createSpectrum } from './fx/spectrum.js';
 import { createParticleLayer } from './entities/ParticleLayer.js';
 import { createScenery } from './entities/Scenery.js';
@@ -96,6 +97,10 @@ const NATIVE_BINS = 1024;
 const fxSignals = createFxSignals();
 const fxDirector = createFxDirector();
 const fxAmounts = createSkyAmounts();
+/** Relojes de las firmas del cielo (cuánto ha fluido la aurora, el último primer tiempo). */
+const fxClocks = createSkyClocks();
+/** La identidad de los efectos de la canción que suena (T03.3): su paleta y su firma. */
+let fxIdentity = DEFAULT_FX_IDENTITY;
 const spectrum = createSpectrum({ bins: NATIVE_BINS });
 /** Lo que reciben los pintores del escenario cada fotograma (el mismo objeto: no guardarlo). */
 const fxFrame = { levels: fxDirector.levels, colors: fxDirector.colors, signals: fxSignals, spectrum };
@@ -453,7 +458,8 @@ function tick(ticker) {
         // uTime y uDebugMode se actualizan SIEMPRE — alimentan la escena idle
         // (estrellas, respiración del sol) y los modos ?debug=N.
         audioFilter.setUniforms({ time: timeAccum, debugMode: DEBUG_MODE });
-        audioFilter.setFx(skyAmounts(levels, fxSignals, fxAmounts), fxDirector.colors);
+        advanceSkyClocks(fxClocks, levels, fxSignals, dt);
+        audioFilter.setFx(skyAmounts(levels, fxSignals, fxAmounts, fxClocks), fxDirector.colors);
     }
     scenery.setFx(fxFrame);
     speedLines?.setLevel(fxSignals.speed.lines * levels.speedLines);
@@ -616,6 +622,20 @@ export function setFxPref(pref) {
 }
 
 /**
+ * La identidad de los efectos de la canción (T03.3, fx/identity.js): su paleta y,
+ * si tiene, su firma. La pone AppController al empezar un nivel, con lo que el
+ * servidor repartió por cómo suena (`levels.fx_auto`); `null` vuelve a lo de
+ * siempre (el menú, una canción local). Una escena que fija sus colores o que
+ * veta las firmas (una historia de autor) sigue mandando: lo decide el director.
+ *
+ * @param {import('./fx/identity.js').FxIdentity | null} identity
+ */
+export function setFxIdentity(identity) {
+    fxIdentity = identity ?? DEFAULT_FX_IDENTITY;
+    fxDirector.configure({ palette: fxIdentity.palette, signature: fxIdentity.signature });
+}
+
+/**
  * Panel dev "Efectos": apagar, ver solo uno o cambiar la intensidad de un efecto
  * (fx/director.js, setOverrides).
  */
@@ -641,6 +661,7 @@ export function detachAudio() {
     audio = null;
     clearMusicSignals(fxSignals);
     fxDirector.reset();
+    resetSkyClocks(fxClocks);
     spectrum.reset();
     if (audioFilter) audioFilter.setMode('idle');
     scenery?.setFx(fxFrame);
@@ -712,12 +733,13 @@ function getApi() {
         setMusic,
         speedBurst,
         setFxPref,
+        setFxIdentity,
         setFxOverrides,
         // Efectos (T03.1): niveles y colores que leen los pintores de la partida
         // (objetos vivos: no guardarlos), y todo junto para el panel dev.
         getFxLevels: () => fxDirector.levels,
         getFxColors: () => fxDirector.colors,
-        getFx: () => ({ levels: fxDirector.levels, colors: fxDirector.colors, signals: fxSignals, spectrum, reasonOf: fxDirector.reasonOf, pref: fxPref }),
+        getFx: () => ({ levels: fxDirector.levels, colors: fxDirector.colors, signals: fxSignals, spectrum, reasonOf: fxDirector.reasonOf, pref: fxPref, identity: fxIdentity, clocks: fxClocks }),
         setRenderPaused,
         setRenderProfile,
         setQualityTier,

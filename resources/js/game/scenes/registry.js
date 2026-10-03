@@ -26,8 +26,9 @@
 // espectro (una capa `spectrum` tras una silueta; el mar lo lleva en sus crestas
 // y la ciudad, además, en sus ventanas)
 // y, si hace falta, su política `fx` (fx/policy.js): qué efectos permite o veta,
-// cuánto los atenúa y de qué color van. Los ambientes no declaran nada: valen
-// todos. Una historia de autor es dueña de su horizonte, su sol y su mar, y lo
+// cuánto los atenúa y de qué color van. Los ambientes no declaran nada (valen
+// todos), salvo los de cielo cerrado, que vetan las firmas del cielo: su firma es
+// su clima (T03.3). Una historia de autor es dueña de su horizonte, su sol y su mar, y lo
 // declara aquí; no hay casos especiales en el shader ni en la partida.
 //
 // Puro y sin Pixi: los tests validan el registro entero (paletas, ciclos, capas
@@ -70,7 +71,7 @@ export const SCENE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
  * @property {number} starRotPerHour  Giro del cielo estrellado (radianes por hora).
  * @property {Array<{ from: number, to: number, x0: number, x1: number, y0: number, y1: number, fadeIn: number, fadeOut: number, size: number }>} luceros
  *   Lucero de la tarde y del alba: horas (continuas), recorrido y fundidos.
- * @property {{ allow?: string[], deny?: string[], temper?: number | Record<string, number>, colors?: { warm: string, cool: string }, hush?: string[] }} [fx]
+ * @property {{ allow?: string[], deny?: string[], denyFamilies?: string[], temper?: number | Record<string, number>, colors?: { warm: string, cool: string }, hush?: string[] }} [fx]
  *   Política de efectos de la escena (T03.1, fx/policy.js). Sin ella, todos valen.
  * @property {object} [story]      Historia de autor ligada a la escena (stories/, T02.6).
  * @property {boolean} [greenFlash] El destello verde al ponerse y al salir el sol (T02.6).
@@ -164,6 +165,12 @@ const LIGHTNING = { type: 'lightning', id: 'lightning', label: 'Relámpagos', pa
 const SNOW = { type: 'snow', id: 'snow', label: 'Nieve',
     params: { count: 150, fallPxS: [26, 64], swayPxS: 14, parallax: [0.12, 0.5], nearShare: 0.4 } };
 
+// Bajo la lluvia el cielo está cerrado: no hay aurora ni lluvia de estrellas, las
+// lleve o no la canción (T03.3). La firma de un nivel con lluvia o tormenta es su
+// clima. (La Nieve no lo declara: su nevada esconde las estrellas para que no se
+// confundan con los copos, pero una aurora sobre las montañas nevadas se ve.)
+const CLOSED_SKY_FX = { denyFamilies: ['signature'] };
+
 // One Day (T02.6): la primera historia de autor, sobre la Costa. Sus horas salen
 // del cielo de esta escena (el último instante del sol en SU horizonte), así que
 // se liga aquí, con el sol y el horizonte que va a tener.
@@ -236,6 +243,7 @@ export const SCENES = deepFreeze({
             overcast: [[13, 0.6], [18.85, 0.75], [19.5, 0.85], [28, 0.7], [30.6, 0.3]],
             rain: [[13, 0.3], [17.25, 0.4], [19.5, 0.7], [27, 0.6], [29, 0.3], [30.6, 0.04]],
         },
+        fx: CLOSED_SKY_FX,
         ...SKY,
         layers: [ISLANDS, LIGHTHOUSE, SEA, STORM_CLOUDS, RAIN, SAND],
     },
@@ -258,6 +266,7 @@ export const SCENES = deepFreeze({
             rain: [[13, 0.25], [17.25, 0.45], [18.85, 0.7], [19.5, 1], [27, 0.85], [29, 0.4], [30.6, 0.06]],
             lightning: [[17.5, 0], [18.85, 0.35], [19.5, 1], [27, 0.7], [28.5, 0.15], [29.2, 0]],
         },
+        fx: CLOSED_SKY_FX,
         ...SKY,
         layers: [LIGHTNING, RIDGE_SPECTRUM, FAR_RIDGE, NEAR_RIDGE, STORM_CLOUDS, RAIN, GROUND],
     },

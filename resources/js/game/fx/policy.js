@@ -6,6 +6,8 @@
 //   allow    lista cerrada: solo esos efectos (lo que declara una historia de autor,
 //            que es dueña de su horizonte, su sol y su mar);
 //   deny     efectos vetados (el resto, como siempre);
+//   denyFamilies  familias vetadas enteras (un ambiente de cielo cerrado veta las
+//            firmas del cielo: las de hoy y las que se añadan);
 //   temper   cuánto se atenúan los efectos en esta escena [0,1]: un número para
 //            todos, o por familia (`{ pulse: 0.6 }`: las demás, enteras);
 //   colors   los colores de los efectos en esta escena (`warm`, `cool`): con ellos
@@ -35,13 +37,14 @@ const DEFAULT_HUSH = Object.freeze(['air']);
  */
 
 /**
- * @param {{ fx?: { allow?: string[], deny?: string[], temper?: number | Record<string, number>, colors?: { warm: string, cool: string }, hush?: string[] } } | null | undefined} scene
+ * @param {{ fx?: { allow?: string[], deny?: string[], denyFamilies?: string[], temper?: number | Record<string, number>, colors?: { warm: string, cool: string }, hush?: string[] } } | null | undefined} scene
  * @returns {FxPolicy}
  */
 export function sceneFxPolicy(scene) {
     const fx = scene?.fx ?? {};
     const allow = fx.allow ? new Set(fx.allow) : null;
     const deny = new Set(fx.deny ?? []);
+    const denyFamilies = new Set(fx.denyFamilies ?? []);
     const hush = new Set(fx.hush ?? DEFAULT_HUSH);
     const clamp = (v) => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1);
     return {
@@ -49,7 +52,7 @@ export function sceneFxPolicy(scene) {
             const def = FX[id];
             if (def === undefined) return false;
             if (FX_FAMILIES[def.family].fixed) return true;
-            if (deny.has(id)) return false;
+            if (deny.has(id) || denyFamilies.has(def.family)) return false;
             return allow === null || allow.has(id);
         },
         temperOf: (family) => (typeof fx.temper === 'object' && fx.temper !== null ? clamp(fx.temper[family]) : clamp(fx.temper)),
@@ -73,6 +76,10 @@ export function policyIssues(scene) {
         else if (FX_FAMILIES[FX[id].family].fixed) out.push(`"${id}" es de la familia game: la escena no lo decide`);
     }
     for (const f of fx.hush ?? []) if (FX_FAMILIES[f] === undefined) out.push(`familia desconocida "${f}"`);
+    for (const f of fx.denyFamilies ?? []) {
+        if (FX_FAMILIES[f] === undefined) out.push(`familia desconocida "${f}"`);
+        else if (FX_FAMILIES[f].fixed) out.push(`la familia "${f}" es del juego: la escena no la decide`);
+    }
     if (fx.allow && fx.deny) out.push('allow y deny a la vez');
     const tempers = typeof fx.temper === 'object' && fx.temper !== null ? Object.entries(fx.temper) : fx.temper !== undefined ? [['', fx.temper]] : [];
     for (const [family, v] of tempers) {

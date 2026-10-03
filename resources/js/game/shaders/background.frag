@@ -32,7 +32,10 @@
 //           sol · w halo del sol
 //     uFxB  x brillo del horizonte · y línea fría del horizonte · z caída del
 //           brillo · w bombeo del cielo (cuánto se oscurece ahora: solo oscurece)
-//     uFxC  x destello · y calma del break · z, w libres
+//     uFxC  x destello · y calma del break · z aurora · w lluvia de estrellas
+//     uFxD  relojes de las firmas (T03.3): x fase de la aurora · y vaivén de sus
+//           cortinas · z tanda de la lluvia de estrellas (+0.5 si es de primer
+//           tiempo) · w segundos desde que empezó
 //     uFxWarm/uFxCool   los dos colores de los efectos (de la escena o de la canción)
 //     uFxBand           x: uv del techo de la franja jugable · y: fundido del
 //                       limitador por encima (uv) · z: techo de luminancia
@@ -64,6 +67,7 @@ uniform float uCell;        // px CSS por celda del arte (vista del mundo)
 uniform vec4  uFxA;
 uniform vec4  uFxB;
 uniform vec4  uFxC;
+uniform vec4  uFxD;
 uniform vec3  uFxWarm;
 uniform vec3  uFxCool;
 uniform vec3  uFxBand;
@@ -112,6 +116,17 @@ vec3 fxLimit(vec3 base, vec3 lit, float w) {
     return mix(base, lit, 1.0 - w * (1.0 - k));
 }
 
+// Un color de efecto, tan vivo como cabe: su mismo tono, llevado a una viveza y
+// una claridad fijas. Para la luz que se suma sobre un cielo oscuro: un color
+// pálido sumado a medias no se lee como luz, sino como polvo (la aurora de una
+// paleta de rosas claros salía gris).
+vec3 fxVivid(vec3 c) {
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    vec3 d = c - l;
+    float m = max(max(abs(d.r), abs(d.g)), abs(d.b));
+    return clamp(vec3(0.55) + d * (0.55 / max(m, 0.04)), 0.0, 1.0);
+}
+
 float hash21(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
@@ -123,6 +138,28 @@ float vnoise(vec2 p) {
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
                mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// Una estrella fugaz: un trazo de celdas con cola que se apaga. `seed` decide
+// dónde nace; `dirSeed`, hacia qué lado cae; `tIn`, los segundos que lleva; nace
+// entre `y0` e `y1` (uv); `size` alarga el trazo. Devuelve cuánta luz pone en este
+// píxel [0,1].
+const float METEOR_LIFE = 0.65;
+float meteor(vec2 px, float seed, float dirSeed, float tIn, float y0, float y1, float size) {
+    if (tIn <= 0.0 || tIn >= METEOR_LIFE) return 0.0;
+    float prog = tIn / METEOR_LIFE;
+    vec2 start = vec2(0.12 + 0.76 * hash21(vec2(seed, 5.0)), mix(y0, y1, hash21(vec2(seed, 9.0)))) * uFrame;
+    float dirx = hash21(vec2(dirSeed, 11.0)) < 0.5 ? -1.0 : 1.0;
+    vec2 dir = normalize(vec2(dirx * 0.86, 0.5));
+    float len = 0.22 * size * uFrame.y;
+    vec2 head = start + dir * len * prog;
+    vec2 pc = (floor(px / uCell) + 0.5) * uCell;   // pixelado a celdas del arte
+    vec2 rel = pc - head;
+    float along = dot(rel, -dir);
+    float across = abs(dot(rel, vec2(-dir.y, dir.x)));
+    float tail = len * 0.45;
+    if (along <= -uCell || along >= tail || across >= uCell * 0.75) return 0.0;
+    return (1.0 - clamp(along, 0.0, tail) / tail) * sin(prog * 3.14159);
 }
 
 // Cráter: hundido oscuro con el borde de arriba-derecha iluminado (la luz viene
@@ -239,28 +276,80 @@ void main(void) {
     // se apaga, en el cielo alto.
     if (uNight > 0.01 && uShow1.y > 0.5 && uv.y < uHorizon * 0.62) {
         const float PERIOD = 7.0;
-        const float LIFE = 0.65;
         float slot = floor(uTime / PERIOD);
         if (hash21(vec2(slot, 17.0)) < 0.34) {
-            float tIn = mod(uTime, PERIOD) - hash21(vec2(slot, 3.0)) * (PERIOD - LIFE);
-            if (tIn > 0.0 && tIn < LIFE) {
-                float prog = tIn / LIFE;
-                vec2 start = vec2(0.12 + 0.76 * hash21(vec2(slot, 5.0)), (0.04 + 0.22 * hash21(vec2(slot, 9.0))) * uHorizon) * uFrame;
-                float dirx = hash21(vec2(slot, 11.0)) < 0.5 ? -1.0 : 1.0;
-                vec2 dir = normalize(vec2(dirx * 0.86, 0.5));
-                float len = 0.22 * uFrame.y;
-                vec2 head = start + dir * len * prog;
-                vec2 pc = (floor(px / uCell) + 0.5) * uCell;   // pixelado a celdas del arte
-                vec2 rel = pc - head;
-                float along = dot(rel, -dir);
-                float across = abs(dot(rel, vec2(-dir.y, dir.x)));
-                float tail = len * 0.45;
-                if (along > -uCell && along < tail && across < uCell * 0.75) {
-                    float fade = (1.0 - clamp(along, 0.0, tail) / tail) * sin(prog * 3.14159);
-                    col += vec3(0.9, 0.95, 1.0) * fade * 0.85 * uNight;
-                }
+            float tIn = mod(uTime, PERIOD) - hash21(vec2(slot, 3.0)) * (PERIOD - METEOR_LIFE);
+            col += vec3(0.9, 0.95, 1.0) * meteor(px, slot, slot, tIn, 0.04 * uHorizon, 0.26 * uHorizon, 1.0) * 0.85 * uNight;
+        }
+    }
+
+    // Lo más bajo donde pintan las firmas del cielo: por encima de la franja
+    // jugable y del fundido del limitador.
+    float fxSkyBottom = uFxBand.x - uFxBand.y;
+
+    // ---------- (efecto) Lluvia de estrellas ----------
+    // La firma de las canciones que estallan: en el clímax, tandas de fugaces
+    // sobre el pulso (uFxD.z es el número de la tanda y uFxD.w los segundos que
+    // lleva; fx/skyAmounts.js decide en qué golpes caen). En un primer tiempo son
+    // dos o tres; a mitad de compás, una o dos. Las de una tanda caen hacia el
+    // mismo lado. El mismo trazo que la fugaz del escenario, algo más largo y con
+    // un punto del color frío de la canción, y siempre por encima de la franja
+    // jugable (un trazo recorre 0.14 de la pantalla hacia abajo).
+    if (uFxC.w > 0.004 && fxSkyBottom > 0.2) {
+        vec3 streak = mix(vec3(0.92, 0.96, 1.0), uFxCool, 0.3);
+        float tanda = floor(uFxD.z);
+        float big = step(0.25, fract(uFxD.z));
+        for (int k = 0; k < 3; k++) {
+            float fk = float(k);
+            float seed = tanda * 3.0 + fk + 0.5;
+            float chance = k == 0 ? 1.0 : (k == 1 ? mix(0.4, 1.0, big) : 0.55 * big);
+            if (hash21(vec2(seed, 31.0)) > chance) continue;
+            float tIn = uFxD.w - fk * 0.09 - hash21(vec2(seed, 3.0)) * 0.1;
+            col += streak * meteor(px, seed, tanda + 0.5, tIn, 0.02, fxSkyBottom - 0.17, 1.3) * uFxC.w;
+        }
+    }
+
+    // ---------- (efecto) Aurora ----------
+    // La firma de las canciones que fluyen: cortinas de luz sobre lo que se juega.
+    // Pixel art, como la luna y las estrellas: columnas de dos celdas y filas de
+    // una. Cada cortina es una hilera de RAYOS: su borde de abajo es una onda lenta
+    // (se desplaza con la fase, uFxD.x, y los graves la mecen, uFxD.y) y cada rayo
+    // sube desde él, cada uno con su altura y su brillo, apagándose en escalones.
+    // Como en una aurora de verdad, el borde de abajo es el color cálido de la
+    // canción y el cuerpo, el frío. No es casual: el borde es lo que entra en la
+    // franja jugable, donde la luz tiene techo (fxLimit) y solo brillan los tonos
+    // del añil al magenta; el frío vive arriba, donde no lo hay.
+    // Dos cortinas a distinta profundidad, que NO se suman: donde se cruzan se ve
+    // la de más luz (como dos sprites, y así su luz tiene un máximo conocido).
+    // Va antes de la luna, que queda delante.
+    float auroraBase = uFxBand.x;   // el techo de la franja jugable (uv)
+    if (uFxC.z > 0.004 && uv.y < auroraBase + 0.09) {
+        float colW = uCell * 2.0;
+        float column = floor(px.x / colW);
+        float cx = (column + 0.5) * colW / uFrame.y;                // x de la columna, en alturas de pantalla
+        float cy = (floor(px.y / uCell) + 0.5) * uCell / uFrame.y;  // y de la fila (uv)
+        float ph = uFxD.x;
+        float sway = 1.0 + uFxD.y;
+        vec3 warm = fxVivid(uFxWarm);
+        vec3 cool = fxVivid(uFxCool);
+        vec3 aurora = vec3(0.0);
+        for (int k = 0; k < 2; k++) {
+            float fk = float(k);
+            float hem = auroraBase * (0.94 - 0.36 * fk)
+                + auroraBase * 0.11 * sway * sin(cx * (2.1 + 1.3 * fk) + ph * (0.6 + 0.25 * fk) + fk * 2.1)
+                + auroraBase * 0.04 * sway * sin(cx * 6.3 - ph * 0.9 + fk * 4.0);
+            float reach = auroraBase * (0.78 - 0.26 * fk)
+                * (0.4 + 0.45 * vnoise(vec2(cx * 9.0 + fk * 31.0, ph * 0.22 + fk * 5.0)) + 0.15 * hash21(vec2(column, fk + 9.0)));
+            float up = (hem - cy) / reach;   // 0 en el borde, 1 en la punta del rayo
+            if (up > 0.0 && up < 1.0) {
+                // El brillo de cada rayo: el suyo (su columna) y el de su vecindad,
+                // que cambia despacio.
+                float ray = 0.42 + 0.58 * mix(hash21(vec2(column, fk + 3.0)), vnoise(vec2(cx * 13.0 + fk * 13.0, ph * 0.4 + fk * 7.0)), 0.55);
+                float fall = floor(pow(1.0 - up, 1.25) * 8.0 + 0.5) / 8.0;
+                aurora = max(aurora, mix(warm, cool, smoothstep(0.0, 0.17, up)) * fall * ray * (1.0 - 0.4 * fk));
             }
         }
+        col = fxLimit(col, col + aurora * uFxC.z, fxW);
     }
 
     // ---------- Luna ----------

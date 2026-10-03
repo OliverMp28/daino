@@ -55,6 +55,10 @@ class Result:
     # T02.5: el escenario que propone el reparto por cómo suena la canción
     # (resources/js/game/scenes/sceneCasting.js), o None: la Cordillera.
     scene_auto: str | None = None
+    # T03.3: la identidad de los efectos de la canción (su paleta y su firma:
+    # resources/js/game/fx/casting.js), como el texto de `levels.fx_auto`
+    # (`fx_auto_or_none`), o None: lo de siempre.
+    fx_auto: str | None = None
 
 
 # Trabajos que sustituyen el chart de un nivel ya publicado: una reanálisis o un
@@ -222,7 +226,7 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                          duration_sec = %s, duration_ms = %s, bpm = %s, bpm_exact = %s, game_speed = %s,
                          generator_seed = %s, chart_json = %s, analysis_json = %s, chart_status = 'ready',
                          chart_version = %s, chart_hash = %s, difficulty = %s, difficulty_ceiling = %s,
-                         chart_variants_json = %s, pending_public = FALSE, scene_auto = %s
+                         chart_variants_json = %s, pending_public = FALSE, scene_auto = %s, fx_auto = %s
                        WHERE id = %s""",
                     (
                         result.audio_sha256,
@@ -236,6 +240,8 @@ def complete(conn, job: Job, worker_id: str, result: Result) -> str:
                         # T02.5: el escenario Automático sale del mismo análisis que
                         # se guarda (cast-scenes lo recalcula desde analysis_json).
                         scene_id_or_none(result.scene_auto),
+                        # T03.3: y la identidad de los efectos, del mismo análisis.
+                        fx_auto_or_none(result.fx_auto),
                         job.level_id,
                     ),
                 )
@@ -294,6 +300,29 @@ SCENE_ID = re.compile(r"^[a-z][a-z0-9-]{1,31}$")
 def scene_id_or_none(value) -> str | None:
     """Un id de escena con la forma del CHECK de `levels.scene_auto`, o None."""
     return value if isinstance(value, str) and SCENE_ID.fullmatch(value) else None
+
+
+# Claves de `levels.fx_auto`, en el orden en que se guardan (el mismo que usa
+# PHP: app/Services/FxIdentity.php).
+FX_AUTO_KEYS = ("palette", "signature")
+
+
+def fx_auto_or_none(value) -> str | None:
+    """La identidad de los efectos de un nivel como el texto canónico de
+    `levels.fx_auto` (`{"palette":"ice","signature":"aurora"}`: solo las claves
+    que haya, en orden y sin espacios), o None si no hay nada propio.
+
+    Acepta el objeto que devuelve el reparto (`fxAuto`) o un texto ya guardado.
+    Lo que no tenga la forma de un id no llega a la BD."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    out = {k: value[k] for k in FX_AUTO_KEYS if isinstance(value.get(k), str) and SCENE_ID.fullmatch(value[k])}
+    return json.dumps(out, separators=(",", ":")) if out else None
 
 
 def _release_level(cur, level_id: int) -> None:

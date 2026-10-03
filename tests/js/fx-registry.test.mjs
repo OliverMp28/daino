@@ -48,6 +48,9 @@ test('familias: el espectro y la firma son huecos de uno; la del juego no la toc
     assert.equal(FX_FAMILIES.game.fixed, true);
     // Hoy hay un solo efecto de espectro: cada escena lo pinta con su paisaje.
     assert.deepEqual(FX_IDS.filter((id) => FX[id].family === 'spectrum'), ['spectrum']);
+    // El espectro lo pone la escena; la firma, la canción (T03.3): es la única
+    // familia que se reparte.
+    assert.deepEqual(Object.keys(FX_FAMILIES).filter((f) => FX_FAMILIES[f].cast === true), ['signature']);
     const policy = sceneFxPolicy({ fx: { allow: [] } });
     for (const id of FX_IDS) assert.equal(policy.allows(id), FX[id].family === 'game', id);
 });
@@ -105,11 +108,18 @@ test('cada tier de calidad dice hasta qué coste pinta; el bajo, solo lo barato'
     assert.equal(resolveBudget('PLAYING', 'low').fxCost, 'cheap');
 });
 
-test('la política de efectos de cada escena es válida; los ambientes no vetan nada y One Day declara lo suyo', () => {
+test('la política de efectos de cada escena es válida; un ambiente solo veta las firmas del cielo si lo cierra, y One Day declara lo suyo', () => {
     for (const sc of Object.values(SCENES)) {
         assert.deepEqual(policyIssues(sc), [], `${sc.id}: ${policyIssues(sc).join('; ')}`);
-        if (sc.kind === 'ambient') assert.equal(sc.fx, undefined, `${sc.id}: un ambiente no necesita política`);
+        if (sc.kind !== 'ambient') continue;
+        // Con lluvia el cielo está cerrado: sin aurora ni lluvia de estrellas (T03.3).
+        // Los demás ambientes no declaran nada.
+        const rains = sc.layers.some((l) => l.type === 'rain');
+        assert.deepEqual(sc.fx, rains ? { denyFamilies: ['signature'] } : undefined, `${sc.id}`);
+        const policy = sceneFxPolicy(sc);
+        for (const id of FX_IDS) assert.equal(policy.allows(id), !(rains && FX[id].family === 'signature'), `${sc.id}: ${id}`);
     }
+    assert.equal(policyIssues({ fx: { denyFamilies: ['nada', 'game'] } }).length, 2);
     assert.deepEqual(policyIssues({ fx: { deny: ['noExiste'], hush: ['nada'], temper: 2, colors: { warm: 'rojo', cool: '#fff' } } }).length, 5);
     assert.deepEqual(policyIssues({ fx: { temper: { game: 0.5, nada: 0.5, pulse: 3 } } }).length, 3);
 
@@ -117,7 +127,7 @@ test('la política de efectos de cada escena es válida; los ambientes no vetan 
     // Lo esencial…
     for (const id of ['groundPulse', 'starPulse', 'dropFlash', 'dropWave', 'breakCalm', 'speedLines']) assert.ok(story.allows(id), id);
     // …y nada que toque su horizonte, su sol, su mar ni su barco.
-    for (const id of ['horizonGlow', 'sunPulse', 'sunGlow', 'spectrum', 'beatPump', 'ridgePulse', 'motes', 'climaxTint', 'keyHue']) {
+    for (const id of ['horizonGlow', 'sunPulse', 'sunGlow', 'spectrum', 'beatPump', 'ridgePulse', 'motes', 'climaxTint', 'keyHue', 'aurora', 'meteors']) {
         assert.equal(story.allows(id), false, `One Day no permite "${id}"`);
     }
     assert.ok(story.temperOf('pulse') < 1, 'lo que late, suave');
@@ -174,14 +184,15 @@ test('el shader solo compone: recibe cantidades, sin señales del audio, y lo qu
     assert.ok(code.includes(`vec3(${C.tint.map((v) => (Number.isInteger(v) ? v.toFixed(1) : String(v))).join(', ')}), ${C.desaturate} * calm) * (1.0 - ${C.darken} * calm)`), 'calma del break distinta del espejo');
     // Y los uniforms que declara son los que sube la fábrica del filtro.
     const filter = readFileSync(path.join(ROOT, 'resources/js/game/shaders/audioFilter.js'), 'utf8');
-    for (const u of ['uFxA', 'uFxB', 'uFxC', 'uFxWarm', 'uFxCool', 'uFxBand']) {
+    for (const u of ['uFxA', 'uFxB', 'uFxC', 'uFxD', 'uFxWarm', 'uFxCool', 'uFxBand']) {
         assert.ok(new RegExp(`uniform \\w+\\s+${u};`).test(frag), `falta ${u} en el shader`);
         assert.ok(filter.includes(`${u}:`), `falta ${u} en audioFilter.js`);
     }
 });
 
 test('cantidades del cielo: sin música, cero; con ella, lo de siempre; un efecto apagado no pinta', () => {
-    const levels = Object.fromEntries(FX_IDS.map((id) => [id, 1]));
+    // Las firmas (aurora, lluvia de estrellas) tienen su test: fx-signatures.test.mjs.
+    const levels = Object.fromEntries(FX_IDS.map((id) => [id, FX[id].family === 'signature' ? 0 : 1]));
     const s = createFxSignals();
     const out = createSkyAmounts();
     // Sin efectos (el menú: el director los deja a cero) no hay nada que componer.

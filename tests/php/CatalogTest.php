@@ -311,7 +311,7 @@ test('D21: la shell deja que Vout la embeba, y solo Vout', function (): void {
 /**
  * Directorio de seed temporal con MP3 falsos: el seeder solo mira bytes y hash.
  *
- * @param array<string, array{title?: string, artist?: ?string, bytes?: string, difficulty?: int, events?: int, charter?: int, scene?: mixed, sceneAuto?: mixed}> $levels
+ * @param array<string, array{title?: string, artist?: ?string, bytes?: string, difficulty?: int, events?: int, charter?: int, scene?: mixed, sceneAuto?: mixed, fxAuto?: mixed}> $levels
  * @return array{seed: string, audio: string, from: string, cleanup: callable}
  */
 function makeSeedFixture(array $levels): array
@@ -334,7 +334,8 @@ function makeSeedFixture(array $levels): array
             'difficulty'    => $spec['difficulty'] ?? 2,
             'chart'         => chartFor($s, $spec['charter'] ?? 1, $spec['events'] ?? 3),
             'analysis'      => storeBody($s)['analysis'],
-        ] + (array_key_exists('sceneAuto', $spec) ? ['sceneAuto' => $spec['sceneAuto']] : []), JSON_PRESERVE_ZERO_FRACTION));
+        ] + (array_key_exists('sceneAuto', $spec) ? ['sceneAuto' => $spec['sceneAuto']] : [])
+          + (array_key_exists('fxAuto', $spec) ? ['fxAuto' => $spec['fxAuto']] : []), JSON_PRESERVE_ZERO_FRACTION));
     }
     file_put_contents("{$base}/seed/manifest.json", json_encode($manifest));
 

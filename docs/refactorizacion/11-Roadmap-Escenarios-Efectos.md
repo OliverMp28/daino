@@ -11,7 +11,7 @@
 >
 > **Cómo se lee.** Los trabajos de este documento tienen **número global de proyecto** (índice único en [`TRABAJOS.md`](TRABAJOS.md)): **T01** escenario vivo, **T02** escenas por nivel, **T03** efectos con la música. Cada trabajo se hace en **olas** (entregas) con el número del trabajo delante: **T01.2** es la segunda ola del T01. Esos identificadores no se repiten nunca en el proyecto, así que un `T01.2` en un comentario del código solo puede ser esto. Cada ola tiene su casilla en la lista de §3: se marca `[x]` al completarla, y un trabajo se marca cuando están todas sus olas.
 >
-> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche), T02.5 (Automático por el carácter de la canción) y T02.6 (historias de autor y One Day) ✅; quedan las historias siguientes (T02.7+). T03 en curso: rediseñado con el user (§2.11-2.16 y §3, T03); T03.1 (cimientos y control) y T03.2 (el espectro en el paisaje y el pulso por astro) ✅, con dos rondas de ajustes tras jugarlo (la segunda, el color de los efectos: §2.16); quedan la identidad por canción (T03.3) y el playtest (T03.4).
+> **Estado:** T01 casi terminado (T01.1, T01.2 y T01.3 ✅; falta el playtest, T01.4). T02 en curso: diseñado entero con el user (§3, T02); T02.1 (escena por nivel), T02.2 (la Costa), T02.3 (lluvia, tormenta y nieve), T02.4 (ciudad de noche), T02.5 (Automático por el carácter de la canción) y T02.6 (historias de autor y One Day) ✅; quedan las historias siguientes (T02.7+). T03 casi terminado: rediseñado con el user (§2.11-2.17 y §3, T03); T03.1 (cimientos y control), T03.2 (el espectro en el paisaje y el pulso por astro, con dos rondas de ajustes tras jugarlo: §2.16) y T03.3 (identidad por canción: paleta y firma, §2.17) ✅; queda el playtest (T03.4).
 
 ---
 
@@ -160,7 +160,7 @@ Cada efecto tiene nombre, familia, plano, condición, coste y protección de lo 
 |---|---|---|
 | Escena | Dónde pueden vivir los efectos, su espectro propio y qué veta | `scene.fx` y sus capas (`scenes/registry.js`) |
 | Hora del cielo | Qué astro lleva el pulso (el sol de día, las estrellas de noche) y si hay sitio para la luz | `when` del efecto; el limitador |
-| Canción | Paleta, efecto firma y temperamento (T03.3) | `fx/casting.js`, `levels.fx_auto` |
+| Canción | Su paleta y, si le pega, su firma (T03.3, §2.17) | `fx/casting.js` (servidor), `levels.fx_auto`, `fx/identity.js` |
 | Arco | Cuándo y cuánto: intro mínima, clímax máximo | intensidad del tramo (`songDirector`) |
 | Jugador y equipo | El máximo: Completos, Suaves o Mínimos; el tier bajo apaga los caros | `settings`, `RenderProfile` |
 
@@ -193,6 +193,18 @@ Lo que late con el pulso (hasta 6 veces por segundo en una subida a contratiempo
 
 Lo protege un test que recorre todas las escenas y horas.
 
+### 2.17 La identidad de los efectos es de la canción: una paleta que el cielo admite y, como mucho, una firma (T03.3, con el user)
+
+Cada canción tiene **su paleta** y, solo si le pega de verdad, **su firma** en el cielo. Las reparte el servidor por cómo suena, con el mismo motor que el escenario Automático (retratos de dos o más condiciones, encaje y ventaja mínimos, y red). El autor no elige.
+
+- **Una paleta solo elige dentro de lo que el cielo admite.** El cielo de detrás del juego va siempre del azul al magenta (tono 265°-339° en todas las escenas y horas) y un color de efecto no queda a más de 70° de él (§2.16): caben los tonos del cian al rosa. Medido, un naranja o un oro se vuelven rosa de día y de noche, y el oro salta de cian a rosa a media tarde. No hay paletas cálidas, salvo en las historias de autor, que traen sus colores.
+- **Una paleta entra si pasa tres medidas** en todos los ambientes y horas (`fx/paletteCheck.js`, con test): **estable** (su tono no salta entre horas vecinas), **viva** (conserva su croma tras ponerse a juego con el cielo) y **distinta** de las demás. Mejor cuatro distintas que cinco parecidas.
+- **Una firma como mucho, y con red.** Sin un encaje claro, la paleta de siempre (Neón) y ninguna firma: una propuesta equivocada es peor que ninguna.
+- **Una firma es una luz del cielo nocturno.** De día no existe. En los ambientes de **cielo cerrado** (Lluvia, Tormenta) la veta su política: la firma de ese nivel es su clima. En la **Nieve** la aurora sí se ve (su nevada esconde las estrellas para que no se confundan con los copos, no el cielo); la lluvia de estrellas, que son estrellas, no.
+- **El reparto es de la canción; verlo depende de la escena y de la hora.** Se guarda lo que le pega a la canción (`levels.fx_auto`), valga o no para el escenario de hoy: si su autor cambia de escenario, la firma aparece o se aparta sola. Lo decide el director al jugar, sin casos especiales.
+- **Se calcula en el servidor y el cliente solo lee.** El reparto no viaja en el bundle, no toca el chart (un nivel público también lo recibe) y el servidor no guarda listas de paletas: un cliente ignora el id que no conoce y cae en lo de siempre.
+- **La luz que se suma a un cielo oscuro va en colores vivos.** Un color pálido sumado a medias no se lee como luz, sino como polvo.
+
 ---
 
 ## 3. Los trabajos y sus olas
@@ -215,7 +227,7 @@ Lo protege un test que recorre todas las escenas y horas.
 - [ ] **T03 — Efectos al ritmo de la música**: lo que reacciona a lo que suena.
   - [x] T03.1 — Cimientos y control: registro, director, limitador de la franja jugable, política por escena, ajuste del jugador y panel dev "Efectos" (Oct 2026).
   - [x] T03.2 — El espectro en el paisaje y el pulso por astro (Oct 2026).
-  - [ ] T03.3 — Identidad por canción: paletas curadas, reparto y firmas (aurora, lluvia de estrellas en el clímax).
+  - [x] T03.3 — Identidad por canción: paletas medidas contra el cielo, reparto en el servidor y firmas (aurora, lluvia de estrellas en el clímax) (Oct 2026).
   - [ ] T03.4 — Playtest humano y afinado; coste de cada efecto con GPU real.
 
 ---
@@ -636,8 +648,9 @@ El user pidió planificarlo bien: escalable, controlable, agradable e inmersivo,
 - Efectos nuevos: **espectro en el paisaje**, **estrellas vivas** y **aurora**. No eligió "nubes y sol que laten" (§6).
 - Color: **paletas curadas** por canción (frente a "siempre rosa y cian" y a "giro libre por tonalidad").
 - Historias: **lo esencial, con los colores de la escena**, declarado por la historia (frente a "ninguno" y a "todos, atenuados").
+- En la T03.3: paletas **solo las que casan con el cielo** (frente a añadir también cálidas), y la aurora **también en la Nieve** (primero eligió "solo con cielo despejado"; con ello ningún oficial la enseñaba: ver la T03.3).
 
-El modelo y sus decisiones, en §2.11-2.15. Las olas sustituyen a las T03.1-T03.3 de antes, que no se habían empezado.
+El modelo y sus decisiones, en §2.11-2.17. Las olas sustituyen a las T03.1-T03.3 de antes, que no se habían empezado.
 
 #### ✅ T03.1 — Cimientos y control (Oct 2026)
 
@@ -769,16 +782,95 @@ Tres causas, ninguna de una escena concreta:
 
 **Límites**: el color se ha juzgado con capturas, no jugando: si gusta lo dice quien juega. El extremo añil de las barras es lo más claro que hay detrás del juego (0.083 de luminancia; el ptero queda a 2.68:1, con 2.5 de mínimo). Las barras van siempre del añil al magenta: una paleta de canción (T03.3) que no esté en ese arco se nota en lo que queda por encima de la franja jugable (el tinte del clímax, las líneas de velocidad, las firmas), no en las barras.
 
-#### ⬜ T03.3 — Identidad por canción
+#### ✅ T03.3 — Identidad por canción (Oct 2026)
 
-- **Paletas curadas** (`fx/palettes.js`): un puñado de dúos de color probados (neón, brasa, hielo, ultravioleta, oro…); la tonalidad y el ánimo de la canción eligen uno. Cada paleta pasa el guardián, y el director la pone a juego con el cielo como a la de siempre (§2.16): una paleta es una intención, no un color fijo.
-- **Reparto** (`fx/casting.js`, como `sceneCasting.js`): retratos por efecto firma a partir de los rasgos de la canción (`songTraits.js`), la paleta y un temperamento (una balada, más suave). Se calcula con el análisis del servidor en `chartFromAnalysis` (`fxAuto`) y se guarda en `levels.fx_auto` (migración `014`, worker, horneados, seeder y `cast-scenes`). No toca el chart: un nivel público también lo recibe. Sin propuesta (canción local, análisis del navegador), los colores y efectos de siempre. El autor no elige.
-- **Firmas**: **aurora** (cortinas de luz en lo alto del cielo nocturno, en canciones tranquilas o cristalinas; cara: fuera en calidad baja) y **lluvia de estrellas** en el clímax (las estrellas fugaces del escenario, en tandas con los primeros tiempos). Una por nivel.
-- **Motas por banda**: cada grupo de motas baila con su banda.
+El user pidió hacerla bien: "no metas cosas por meter sin pensar, que sea escalable y viable". Así que se midió antes de decidir, y se quitó lo que no aportaba.
+
+##### Lo que se midió antes de diseñar
+
+Las paletas que apuntaba este documento ("neón, brasa, hielo, ultravioleta, oro…") no eran todas posibles. Con la regla del segundo playtest (§2.16), medido en los seis ambientes de las 13:00 a las 6:36:
+
+| Paleta candidata | Qué le pasa tras ponerla a juego con el cielo |
+|---|---|
+| Brasa (naranja y ámbar) | De día y de noche, rosa y rosa pálido (tono 335°-355°): solo es naranja en el ocaso de la Costa. Igual que una paleta de rosas |
+| Oro (oro y melocotón) | De día, cian; a media tarde salta a rosa (más de 60° de golpe): un cambio de color a mitad de canción |
+| Violeta y azul · lavanda y celeste · rosas | No cambian a ninguna hora |
+
+De ahí la decisión (con el user): solo paletas dentro de lo que el cielo admite (§2.17).
+
+##### Qué se construyó
+
+- **Cinco paletas** (`fx/palettes.js`), cada una con su rampa propia en las barras del espectro:
+
+  | Paleta | Colores | Para canciones… | Barras |
+  |---|---|---|---|
+  | **Neón** | rosa y cian | sin encaje claro: la de siempre, y la red | del magenta al añil |
+  | **Ultravioleta** | violeta y azul eléctrico | rítmicas, en bucle y oscuras | del violeta al añil |
+  | **Fucsia** | rojo rosado y violeta | intensas, sombrías y con grandes contrastes | del magenta al violeta |
+  | **Hielo** | lavanda y celeste | tranquilas y pausadas, cristalinas o melancólicas | añiles |
+  | **Rosa** | rosas claros | tranquilas y cálidas | rosas |
+
+  Medidas (`fx/paletteCheck.js`: `measurePalettes`, `paletteIssues`, `PALETTE_RULES`): el tono de ninguna salta más de 6.6° entre horas vecinas (límite 15°); la que menos croma conserva es Neón, el 66 % (su cian en el ocaso de la Costa; límite 60 %); las dos más parecidas, Hielo y Rosa, quedan a 0.109 en OKLab (límite 0.09; 0.02 ya se nota).
+- **Dos firmas** (familia `signature` del registro), pintadas por el shader del cielo, sin capas ni chunks nuevos:
+  - **Aurora**, para las canciones que fluyen (tranquilas, y quietas o luminosas). Cortinas de rayos en pixel art (columnas de dos celdas, brillo en escalones) sobre lo que se juega. El borde de abajo es el color cálido de la canción y el cuerpo, el frío, como en una aurora de verdad; y no es casual: el borde es lo que entra en la franja jugable, donde solo brillan los tonos del añil al magenta. Fluye con la música (más deprisa con los medios y la intensidad), los graves la mecen y respira con el pulso hacia abajo (un 10 %). Entra con el cuerpo de la canción y despacio. Coste `mid`: fuera en calidad baja.
+  - **Lluvia de estrellas**, para las que estallan (con energía y grandes contrastes). En el clímax, tandas de fugaces sobre el pulso: dos o tres en cada primer tiempo y, si el compás dura 1.9 s o más, una o dos a mitad de compás; así cae una tanda cada 1-2 s a cualquier tempo. El mismo trazo que la fugaz del escenario (ahora una función del shader, `meteor`), algo más largo, con un punto del color frío y siempre por encima de la franja jugable.
+- **Reparto** (`fx/casting.js`, solo servidor): `PALETTE_CASTING`, `SIGNATURE_CASTING`, `castFx`, `fxAutoOf`, `FX_CASTING_VERSION`. El motor de retratos se sacó de `sceneCasting.js` a **`levels/portraits.js`** (`route`, `rankPortraits`, `pickPortrait`, `traitsOfAnalysis`): escenarios y efectos lo comparten y los rasgos de la canción se miden una vez. Los oficiales:
+
+  | Oficial | Paleta | Firma | Se ve la firma |
+  |---|---|---|---|
+  | Time | Hielo | aurora | sí: Nieve, noche en el clímax |
+  | What's Up Danger | Ultravioleta | lluvia de estrellas | sí: Ciudad, 30 tandas en su clímax |
+  | Running With the Wolves | Neón | lluvia de estrellas | no: su clímax es el final y acaba en el ocaso, sin noche |
+  | HOPE | Rosa | aurora | no: dura 79 s y acaba en el ocaso |
+  | One Day | (Hielo) | (aurora) | no: su historia fija sus colores y veta las firmas |
+  | Dawn of Faith | Fucsia | — | |
+  | Mi Fiesta · Sugar Red | Ultravioleta | — | |
+  | Last Christmas | Hielo | — | |
+
+- **Del servidor al juego**: `chartFromAnalysis` devuelve `fxAuto` y `fxCasting`; los horneados los llevan; migración `014` (`levels.fx_auto`, JSON compacto `{"palette":"ice","signature":"aurora"}` o NULL); `Services/FxIdentity` (solo la forma, sin lista cerrada); `Level`, `LevelPresenter` (`fx_auto` en la API) y el seeder; en el analizador, `jobs.fx_auto_or_none`, el worker y `casting.py` (antes `scenes.py`: recalcula las dos columnas en una pasada; comando `cast`, y `cast-scenes` sigue valiendo). `bun run cast:report` enseña rasgos y encajes.
+- **En el juego**: `fx/identity.js` (`resolveFxIdentity`: lo que este cliente no conoce cae en lo de siempre), `engine.setFxIdentity` (AppController la pone al empezar el nivel y la quita al volver al menú), el director (`signature`: de su familia solo se ve la de la canción; sin reparto, ninguna) y `fx/skyAmounts.js` (filas `aurora` y `meteors`, y los relojes que el shader no puede llevar: cuánto ha fluido la aurora y en qué golpe cayó la última tanda, en `uFxD`).
+- **La escena sigue mandando**: `denyFamilies` en la política (`fx/policy.js`); Lluvia y Tormenta vetan la familia `signature` entera (una firma nueva queda vetada sin tocar nada). One Day no cambia: su lista cerrada ya las dejaba fuera.
+- **Panel dev "Efectos"**: fila "Canción" con la paleta y la firma que trae el nivel, y selectores para probar cualquier otra en vivo.
+
+##### En qué se desvió del plan
+
+- **Sin temperamento** ("una balada, más suave"). El arco ya escala los efectos con cada tramo, y bajar los de una canción tranquila va contra "la música tiene que sentirse".
+- **Sin motas por banda**. Las motas van al 6-22 % de opacidad: no se vería.
+- **Sin paletas cálidas** (lo medido, arriba).
+- **La aurora baja hasta la franja jugable** (el plan decía "en lo alto"). Por encima solo queda el 29 % de la pantalla: la primera versión era una franja de 100 px que no se leía como aurora. Su borde entra en la franja, donde pasa por el limitador.
+- **La aurora, también en la Nieve.** El user eligió primero "solo con cielo despejado", con un dato equivocado de quien lo implementaba: que HOPE la enseñaría. HOPE acaba en el ocaso. Con esa regla ningún oficial la enseñaba; probada sobre la Nieve con Time, se ve limpia, y el user la aceptó.
+- **Las tandas también a mitad de compás**: solo en los primeros tiempos, una canción lenta (compás de 2.9 s) tenía una fugaz cada 3 s.
+- **El servidor no valida los ids** contra una lista (para el escenario sí lo hace): no hace falta un espejo en PHP, y añadir una paleta no toca el servidor.
+
+##### Verificación — hecha, con medidas reales
+
+- **Tests**: JS **451** (23 nuevos), PHP **85** (4 nuevos), Python **115** (3 nuevos), todos en verde.
+  - `fx-palettes.test.mjs` (6): las tres medidas; por qué no hay naranja ni oro; cada paleta, su rampa de barras; la identidad de un nivel (lo desconocido se ignora); el director pinta con la paleta y una historia sigue mandando.
+  - `fx-casting.test.mjs` (9): los oficiales como regresión; **14 alteraciones del análisis** (tempo al doble, tonalidad relativa, máster más alto…) nunca dan una paleta ni una firma que no pega; retratos de libro; la red (un rasgo extremo solo no propone nada; las dos firmas no se pisan); sin análisis del servidor, nada; el charter devuelve la identidad sin tocar el chart.
+  - `fx-signatures.test.mjs` (8): una firma como mucho y ninguna sin reparto (y el espectro, que es de la escena, no se toca); de día no hay, Lluvia y Tormenta la vetan y en la Nieve la aurora sí; calidad baja y Mínimos; **las tandas caen sobre el pulso a 64-190 BPM, a 30 y 60 FPS, una cada 1-2 s**; **la aurora respira por debajo de un destello con cualquier paleta** (menos de 0.08 de luminancia); el shader pinta lo que dicen los números de JS.
+  - One Day entero, con la identidad que le da el reparto: sus firmas, a cero en cada instante, y sus colores.
+  - PHP (`FxAutoTest.php`): la forma canónica; la API la enseña y ninguna petición la escribe; la BD solo guarda JSON; el seeder la importa y rechaza una mal formada. Python: el worker la guarda, un chart público congelado la conserva y `cast` recalcula las dos columnas.
+- **En el navegador** (Chrome con la GPU real, Intel UHD 620, 1600 × 900, partidas enteras con la identidad que trae el nivel):
+  - **Time** (Nieve, Hielo y aurora): la aurora entra a los 108.9 s (el clímax empieza en el 105), sigue todo el clímax y se va con el alba (140-146 s). Sin errores.
+  - **What's Up Danger** (Ciudad, Ultravioleta y lluvia de estrellas): 30 tandas en su clímax (157-194 s), una cada 1.2-1.3 s (primer tiempo y mitad de un compás de 2.53 s), cada una a un fotograma de su golpe. Sin errores.
+  - **Running With the Wolves**: 59.8 FPS (p95 17.0 ms, p99 17.7). **One Day**: firmas a cero toda la partida y sus colores; 59.2 FPS.
+  - Capturas de la aurora con las cinco paletas en la Cordillera, y en la Costa, la Ciudad y la Nieve; ausente en la Tormenta.
+- **Coste**, alternando dentro de la misma partida (de noche, calidad alta): sin firma 60.2 FPS (p95 17.4 ms), con aurora 60.2 (17.2), con lluvia 60.2 (17.2). En la Nieve de noche, el shader de antes frente al nuevo: 59.2 y 60.7 FPS. La aurora no tiene un coste medible.
+- **Build de producción** jugado en el navegador (What's Up Danger, Time y HOPE): sin errores, sin chunks nuevos, y el reparto no viaja en el bundle. Principal **103.4 KB gzip** (+2.0), Pixi 140.7.
+- **Operación** hecha en local: migración `014`, `bake:official` (los charts no cambian), `seed:official` (9 actualizados) y `cast` (12 niveles con análisis; 1 de la comunidad cambió).
+
+##### Limitaciones
+
+- **Una firma necesita la noche.** Una canción corta, o con el clímax al final, acaba en el ocaso y no la enseña (HOPE, Running With the Wolves). De los oficiales, hoy se ven la aurora de Time y la lluvia de What's Up Danger.
+- Las paletas comparten arco (del cian al rosa): la identidad se nota sobre todo en las barras, la línea del suelo, el tinte del clímax y la aurora.
+- Se ha juzgado con capturas, no jugando: si gusta lo dice la T03.4.
+- **Las medidas de FPS de las partidas enteras no son limpias.** Mientras se medía, otro navegador abierto en la máquina (Edge) usaba un tercio de la GPU: Time y What's Up Danger dieron 56 FPS (p95 32-33 ms) y HOPE bajó sola a calidad baja (30 FPS). Por eso el coste se midió alternando dentro de la misma partida. Conviene repetirlas con la máquina libre.
+- El shader pesa 5 KB más de texto (sus comentarios viajan en el bundle: `compress` en build, T03.4).
+- Números, por si el playtest pide más o menos: `SKY_FX.aurora` y `SKY_FX.meteors` (cuánto, a qué ritmo), los retratos (`PALETTE_CASTING`, `SIGNATURE_CASTING`, `FX_CASTING_RULES`), los colores (`FX_PALETTES`). Cambiar un retrato sube `FX_CASTING_VERSION`: re-hornear, sembrar y `cast`.
 
 #### ⬜ T03.4 — Playtest y afinado
 
-¿Se nota la música en la pantalla sin distraer?, ¿los colores de las barras gustan de día y de noche (magenta, violeta, añil)?, ¿se ve bien cómo se encienden al anochecer?, ¿las barras de noche se quieren más?, ¿el suelo de día molesta o acompaña?, ¿One Day se siente limpio? El panel "Efectos" deja apagar, ver solo o subir cada efecto mientras se juega. Coste de cada efecto medido con la GPU real (con "solo"), y `compress` del shader en build (sus comentarios viajan en el bundle).
+¿Cada canción se siente distinta (su paleta)?, ¿la aurora de Time y la lluvia de estrellas de What's Up Danger gustan o distraen?, ¿se nota la música en la pantalla sin distraer?, ¿los colores de las barras gustan de día y de noche (magenta, violeta, añil)?, ¿se ve bien cómo se encienden al anochecer?, ¿las barras de noche se quieren más?, ¿el suelo de día molesta o acompaña?, ¿One Day se siente limpio? El panel "Efectos" deja apagar, ver solo o subir cada efecto mientras se juega. Coste de cada efecto medido con la GPU real (con "solo"), y `compress` del shader en build (sus comentarios viajan en el bundle).
 
 
 ---
@@ -817,6 +909,8 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 | Un efecto se ve sucio contra el cielo de alguna escena u hora | Los colores de los efectos se ponen a juego con el cielo de detrás y lo que pinta color en la franja jugable usa solo tonos que brillan en oscuro (§2.16). Test sobre todas las escenas y horas. |
 | Un efecto estropea una historia de autor | La historia declara qué permite (lista cerrada) y sus colores; el director lo cumple. Test: One Day entero con los efectos vetados a cero (T03.1). |
 | Los efectos se amontonan | Familias = huecos (un espectro y una firma por nivel) y un solo director. Cada efecto tiene nombre e interruptor en el panel dev (apagar, solo, intensidad, por qué no se ve). |
+| Una paleta que el cielo borra o confunde con otra | Las tres medidas de cada paleta en todos los ambientes y horas (estable, viva, distinta), con test (T03.3). |
+| Una canción recibe una paleta o una firma que no le pega | Retratos de ≥ 2 condiciones, encaje y ventaja mínimos, y red (Neón, sin firma). Medido con los oficiales y 14 alteraciones de su análisis (T03.3). |
 | "Automático" pone un ambiente que no pega | Solo encajes claros (retratos de ≥ 2 condiciones, encaje y ventaja mínimos), medido con los oficiales y con 14 alteraciones de su análisis sin un solo fallo, y quien sube lo cambia (T02.5). |
 
 ---
@@ -840,6 +934,15 @@ T01 (escenario vivo) ──► T02: T02.1 ──► T02.2 (Costa) ──► T02.
 - **Un techo de brillo por efecto** (lo que decía el plan de la T03.1). Obligaba a repetir en JS la fórmula de cada efecto del shader y a recordar hacerlo con cada efecto nuevo. El limitador protege a todos a la vez.
 - **Estrellas que se abren en cruz en el primer tiempo.** Cada estrella vive en su celda de 3 × 3 con la posición al azar: una cruz se recortaba en el borde de la celda. Laten en brillo.
 - **Estrellas que se alargan en el clímax** ("salto a la velocidad de la luz"). Dirían lo mismo que las líneas de velocidad, que ya están en el clímax. En su lugar, la lluvia de estrellas (T03.3).
+- **Paletas cálidas (brasa, oro).** El cielo de detrás va del azul al magenta y un efecto no queda a más de 70° de él: un naranja se pinta rosa de día y de noche, y el oro salta de cian a rosa a media tarde (T03.3, medido).
+- **Temperamento por canción** (los efectos de una balada, más suaves). El arco ya escala cada tramo, y bajarlos en una canción tranquila va contra "la música tiene que sentirse" (T03.3).
+- **Motas por banda.** Van al 6-22 % de opacidad: no se vería (T03.3).
+- **La aurora solo por encima de la franja jugable.** Solo queda el 29 % de la pantalla: era una franja de 100 px que no se leía como aurora. Su borde entra en la franja, bajo el limitador.
+- **La aurora con los colores de la paleta tal cual.** Un rosa pálido sumado a medias sobre el cielo de la noche era un gris polvoriento. Va con el tono de cada color llevado a una viveza fija.
+- **Sumar las dos cortinas de la aurora donde se cruzan.** Con el pulso, ese punto cambiaba 0.14 de luminancia (un destello). Se ve la de más luz.
+- **La aurora solo con cielo despejado.** Las canciones tranquilas caen en la Nieve, y las cortas acaban en el ocaso: ningún oficial la enseñaba (T03.3).
+- **Tandas de la lluvia de estrellas solo en los primeros tiempos.** A 82 BPM, una fugaz cada 3 s.
+- **Una lista de paletas en el servidor** (como la de ambientes). Obligaría a mantener un espejo en PHP; el cliente ignora el id que no conoce.
 - **Que quien sube suba imágenes o dibuje su escenario.** Moderación, derechos, un estilo que no casa con el pixel art y nada que garantice la legibilidad (T02).
 - **Elegir el escenario por el título, la letra o con IA.** Sin modelos pesados en un servidor pequeño, con derechos de por medio y sin fiabilidad (T02).
 - **Historias de autor en el inventario de ambientes.** Pierden su sentido: la historia de One Day es de One Day (T02, decisión del user).
