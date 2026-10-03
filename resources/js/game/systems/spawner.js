@@ -161,6 +161,27 @@ export function createSpawner(cfg) {
         },
 
         /**
+         * Crea ya un obstáculo de cada tipo que trae el nivel y lo deja en su
+         * reserva, apagado (T05.3). Sin esto, el primero de cada tipo se construye
+         * —y su dibujo se rasteriza— cuando asoma, a mitad de canción. Devuelve los
+         * creados, para que quien llama los pinte una vez (systems/prewarm.js).
+         *
+         * @returns {SpawnerObstacle[]}
+         */
+        prewarm() {
+            const made = [];
+            for (const data of queue) {
+                if (pools.has(data.kind)) continue;
+                const o = createObstacle(data.kind);
+                layer.addChild(o);
+                created.push(o);
+                release(o, data.kind);
+                made.push(o);
+            }
+            return made;
+        },
+
+        /**
          * ¿Choca un hitbox con algún obstáculo activo en un instante dado?
          *
          * Calcula las posiciones analíticamente para ESE instante, sin mirar

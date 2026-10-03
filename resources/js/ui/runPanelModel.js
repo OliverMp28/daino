@@ -11,6 +11,7 @@
 // (`runPanel.js`) solo lo pinta. Puro: se prueba en Node.
 
 import { formatDuration, formatPoints } from './catalogModel.js';
+import { perfStat } from './perfModel.js';
 
 export const RUN_ACTION = Object.freeze({
     RESUME: 'resume',
@@ -34,6 +35,8 @@ export const RUN_ACTION = Object.freeze({
  * @property {boolean} [rotate]                Móvil en vertical: sugerir girarlo.
  * @property {{ presses: number, biasMs: number, sigmaMs: number } | null} [timing]
  *           Precisión de las pulsaciones de la partida (systems/timingLog.js); solo en desarrollo.
+ * @property {object | null} [perf]
+ *           Rendimiento del intento (`engine.getPerf()`); en desarrollo o con `?perf=1`.
  */
 
 /**
@@ -106,6 +109,7 @@ export function runPanelView(run) {
             { label: 'Tiempo', value: `${formatDuration(run.reachedSec)} / ${formatDuration(run.durationSec)}` },
             { label: 'Intento', value: String(Math.max(1, Math.floor(run.attempt || 1))) },
             ...(run.timing ? [{ label: 'Precisión', value: `±${run.timing.sigmaMs} ms (${run.timing.biasMs >= 0 ? '+' : ''}${run.timing.biasMs})` }] : []),
+            ...(perfStat(run.perf) ? [perfStat(run.perf)] : []),
         ],
         primary,
         secondary,

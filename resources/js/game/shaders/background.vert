@@ -1,36 +1,21 @@
-// Vertex shader para el Filter custom de PixiJS v8.
-// Base: ejemplo oficial pixijs.com/8.x/guides/components/filters — los
-// uniforms uInputSize, uOutputFrame, uOutputTexture los inyecta Pixi
-// automáticamente y son la única forma correcta de mapear el filterArea al
-// quad del filtro.
+// Vertex del shader del cielo (T05.1). Lo que se pinta es una BANDA del búfer del
+// cielo (shaders/skyBuffer.js): un rectángulo que la llena.
 //
-// Añadido Jul 2026: `vFrameCoord` — uv normalizado [0,1] SOBRE EL FRAME
-// VISIBLE. `vTextureCoord` normaliza sobre la textura del pool (más grande
-// que la pantalla), así que su "1.0" cae fuera del viewport; todo efecto
-// anclado a bordes/posiciones de pantalla (sol, horizonte, vignette) debe
-// usar vFrameCoord. aPosition ya es el quad [0,1] del frame — passthrough.
+// `aPosition` recorre [0,1] sobre la banda. Sin voltear: en una textura de
+// render la fila 0 es la de arriba, y es la que queda en y = −1.
+//
+// `uFrameRect` dice qué trozo de la PANTALLA es esa banda (xy: la uv de su
+// esquina; zw: lo que abarca). El búfer mide un número entero de texeles, así que
+// sobra una fracción de texel por la derecha y por abajo de la pantalla: ahí la
+// uv pasa de 1. Con eso un texel mide exactamente celda/N y las celdas que dibuja
+// el fragment caen en fronteras de texel (systems/skyGrid.js).
 
 in vec2 aPosition;
-out vec2 vTextureCoord;
 out vec2 vFrameCoord;
 
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-
-vec4 filterVertexPosition() {
-    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-    position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-    return vec4(position, 0.0, 1.0);
-}
-
-vec2 filterTextureCoord() {
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
+uniform vec4 uFrameRect;
 
 void main(void) {
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-    vFrameCoord = aPosition;
+    gl_Position = vec4(aPosition * 2.0 - 1.0, 0.0, 1.0);
+    vFrameCoord = uFrameRect.xy + aPosition * uFrameRect.zw;
 }

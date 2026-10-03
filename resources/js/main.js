@@ -57,6 +57,13 @@ async function boot() {
         mountDevTools();
     }
 
+    // Lectura de rendimiento en pantalla (T05.4): solo con `?perf=1`, y en su
+    // propio chunk. Para probar en un móvil, donde no hay consola a mano.
+    if (new URLSearchParams(window.location.search).get('perf') === '1') {
+        const { mountPerfReadout } = await import('@/ui/perfReadout.js');
+        mountPerfReadout(engineApi);
+    }
+
     if (engineApi.reducedMotion) {
         console.info('[daino] prefers-reduced-motion: shader desactivado, fallback CSS estático');
     }

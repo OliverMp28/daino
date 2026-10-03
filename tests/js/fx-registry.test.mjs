@@ -102,10 +102,13 @@ test('por defecto, Completos: solo cuenta lo que el jugador elija en el ajuste (
     }
 });
 
-test('cada tier de calidad dice hasta qué coste pinta; el bajo, solo lo barato', () => {
-    for (const [tier, q] of Object.entries(QUALITY_TIERS)) assert.ok(FX_COSTS.includes(q.fxCost), tier);
-    assert.equal(resolveBudget('PLAYING', 'high').fxCost, 'heavy');
-    assert.equal(resolveBudget('PLAYING', 'low').fxCost, 'cheap');
+test('la calidad gráfica no quita efectos: todos los niveles los pintan todos (T05: quitarlos no ahorraba nada)', () => {
+    // El mecanismo sigue en el director (`costRank`), pero la calidad baja el
+    // detalle del cielo, no los efectos: esos solo los reduce el jugador.
+    for (const [tier, q] of Object.entries(QUALITY_TIERS)) {
+        assert.ok(FX_COSTS.includes(q.fxCost), tier);
+        assert.equal(resolveBudget('PLAYING', tier).fxCost, FX_COSTS[FX_COSTS.length - 1], tier);
+    }
 });
 
 test('la política de efectos de cada escena es válida; un ambiente solo veta las firmas del cielo si lo cierra, y One Day declara lo suyo', () => {
@@ -183,10 +186,10 @@ test('el shader solo compone: recibe cantidades, sin señales del audio, y lo qu
     const C = SKY_FX.breakCalm;
     assert.ok(code.includes(`vec3(${C.tint.map((v) => (Number.isInteger(v) ? v.toFixed(1) : String(v))).join(', ')}), ${C.desaturate} * calm) * (1.0 - ${C.darken} * calm)`), 'calma del break distinta del espejo');
     // Y los uniforms que declara son los que sube la fábrica del filtro.
-    const filter = readFileSync(path.join(ROOT, 'resources/js/game/shaders/audioFilter.js'), 'utf8');
+    const filter = readFileSync(path.join(ROOT, 'resources/js/game/shaders/skyShader.js'), 'utf8');
     for (const u of ['uFxA', 'uFxB', 'uFxC', 'uFxD', 'uFxWarm', 'uFxCool', 'uFxBand']) {
         assert.ok(new RegExp(`uniform \\w+\\s+${u};`).test(frag), `falta ${u} en el shader`);
-        assert.ok(filter.includes(`${u}:`), `falta ${u} en audioFilter.js`);
+        assert.ok(filter.includes(`${u}:`), `falta ${u} en skyShader.js`);
     }
 });
 

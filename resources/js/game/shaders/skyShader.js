@@ -1,5 +1,11 @@
-// Fábrica del Filter del fondo: el cielo del escenario (T01) con los
-// efectos de la música encima. Vive en la Capa 1 del engine.
+// El shader del cielo: el escenario (T01) con los efectos de la música encima.
+// Es la Capa 1 del engine, y lo único caro de un fotograma.
+//
+// No es un Filter de Pixi (lo fue hasta la T05.1). Un filtro se aplica sobre la
+// superficie donde se pinta su sprite —la pantalla, a resolución completa— y antes
+// pinta ese sprite en una textura de entrada que este shader ni lee. Aquí el
+// shader se pinta a mano, con un rectángulo, en el búfer del cielo
+// (shaders/skyBuffer.js): a los texeles que diga la calidad y por bandas.
 //
 // PixiJS v8 strict:
 //   - GLSL ES 3.0 (in/out, texture(), out vec4 finalColor) — doc 09 §2.4.
@@ -7,7 +13,7 @@
 //       audioUniforms — los efectos: cantidades ya calculadas (fx/skyAmounts.js),
 //                       sus dos colores y el limitador de la franja jugable (T03.1).
 //       skyUniforms   — el escenario: el cielo de la hora (scenes/skyModel.js).
-//     Se accede vía filter.resources.<grupo>.uniforms.X.
+//     Se accede vía shader.resources.<grupo>.uniforms.X.
 //   - Texturas como propiedad directa de `resources` (NO dentro de un grupo).
 //     uFFT es un sampler2D 256x1 con formato r8unorm — un byte por bin.
 //
@@ -17,8 +23,8 @@
 
 import {
     BufferImageSource,
-    Filter,
     GlProgram,
+    Shader,
 } from 'pixi.js';
 
 import fragmentSrc from './background.frag';
@@ -27,18 +33,29 @@ import vertexSrc from './background.vert';
 export const FFT_BINS = 256;
 
 /**
- * Crea el Filter listo para usar como `sprite.filters = [filter]`.
+ * El programa del cielo. Con precisión alta en el fragment: trabaja con posiciones
+ * en píxeles de pantalla (pasan de 1024) y con `hash21`, y con el `mediump` que
+ * Pixi pone por defecto las estrellas y las celdas saldrían mal en un móvil. En
+ * escritorio las dos precisiones son la misma.
+ */
+function skyProgram(fragment, vertex) {
+    return new GlProgram({ fragment, vertex, name: 'daino-sky', preferredFragmentPrecision: 'highp' });
+}
+
+/**
+ * Crea el shader del cielo (lo pinta shaders/skyBuffer.js).
  *
  * @returns {{
- *     filter: Filter,
+ *     shader: Shader,
  *     fftBuffer: Uint8Array,
  *     fftSource: BufferImageSource,
  *     setUniforms: (u: { time?: number, debugMode?: number, horizon?: number, frame?: number[], cell?: number, band?: number[] }) => void,
+ *     setFrameRect: (x: number, y: number, w: number, h: number) => void,
  *     setFx: (amounts: { a: Float32Array, b: Float32Array, c: Float32Array, d: Float32Array }, colors: { warm: number[], cool: number[] }) => void,
  *     uploadFft: () => void,
  * }}
  */
-export function createAudioFilter() {
+export function createSkyShader() {
     const fftBuffer = new Uint8Array(FFT_BINS);
     const fftSource = new BufferImageSource({
         resource: fftBuffer,
@@ -47,12 +64,8 @@ export function createAudioFilter() {
         format: 'r8unorm',
     });
 
-    const filter = new Filter({
-        glProgram: new GlProgram({
-            fragment: fragmentSrc,
-            vertex: vertexSrc,
-            name: 'daino-audio-bg',
-        }),
+    const shader = new Shader({
+        glProgram: skyProgram(fragmentSrc, vertexSrc),
         resources: {
             audioUniforms: {
                 uShaderMode: { value: 0.0, type: 'f32' },  // 0=idle, 1=hay música
@@ -68,6 +81,9 @@ export function createAudioFilter() {
                 // en cualquier formato de pantalla.
                 uFrame:      { value: new Float32Array([1280, 720]), type: 'vec2<f32>' },
                 uCell:       { value: 4.0, type: 'f32' },
+                // Qué uv de pantalla cubre lo que se está pintando: una banda del
+                // búfer del cielo (systems/skyGrid.js, skyBand). Lo usa el vertex.
+                uFrameRect:  { value: new Float32Array([0, 0, 1, 1]), type: 'vec4<f32>' },
                 // Efectos (T03.1): cantidades por hueco (fx/skyAmounts.js) y sus dos
                 // colores. Ver background.frag.
                 uFxA:        { value: new Float32Array(4), type: 'vec4<f32>' },
@@ -126,7 +142,7 @@ export function createAudioFilter() {
     fftSource.update();
 
     function setUniforms({ time, debugMode, horizon, frame, cell, band }) {
-        const u = filter.resources.audioUniforms.uniforms;
+        const u = shader.resources.audioUniforms.uniforms;
         if (frame     !== undefined) {
             u.uFrame[0] = frame[0];
             u.uFrame[1] = frame[1];
@@ -138,6 +154,15 @@ export function createAudioFilter() {
         if (band      !== undefined) u.uFxBand.set(band);
     }
 
+    /** La uv de pantalla (esquina y lo que abarca) de lo que se va a pintar. */
+    function setFrameRect(x, y, w, h) {
+        const r = shader.resources.audioUniforms.uniforms.uFrameRect;
+        r[0] = x;
+        r[1] = y;
+        r[2] = w;
+        r[3] = h;
+    }
+
     /**
      * Las cantidades de los efectos del cielo y sus colores, cada fotograma
      * (fx/skyAmounts.js y el director de efectos). Copia: sin asignaciones.
@@ -146,7 +171,7 @@ export function createAudioFilter() {
      * @param {{ warm: ArrayLike<number>, cool: ArrayLike<number> }} colors
      */
     function setFx(amounts, colors) {
-        const u = filter.resources.audioUniforms.uniforms;
+        const u = shader.resources.audioUniforms.uniforms;
         u.uFxA.set(amounts.a);
         u.uFxB.set(amounts.b);
         u.uFxC.set(amounts.c);
@@ -162,7 +187,7 @@ export function createAudioFilter() {
      * @param {'idle' | 'reactive'} mode
      */
     function setMode(mode) {
-        const u = filter.resources.audioUniforms.uniforms;
+        const u = shader.resources.audioUniforms.uniforms;
         u.uShaderMode = mode === 'reactive' ? 1.0 : 0.0;
         if (mode === 'idle') {
             u.uFxA.fill(0);
@@ -182,7 +207,7 @@ export function createAudioFilter() {
      * @param {ReturnType<import('../scenes/skyModel.js').createSkyState>} s
      */
     function setSky(s) {
-        const u = filter.resources.skyUniforms.uniforms;
+        const u = shader.resources.skyUniforms.uniforms;
         u.uSkyTop.set(s.sky.top);
         u.uSkyMid.set(s.sky.mid);
         u.uSkyHorizon.set(s.sky.horizon);
@@ -211,7 +236,7 @@ export function createAudioFilter() {
      * @param {boolean} visible
      */
     function setSkyElement(slot, visible) {
-        const u = filter.resources.skyUniforms.uniforms;
+        const u = shader.resources.skyUniforms.uniforms;
         (slot < 4 ? u.uShow0 : u.uShow1)[slot % 4] = visible ? 1 : 0;
     }
 
@@ -228,23 +253,15 @@ export function createAudioFilter() {
     if (import.meta.hot) {
         import.meta.hot.accept('./background.frag', (mod) => {
             if (!mod) return;
-            filter.glProgram = new GlProgram({
-                fragment: mod.default,
-                vertex: vertexSrc,
-                name: 'daino-audio-bg',
-            });
+            shader.glProgram = skyProgram(mod.default, vertexSrc);
             console.info('[hmr] background.frag recargado en caliente');
         });
         import.meta.hot.accept('./background.vert', (mod) => {
             if (!mod) return;
-            filter.glProgram = new GlProgram({
-                fragment: fragmentSrc,
-                vertex: mod.default,
-                name: 'daino-audio-bg',
-            });
+            shader.glProgram = skyProgram(fragmentSrc, mod.default);
             console.info('[hmr] background.vert recargado en caliente');
         });
     }
 
-    return { filter, fftBuffer, fftSource, setUniforms, setFx, setMode, setSky, setSkyElement, uploadFft };
+    return { shader, fftBuffer, fftSource, setUniforms, setFrameRect, setFx, setMode, setSky, setSkyElement, uploadFft };
 }

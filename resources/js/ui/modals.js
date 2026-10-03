@@ -21,7 +21,7 @@ import {
     getVolume, setVolume,
     getFxLevel, setFxLevel,
     getSkin, setSkin,
-    getQuality, setQuality,
+    getQuality, setQuality, getAutoQuality,
     getAutoRetry, setAutoRetry,
     listKeys, clearAll,
 } from './settings.js';
@@ -33,6 +33,22 @@ import { formatPoints } from './catalogModel.js';
 import { rankingGhosts, rankingRow } from './rankingRow.js';
 
 const MODAL_ROOT_ID = 'modal-root';
+
+/** Nombres de los niveles de calidad (los de QUALITY_TIERS, game/RenderProfile.js). */
+const QUALITY_NAMES = Object.freeze({ high: 'Alta', medium: 'Media', low: 'Baja' });
+
+/**
+ * La ayuda de "Calidad gráfica": qué hace Auto y, si ya ha tenido que bajar en
+ * este equipo, dónde se ha quedado (T05.2: lo recuerda entre visitas).
+ */
+function qualityHint() {
+    const base = 'Auto mide los fotogramas mientras juegas y baja el detalle del cielo solo si hace falta. Elegir una la deja fija.';
+    const learned = getAutoQuality()?.state;
+    const name = QUALITY_NAMES[learned?.tier];
+    if (name === undefined) return base;
+    const pace = learned.pace === 'steady' ? ', a 30 fotogramas' : '';
+    return `${base} En este equipo Auto usa ahora ${name}${pace}; para que mida de nuevo, elige otra y vuelve a Auto.`;
+}
 
 /**
  * @param {string} id
@@ -298,7 +314,7 @@ export function openSettingsModal(opts = {}) {
             value: getQuality(),
             onChange: setQuality,
         }),
-        hint: 'Auto baja la calidad sola si detecta tirones. Elegir una la deja fija.',
+        hint: qualityHint(),
     }));
 
     // ----- Efectos visuales (T03.1): cuánto de lo que late con la música -----

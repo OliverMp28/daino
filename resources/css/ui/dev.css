@@ -211,6 +211,33 @@
 
 .daino-devtools__why:empty { display: none; }
 
+/* En un móvil (`?perf=1`, ui/perfReadout.js) el botón y las filas, a la medida de un dedo. */
+@media (pointer: coarse) {
+    .daino-devtools__handle { width: 2.75rem; height: 2.75rem; }
+    .daino-devtools__row { min-height: 2.25rem; }
+    .daino-devtools__row input[type="checkbox"] { width: 1.3rem; height: 1.3rem; }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .daino-devtools__handle { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Lectura de rendimiento (`?perf=1`, ui/perfReadout.js): una línea en la esquina
+ * inferior derecha, para leerla en un móvil. No recibe toques ni tapa el juego.
+ * ------------------------------------------------------------------------- */
+
+.daino-perf {
+    position: fixed;
+    right: max(0.5rem, var(--safe-right));
+    bottom: max(0.4rem, var(--safe-bottom));
+    z-index: 46;
+    margin: 0;
+    padding: 0.2rem 0.45rem;
+    max-width: calc(100vw - 1rem);
+    background: color-mix(in oklch, var(--d-ground) 85%, transparent);
+    color: var(--d-bone);
+    font: 600 0.72rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
 }

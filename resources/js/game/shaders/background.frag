@@ -48,13 +48,11 @@
 // El FFT (sampler2D uFFT, 256x1) ya solo lo lee el modo de depuración ?debug=fft:
 // el espectro se pinta en el paisaje (T03.2), no aquí.
 
-in vec2 vTextureCoord; // uv sobre la TEXTURA del pool (¡su 1.0 cae fuera de pantalla!)
-in vec2 vFrameCoord;   // uv [0,1] sobre el FRAME VISIBLE — usar este para todo
-                       // lo anclado a pantalla (lo emite background.vert).
+in vec2 vFrameCoord;   // uv [0,1] sobre la PANTALLA (lo emite background.vert). El
+                       // shader se pinta en el búfer del cielo (T05.1), que
+                       // sobra una fracción de texel por el borde: ahí pasa de 1.
 out vec4 finalColor;
 
-uniform sampler2D uTexture; // input del filtro (lo inyecta Pixi). Lo ignoramos
-                            // a propósito: pintamos el fondo desde cero.
 uniform sampler2D uFFT;     // textura 256x1, formato r8unorm.
 
 // ---- Efectos (audioUniforms) ----
@@ -173,7 +171,7 @@ vec2 crater(vec2 m, vec2 c, float r) {
 }
 
 void main(void) {
-    // uv en [0,1] SOBRE EL FRAME VISIBLE (no sobre la textura del pool).
+    // uv en [0,1] sobre la pantalla.
     vec2 uv = vFrameCoord;
 
     // ---------- MODOS DEBUG (activables con ?debug=N en la URL) ----------

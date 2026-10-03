@@ -25,6 +25,10 @@
 //   apagarlo, verlo solo, subirle o bajarle la intensidad, y por qué no se ve
 //   cuando no se ve.
 //
+//   Rendimiento (T05, devPerfPanel.js) — los fotogramas, los tardíos y el JS de
+//   cada uno, la calidad en uso y el cielo: su detalle y su ritmo, para
+//   compararlos jugando.
+//
 // El panel no se engancha a la sesión ni a AppController: lee `window.__daino`
 // (engine y sesión) cuando lo necesita, así que funciona a mitad de partida y
 // sobrevive a un reintento o a cambiar de nivel.
@@ -36,6 +40,7 @@ import { SCENES, DEFAULT_SCENE, resolveScene, sceneCycle, sceneElements } from '
 import { SKY_PHASES } from '../game/scenes/skyModel.js';
 import { planSky } from '../game/scenes/skyClock.js';
 import { mountFxPanel } from './devFxPanel.js';
+import { mountPerfPanel } from './devPerfPanel.js';
 
 const PANEL_ID = 'daino-devtools';
 
@@ -281,6 +286,9 @@ export function mountDevTools() {
     sceneSelect.addEventListener('change', () => renderStory(sceneSelect.value));
     panel.appendChild(storyBox);
 
+    // ---------- Rendimiento (T05) ----------
+    const perfPanel = mountPerfPanel(panel, { el });
+
     // ---------- Efectos (T03.1) ----------
     const fxPanel = mountFxPanel(panel, { el, checkRow });
 
@@ -314,6 +322,7 @@ export function mountDevTools() {
         } else {
             planLine.textContent = 'Sin nivel en curso';
         }
+        perfPanel.refresh();
         fxPanel.refresh();
     }
 

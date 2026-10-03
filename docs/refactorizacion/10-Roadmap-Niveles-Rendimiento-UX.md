@@ -6,7 +6,7 @@
 >
 > **Autoridad.** Los docs 04, 05, 07 y `vout-integration/integration-guide.md` siguen por encima de este. Este doc **modifica el doc 06 §4.1** (ver Ola 2) y **sustituye** la descripción de generación de niveles del doc 08 § Bloque 5. Todo lo demás del 06 y del 08 sigue vigente.
 >
-> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia), y la **Ola 6c** ✅ (anillos de salto, vuelo en frases encadenadas con la altura de la melodía, efectos nuevos del chart y exigencia por dificultad igual en cualquier canción). La Ola 7 (ediciones del autor y editor) queda **aplazada como futura actualización**.
+> **Estado:** Olas 0, 1, 2, 3, 4 y 5 ✅ completas (Sep 2026), con los afinados tras el playtest de la Ola 5 (publicación, analizador, velocidad, y tamaños de pantalla con reintentos), la **Ola 6a** ✅ (bases de los modos de movimiento + antigravedad, con la progresión de velocidad más marcada) y la **Ola 6b** ✅ (reparto de modos por el carácter de cada tramo y vuelo), con sus ajustes tras el playtest (tramos en los cambios que se oyen, clímax desde su drop y modos que entran y salen con la música; y la dificultad que se siente: más densidad, menos silencios de juego y más velocidad; y la dificultad que se juega: acciones solo sobre golpes que suenan y acentos que exigen precisión, calibrados con un jugador de referencia), y la **Ola 6c** ✅ (anillos de salto, vuelo en frases encadenadas con la altura de la melodía, efectos nuevos del chart y exigencia por dificultad igual en cualquier canción). La Ola 7 (ediciones del autor y editor) queda **aplazada como futura actualización**. El trabajo **T05** (rendimiento en cualquier equipo, Oct 2026) vive al final de la sección 3: T05.1-T05.3 ✅, T05.4 a falta de la prueba en un móvil real.
 
 ---
 
@@ -269,6 +269,8 @@ Equivalencia numérica de la FFT verificada de tres formas: idéntica **bit a bi
 ---
 
 ### Ola 1 — Perfiles de render por estado ✅
+
+> **Nota (T05, Oct 2026).** La tabla de estados sigue viva, pero su palanca no: `filter.resolution` no abarata el shader del fondo (solo su textura de entrada) y el degradado automático no llegaba a actuar. Lo que rige hoy está en la **T05**, al final de esta sección.
 
 **Objetivo.** Que cada estado de la app pague solo lo que necesita, manteniendo una única escena continua.
 
@@ -1832,6 +1834,153 @@ Dónde está la exigencia de What's Up Danger en Extremo (por décimas de canci�
 
 ---
 
+### T05 — Rendimiento en cualquier equipo (Oct 2026)
+
+> Trabajo **T05** del índice (`TRABAJOS.md`). Vive aquí porque es la continuación de la Ola 1 (presupuestos de render por estado): conserva su tabla de estados y **sustituye** su palanca (`filter.resolution`) y su degradado automático, que medidos no hacían nada.
+
+**De dónde sale.** El user preguntó si "59-60 FPS" era ir lento, si las animaciones del escenario pesan y si en un móvil o en un equipo modesto habría tirones; pidió analizarlo bien y soluciones realmente viables, sin afear el escenario. **59-60 FPS es el máximo de una pantalla de 60 Hz.** Lo que había que explicar eran los 56 y los 30 de otras partidas.
+
+#### Lo medido antes de tocar nada
+
+Intel UHD 620 (gráfica integrada de portátil), 1920×1080, Chrome con la GPU real.
+
+| Qué | Resultado |
+|---|---|
+| What's Up Danger entera (216 s) | 60,0 FPS; p99 18,6 ms; 4 fotogramas > 25 ms de 12 777 |
+| GPU por fotograma en partida | ~8 ms de 16,7 |
+| …de los cuales el shader del cielo | **7,5 ms (94 %)** |
+| …y TODO lo demás (capas del escenario, lluvia, nieve, mar, sprites, motas) | **0,5 ms** |
+| Menú | 34 % de la gráfica, siempre |
+| 2560×1440 | 60 FPS, 11,4 ms de GPU (al límite) |
+| 3840×2160 (vale como "una gráfica 4 veces más floja") | **24-33 FPS**; sin el cielo, 60 |
+| JS por fotograma / hilo principal | 1,7 ms / 3,7-4,2 ms |
+| Procesador 4 veces más lento (móvil modesto) | 50 FPS a trompicones; 6 veces: 12-30 FPS |
+| Tirones en partida | 100 ms y 50 ms al aparecer el primer túnel (2:08 de What's Up Danger) |
+
+#### Diagnóstico
+
+1. **Las animaciones del escenario no pesan.** Pesa el cielo: un shader que se calcula para cada píxel de la pantalla, 60 veces por segundo. Los efectos de la música, nada medible.
+2. **Los mandos que debían abaratarlo no hacían nada.** `filter.resolution` (el 0.6 del menú, el tope de 1.5 para móviles, la resolución de Media y Baja) solo cambia la textura de ENTRADA del filtro, que este shader no lee: con un solo filtro, Pixi v8 lo pinta directo en la superficie de destino, a su resolución (`FilterSystem`; medido: a 0.25 cuesta lo mismo). En un móvil de DPR 3 el cielo se pintaba a 3×. *(La medida de la Ola 1 —"a 0.6, un 43 % menos"— era cierta para el shader de entonces, de 2,8 ms: lo que ahorraba era rellenar esa textura de entrada, no el shader. Con el shader v3 esa parte es despreciable.)*
+3. **La calidad automática no reaccionaba.** Contaba +1 por fotograma lento y −1 por rápido y bajaba al llegar a 90: a 25 FPS con fotogramas alternos se quedó en "Alta" 15 s. Y aunque bajase, Media y Baja no abarataban el cielo.
+4. **Con el procesador lento el límite es el hilo principal**, no la gráfica: ahí ningún ajuste gráfico ayuda, y el juego iba a 40-50 FPS irregulares.
+5. **Lo que se pinta por primera vez a mitad de canción da un tirón** (compilar su programa y triangular su forma en ese momento).
+
+#### Decidido con el user
+
+- **Cuando un equipo no llega, baja primero el detalle del cielo**; los 30 FPS estables son el último escalón (o el primero solo si lo que falta es procesador).
+- Tiene un **móvil Android** para probar: la T05.4 se cierra ahí. iPhone y Safari quedan sin probar.
+
+#### T05.1 — El cielo en su búfer ✅
+
+- **`game/systems/skyGrid.js`** (puro). La resolución del cielo no se mide en píxeles de pantalla sino en **texeles por celda del arte**: `skyBufferFor(vista, texeles)`. Como toda pantalla apaisada enseña casi el mismo mundo (`worldView.js`), el cielo cuesta lo mismo en un portátil, en un 4K y en un móvil. Nunca más que el nativo de la pantalla. El texel mide exactamente celda/N: lo que el shader dibuja en celdas (estrellas, lucero, fugaces, aurora, la luna a media celda) sale exacto; lo suave (degradado, resplandores, el disco del sol) queda en escalones de un texel.
+
+  | Calidad | Texeles por celda | Cielo en 1080p (nativo 7) | En 4K (nativo 14) | En un móvil 2532×1170 (nativo 8) |
+  |---|---|---|---|---|
+  | Alta | 6 | 1646 × 926 (73 % de los píxeles) | igual tamaño (18 %) | 56 % |
+  | Media (salida en táctil) | 4 | 1098 × 618 (33 %) | igual (8 %) | 25 % |
+  | Baja | 2 | 549 × 309 (8 %) | igual (2 %) | 6 % |
+
+- **`game/shaders/skyBuffer.js`**. El cielo se pinta en una textura propia y la escena la enseña ampliada sin suavizar (`nearest`). **Repartido en el tiempo por bandas**: el cielo no se desplaza con el mundo, así que cada imagen se pinta en k fotogramas, una franja horizontal en cada uno, sobre una textura de trabajo, con el estado del cielo del primero de ellos; al estar entera se **copia** a la que se enseña (`copyToTexture`). Todos los fotogramas cuestan lo mismo y lo que se ve es siempre una imagen completa de un solo instante. La banda se pinta a mano (`renderTarget.bind` + `encoder.draw`), sin pasar por la escena de Pixi.
+- **`game/shaders/skyShader.js`** (antes `audioFilter.js`): ya no es un `Filter`, es un `Shader`. Programa con **`highp` en el fragment** (Pixi pone `mediump` por defecto: en escritorio son la misma, en un móvil las estrellas y las celdas saldrían mal). `background.vert` reescrito para el rectángulo de la banda (`uFrameRect`); **las fórmulas de `background.frag` no cambian** (solo se quitan `vTextureCoord` y `uTexture`, que no usaba).
+- **`game/RenderProfile.js`**: `skyHz` por estado (imágenes del cielo por segundo: partida 30, resultados 15, menú 10, pausa 5) y `skyTexels` por calidad. Fuera `filterResolution`, `MAX_FILTER_DPR`, `resolutionScale`, `particleScale` y `fpsCap`.
+
+**Cómo se ve.** Comparado píxel a píxel contra la resolución completa, en las 7 escenas a 6 horas (píxeles que cambian más de 24/255): con 6 texeles, el **0,06 %** como mucho; con 4, el 0,09 %; con 2, el 0,13 %. A la vista: Alta y Media, iguales que antes; en Baja el sol queda pixelado, como la luna.
+
+#### T05.2 — Calidad automática que mide de verdad, y ritmo propio ✅
+
+- **`game/systems/framePacer.js`** (puro). Sustituye a `ticker.maxFPS`, que compara tiempos truncados a milisegundos y da fotogramas desiguales en pantallas que no son múltiplo del tope (a 144 Hz con tope 60: 13,9 y 20,8 ms alternos). Aquí se pinta **uno de cada k fotogramas de la pantalla**, siempre parejos, decidido por tiempo. Lo que ofrece la pantalla se mide con los propios `requestAnimationFrame`, solo en los estados "de confianza" (menú, resultados). El engine es dueño del bucle (`autoStart: false`, `app.ticker.update(now)`).
+- **`game/systems/frameGovernor.js`** (puro). Un fotograma es **tardío** si su intervalo pasa de 1,5 veces el previsto (vale a 60, 90, 120 y 144 Hz). En ventanas de 2 s: con un 12 % de tardíos dos ventanas seguidas, o un 30 % en una, baja un escalón. No cuenta el arranque del nivel, los cambios de estado, un cambio de tamaño ni una pestaña oculta. Reglas en `GOVERNOR_RULES`.
+- **La escalera**: en una pantalla de ≥ 100 Hz, la mitad del ritmo → cielo a 4 → cielo a 2 → **30 FPS estables**. Si lo que falta es **procesador** (el JS del fotograma pasa del 55 % del intervalo en la mitad de los fotogramas), salta directo al ritmo: bajar el cielo no serviría.
+- **Vuelve a subir, pero nunca en mitad de una partida**: al empezar un intento, si el anterior fue limpio, prueba un escalón más; si vuelve a fallar, se queda toda la sesión. Lo aprendido se guarda (`daino:quality:auto`) para la próxima visita. Elegir "Auto" en AJUSTES lo borra y empieza de cero.
+- **En una pantalla táctil se sale de Media** (más píxeles y menos gráfica): a la vista es igual que Alta.
+- **La calidad ya no quita efectos ni partículas**: medido, no ahorraban nada. Los efectos solo los reduce el jugador ("Efectos visuales"). La aurora ya no se apaga en Baja.
+- AJUSTES conserva Auto · Alta · Media · Baja; la ayuda dice qué está usando Auto.
+
+#### T05.3 — Sin tirones a mitad de canción ✅
+
+- **`game/systems/prewarm.js`**: bajo el fundido a negro del arranque se enseña un momento lo que está oculto (túnel del propulsor, portales y techo, una pieza de cada tipo de obstáculo, la mochila y la llama del Dino), se pinta la escena una vez en una textura de 32 × 32 que nadie ve y se vuelve a ocultar. `spawner.prewarm()` crea esa pieza por tipo en el pool.
+- El recolector de texturas de Pixi (`gcMaxUnusedTime`) pasa de 1 a 12 minutos: si no, deshace el precalentado antes de que la canción llegue a usarlo.
+- Medido de forma determinista (qué se prepara a mitad de canción, What's Up Danger hasta el segundo 136):
+
+  | | Antes | Ahora |
+  |---|---|---|
+  | Programas compilados a mitad de canción | 1 (130,2 s: el túnel) | **0** |
+  | Formas trianguladas | 3 (el destello del drop; el túnel, dos veces) | 1 (el rectángulo del destello del drop: 4 vértices) |
+  | Texturas subidas | 43 | 21 (cambios de pose de unas pocas celdas) |
+
+#### T05.4 — Móviles de verdad ⬜ (hecho lo que se puede desde aquí)
+
+- **Lectura en pantalla con `?perf=1`** (`ui/perfReadout.js`, en un chunk aparte de 0,27 KB que solo se descarga con ese parámetro; también en producción): "60 FPS · 0,4 % tardíos · JS 1,8 ms · Alta · cielo 6 · 60 Hz". Y una fila **"Rendimiento"** en el panel de resultados (en desarrollo o con `?perf=1`), como la "Precisión". `ui/perfModel.js` (puro) da los textos.
+- **Panel dev "Rendimiento"** (`ui/devPerfPanel.js`): la misma lectura en vivo, el tamaño del búfer y sus bandas, y selectores de Calidad, Cielo (nativo, 6, 4, 2) y Ritmo del cielo (cada fotograma, 30, 15, 10, quieto) para compararlos JUGANDO. "Nativo" + "cada fotograma" es como se pintaba antes.
+- **Falta**: la prueba en el Android del user (build de producción, `http://<IP del PC>:8090/?perf=1`, un nivel fácil y uno difícil en horizontal) y, con sus números, ajustar `GOVERNOR_RULES` y el nivel de salida en táctil.
+
+#### Lo medido después
+
+Antes y después en la misma máquina y seguidos (Time, Nieve de noche; "antes" = el commit anterior servido a la misma página). Calidad fija en Alta salvo donde se dice.
+
+| | Antes | Ahora |
+|---|---|---|
+| Menú, 1080p | 34,8 % de la gráfica | **15,5 %** |
+| Partida, 1080p | 60 FPS · 74 % · 11,1 ms de GPU | 60 FPS · 50-52 % · 7,0 ms (Media: 34 %; Baja: 22 %) |
+| Menú, lienzo 4K | 75 % | 35 % |
+| Partida, lienzo 4K | **33 FPS** · 97 % · 61-98 tardíos por medida | **60 FPS** · 71 % · 0-2 tardíos |
+| Móvil 2402×1082, procesador ×2 más lento | 60 FPS · 72-74 % | 60 FPS · 36-39 % (Media, la salida en táctil) |
+| Móvil, procesador ×3 más lento | 28-30 FPS irregulares (p95 50 ms) | 29,5 FPS parejos (p95 33,4 ms) · 27 % |
+| Con la máquina ocupada (otra pasada), 1080p | 52-54 FPS, 19-137 tardíos por medida | 58-60 FPS, 0-4 tardíos |
+| Con la máquina ocupada, lienzo 4K | 15 FPS | 53-58 FPS (en Alta fija; en Auto baja a Media) |
+
+**El JS por fotograma no sube.** Con el procesador a tope (sin límite de fotogramas, lienzo pequeño): 0,78-0,88 ms antes, 0,74-0,78 ahora; llamadas a WebGL por fotograma, de 69 a 63. A 60 FPS la lectura de "JS por fotograma" sale algo MÁS alta que antes (2,5 frente a 2,2 ms): no es más trabajo, es que el procesador baja su reloj cuando el equipo trabaja menos (el mismo bucle fijo tarda 0,4 ms con el procesador a tope y 0,8-1,1 ms a 60 FPS).
+
+**Producción.** Principal 107,1 KB gzip (+3,7), Pixi 140,75 KB, `perfReadout` 0,27 KB aparte. Jugado en el navegador: sin errores, sin herramientas de desarrollo, la lectura solo con `?perf=1`. **Tests: 487 JS** (36 nuevos: `sky-grid`, `frame-pacer`, `frame-governor`, `perf-model`, `prewarm`; pantallas compartidas en `helpers/screens.mjs`).
+
+#### Lo que se probó y no valió
+
+- **Repintar el cielo entero un fotograma sí y otro no**: de media costaba la mitad, pero la gráfica baja su reloj cuando la carga media baja y el fotograma caro tardaba más que antes (de 8 ms a 13-15).
+- **Enseñar las bandas según se pintan**: en un cambio brusco (el golpe del bombeo) una banda se entera un fotograma antes: una raya a media pantalla.
+- **Filas alternas (entrelazado)**: lo que se mueve con el borde nítido (el filo de la aurora, una fugaz) sale con dientes de peine. Y pintar filas sueltas no ahorra: la gráfica calcula en bloques de 2 × 2.
+- **Dos texturas que se turnan en el sprite**: cambiarle la textura a un sprite obliga a Pixi a rehacer las instrucciones de dibujo de la escena entera (+0,6 ms de JS por fotograma). Por eso la imagen terminada se copia a una textura que no cambia.
+- **Pintar el búfer con `renderer.render()`**: medio milisegundo de JS por llamada.
+- **Bajar la resolución de todo el lienzo**: los sprites cuestan 0,5 ms y a media celda se verían desiguales.
+- **Optimizar capas del escenario** (lluvia, nieve, mar, isla, ventanas): ninguna se nota en la medida.
+- **Partir el shader en dos pases**, **crear el AudioContext antes del primer gesto**, **micro-optimizar el JS** (1,7 ms por fotograma): descartados antes de empezar (plan).
+
+#### Decisiones (vinculantes)
+
+- **Lo que se abarata es el cielo, y solo el cielo.** Su resolución se mide en texeles por celda del arte y su ritmo en imágenes por segundo; sprites, escenario y efectos no se tocan.
+- **Cuando un equipo no llega, baja primero el detalle del cielo**; los fotogramas, lo último (o lo primero solo si lo que falta es procesador).
+- **La calidad no quita efectos**: solo los reduce el jugador.
+- **La calidad automática mide fotogramas tardíos, no infiere**, y **no cambia en mitad de una partida salvo para bajar**; subir se prueba al empezar un intento.
+- **Fotogramas parejos**: se pinta uno de cada k de los de la pantalla, nunca un tope en milisegundos.
+- **El cielo se enseña siempre como una imagen completa de un solo instante.**
+- **Nada se prepara por primera vez a mitad de canción**: lo que un nivel vaya a enseñar se pinta una vez bajo el fundido del arranque. Una capa o un objeto nuevo que aparezca tarde se añade a lo que `GameSession.start()` le pasa a `prewarm`.
+- **Un cambio de rendimiento se mide antes y después en la misma máquina, seguidos**, y en el límite (lienzo 4K, procesador frenado), no solo donde sobra.
+
+#### Límites, dichos claro
+
+- **Los móviles están emulados** (más píxeles, procesador frenado) hasta que el user pruebe su Android. iPhone y Safari no se han probado.
+- **El ritmo a la mitad en pantallas de 120/144 Hz** solo está probado con tests.
+- **El cielo a 30 imágenes por segundo se da por invisible**; si alguien nota algo, es un número (`RENDER_PROFILES.PLAYING.skyHz`), y el panel dev lo deja comparar jugando.
+- **En 1080p con calidad Alta la ganancia en % de gráfica es moderada** (74 → 51 %): a 6 texeles el búfer tiene el 73 % de los píxeles. La ganancia grande está donde hacía falta: pantallas con más píxeles, móviles (Media) y el menú.
+- **Un equipo al que le falta procesador se queda en 30 FPS parejos**; uno 4 veces más lento que este portátil no llega ni a eso, ni antes ni ahora.
+- **Los tirones de What's Up Danger no se pudieron volver a cronometrar con limpieza** (la máquina estaba en uso y daba tirones periódicos con el código viejo y con el nuevo): lo comprobado es que su causa ya no ocurre (la tabla de la T05.3).
+
+#### Cómo se mide (para la próxima vez)
+
+- Chrome sin ventana con la gráfica real (`--enable-gpu --use-angle=d3d11 --ignore-gpu-blocklist`; comprobar con `WEBGL_debug_renderer_info`) y un cliente CDP propio.
+- **Milisegundos de GPU por fotograma**: `EXT_disjoint_timer_query_webgl2`. **% de la gráfica de un proceso**: `Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'` (PowerShell) con el pid del proceso de GPU de ese Chrome.
+- **Antes/después en la misma página**: `Fetch.enable` por CDP y servir a los módulos cambiados su versión de `git show HEAD:`.
+- **Los milisegundos engañan cuando sobra potencia**: la gráfica y el procesador bajan su reloj. Lo que decide es el comportamiento al límite y el % de uso. Para comparar JS entre dos pasadas, una **sonda fija** (el mismo bucle en cada fotograma, cronometrado) o saturar el procesador (`--disable-gpu-vsync --disable-frame-rate-limit` con un lienzo pequeño).
+- **Lo determinista primero**: contar llamadas a WebGL por fotograma, o programas, formas y texturas que se preparan a mitad de canción, no depende de lo cargada que esté la máquina.
+
+#### Casillas
+
+- [x] **T05.1** El cielo en su búfer, a texeles por celda y repartido por bandas.
+- [x] **T05.2** Calidad automática por fotogramas tardíos, escalera con el cielo primero, ritmo propio y memoria.
+- [x] **T05.3** Precalentado bajo el fundido del arranque.
+- [ ] **T05.4** Móviles de verdad: lectura `?perf=1` y fila "Rendimiento" hechas; **falta la prueba en el Android del user** y calibrar con ella.
+
+---
+
 ## 4. Orden y dependencias
 
 ```
@@ -1853,6 +2002,8 @@ Ola 3 (chart + sincronía) ◀─────────┘
 - **Olas 4–7** son el trabajo grande. Cada una es una o varias sesiones y todas presuponen la 3.
 
 Si hay que elegir una sola cosa: **Ola 3**. Es la que cambia cómo se siente el juego.
+
+La **T05** (rendimiento) no depende de ninguna ola del motor de niveles: toca el render (engine, cielo, ritmo de fotogramas) y deja intactos charter, física y formato de chart.
 
 ---
 

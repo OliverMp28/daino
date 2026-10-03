@@ -58,6 +58,7 @@ import {
 } from './settings.js';
 import { openRunPanel, closeRunPanel } from './runPanel.js';
 import { RUN_ACTION, runPanelView, createAttemptCounter } from './runPanelModel.js';
+import { perfWanted } from './perfModel.js';
 import { isTouchPortrait, shouldSuggestRotation, waitForLandscape } from './orientation.js';
 
 const STATE = Object.freeze({
@@ -193,11 +194,12 @@ export function start(cfg) {
     };
     window.addEventListener('resize', onViewportChange);
 
-    // Calidad gráfica persistida (Ola 1). 'auto' deja que el engine degrade
-    // solo si mide frames lentos sostenidos durante la partida.
+    // Calidad gráfica persistida (Ola 1; T05.2). 'auto' deja que el engine baje
+    // solo si mide fotogramas tardíos en la partida, y recuerda lo aprendido.
+    // Elegir "Auto" en AJUSTES le hace empezar de cero (`fresh`).
     engineApi.setQualityTier?.(getQuality());
     window.addEventListener('daino:qualitychange', (ev) => {
-        engineApi.setQualityTier?.(ev.detail?.quality ?? getQuality());
+        engineApi.setQualityTier?.(ev.detail?.quality ?? getQuality(), { fresh: true });
     });
 
     // Skin del dino: la persistida al dino ambiente del menú, y en vivo al
@@ -442,6 +444,9 @@ function startAttempt() {
     // ciclo de la escena vigente. En un reintento es la misma (no hace nada).
     engineApi.setScene(run.scene);
     engineApi.setFxIdentity?.(run.fx);
+    // Empieza un intento: bajo el fundido, la calidad automática puede probar un
+    // escalón más si el intento anterior fue limpio (T05.2; nunca a mitad de partida).
+    engineApi.beginAttempt?.();
     // La sesión arranca ella misma la reproducción cuando termina de
     // montarse: es la única dueña del reloj de la partida.
     activeSession = new GameSession({
@@ -604,6 +609,9 @@ function handleGameState(ev) {
         sections: run.sections,
         // En desarrollo, la precisión de la partida: con ella se calibra la dificultad.
         timing: import.meta.env.DEV ? (detail.timing ?? null) : null,
+        // El rendimiento del intento (T05.4): en desarrollo, o con `?perf=1` (para
+        // quien prueba en un móvil y dice qué le sale).
+        perf: perfWanted(window.location.search, import.meta.env.DEV) ? (detail.perf ?? null) : null,
     }), {
         onAction: handleRunAction,
         autoRetry: { checked: getAutoRetry(), onChange: setAutoRetry },

@@ -17,6 +17,7 @@ const KEY_REDUCE_EFFECTS = 'daino:reduce_effects';
 const KEY_FX_LEVEL = 'daino:fx_level';
 const KEY_SKIN = 'daino:skin';
 const KEY_QUALITY = 'daino:quality';
+const KEY_QUALITY_AUTO = 'daino:quality:auto';
 const KEY_AUTO_RETRY = 'daino:auto_retry';
 const KEY_RUNS_STARTED = 'daino:runs_started';
 /** Prefijo por modo de movimiento: `daino:mode_seen:flip` (Ola 6a). */
@@ -131,6 +132,30 @@ export function setQuality(quality) {
     const safe = QUALITY_VALUES.includes(quality) ? quality : 'auto';
     localStorage.setItem(KEY_QUALITY, safe);
     window.dispatchEvent(new CustomEvent('daino:qualitychange', { detail: { quality: safe } }));
+}
+
+/**
+ * Lo que la calidad automática aprendió de este equipo (T05.2,
+ * game/systems/frameGovernor.js: `memory()`): el nivel y el ritmo en los que se
+ * quedó, y los escalones por los que bajó. Así la visita siguiente no repite los
+ * segundos de tirones hasta volver a encontrarlo. Se valida al usarlo, no aquí.
+ *
+ * @returns {object | null}
+ */
+export function getAutoQuality() {
+    const raw = safeGet(KEY_QUALITY_AUTO);
+    if (raw === null) return null;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+/** @param {object | null} memory  `null` lo olvida. */
+export function setAutoQuality(memory) {
+    if (memory === null) safeRemove(KEY_QUALITY_AUTO);
+    else safeSet(KEY_QUALITY_AUTO, JSON.stringify(memory));
 }
 
 /**

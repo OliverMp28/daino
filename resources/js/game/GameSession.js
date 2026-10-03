@@ -55,6 +55,7 @@
 import { Dino } from './entities/Dino.js';
 import { Obstacle } from './entities/Obstacle.js';
 import { createSpawner } from './systems/spawner.js';
+import { prewarm } from './systems/prewarm.js';
 import { createBeatClock } from './systems/beatClock.js';
 import { createSongDirector } from './systems/songDirector.js';
 import { createSpeedCues } from './systems/speedCues.js';
@@ -358,6 +359,16 @@ export class GameSession {
         };
         window.addEventListener('audio:pause', this._pauseHandler);
         window.addEventListener('audio:resume', this._resumeHandler);
+
+        // Precalentado (T05.3): esto corre bajo el fundido a negro. Lo que el nivel
+        // enseñará más tarde —un obstáculo de cada tipo, los portales, los muros del
+        // propulsor, la mochila y la llama del Dino— se pinta ahora una vez en una
+        // textura que nadie ve: su primera vez (texturas, geometría, programas) no
+        // cae a mitad de canción.
+        const app = this.engine.app;
+        if (app?.renderer && !this.engine.reducedMotion) {
+            prewarm(app.renderer, app.stage, [this._tunnel.container, this._gates.container, this.dino, ...this.spawner.prewarm()]);
+        }
 
         // Ticker.
         this._tickFn = (t) => this._tick(t);
@@ -1132,6 +1143,8 @@ export class GameSession {
                 reachedSec: Math.min(reached, this._playEndSec),
                 attempt: this.attempt,
                 timing,
+                // Rendimiento del intento (T05.4): fotogramas, tardíos, JS y calidad.
+                perf: this.engine.getPerf?.() ?? null,
             },
         }));
 

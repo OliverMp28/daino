@@ -330,7 +330,7 @@ test('el shader pinta lo que dicen los números: color vivo, cruce de cortinas, 
     assert.match(code, /float fxSkyBottom = uFxBand\.x - uFxBand\.y;/);
 
     // Los relojes llegan en uFxD.
-    const filter = readFileSync(path.join(ROOT, 'resources/js/game/shaders/audioFilter.js'), 'utf8');
+    const filter = readFileSync(path.join(ROOT, 'resources/js/game/shaders/skyShader.js'), 'utf8');
     assert.match(frag, /uniform vec4\s+uFxD;/);
     assert.ok(filter.includes('uFxD:') && filter.includes('u.uFxD.set(amounts.d)'));
 });
