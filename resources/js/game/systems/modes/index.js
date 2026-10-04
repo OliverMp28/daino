@@ -26,6 +26,11 @@
 // @property {(body: object, input: string) => string | null} input
 //           Aplica una entrada cruda ('jump', 'jumpEnd', 'duckStart', 'duckEnd').
 //           Devuelve el gesto que produjo ('jump', 'duck', 'flip') o null.
+// @property {boolean} [tapJump]
+//           Opcional: el modo distingue 'jumpTap', el salto de quien no puede decir
+//           cuánto lo mantiene (el control facial de Vout). Sin él, le llega como
+//           'jump' (physics.applyInput). Correr lo declara: ahí mantener alarga el
+//           salto, y un 'jumpTap' da siempre el arco del nivel.
 // @property {(body: object, out: object) => object} hitbox  La caja que envuelve al cuerpo.
 // @property {(body: object) => number} [figure]
 //           Opcional: qué parte de esa caja es cuerpo (geometry.FIGURE). Sin él, la caja entera.

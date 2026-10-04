@@ -70,8 +70,11 @@
 }
 
 /* El foco es el marco, en el color de lo tuyo y el doble de grueso. Dentro del
-   botón: sus esquinas en escalón recortarían un contorno por fuera. */
-.daino-btn:focus-visible {
+   botón: sus esquinas en escalón recortarían un contorno por fuera.
+   `[data-pointed]` es lo que señala quien juega con la cara dentro del portal de
+   Vout (iframe/remote.js): se ve igual que el foco, aquí y en las demás piezas. */
+.daino-btn:focus-visible,
+.daino-btn[data-pointed] {
     outline: none;
     border-color: var(--d-spike);
     box-shadow: inset 0 0 0 var(--u2) var(--d-spike);
@@ -96,7 +99,8 @@
     --btn-line: var(--d-beat-lit);
 }
 
-.daino-btn--primary:focus-visible {
+.daino-btn--primary:focus-visible,
+.daino-btn--primary[data-pointed] {
     border-color: var(--d-bone);
     box-shadow: inset 0 0 0 var(--u2) var(--d-bone);
 }
@@ -115,7 +119,8 @@
     --btn-line: #ffffff;
 }
 
-.daino-btn--strong:focus-visible {
+.daino-btn--strong:focus-visible,
+.daino-btn--strong[data-pointed] {
     border-color: var(--d-spike);
     box-shadow: inset 0 0 0 var(--u2) var(--d-spike);
 }
@@ -285,12 +290,15 @@ kbd,
     background: var(--d-bone);
 }
 
-.daino-range:focus-visible {
+.daino-range:focus-visible,
+.daino-range[data-pointed] {
     outline: none;
 }
 
-.daino-range:focus-visible::-webkit-slider-thumb { background: var(--d-spike); }
-.daino-range:focus-visible::-moz-range-thumb { background: var(--d-spike); }
+.daino-range:focus-visible::-webkit-slider-thumb,
+.daino-range[data-pointed]::-webkit-slider-thumb { background: var(--d-spike); }
+.daino-range:focus-visible::-moz-range-thumb,
+.daino-range[data-pointed]::-moz-range-thumb { background: var(--d-spike); }
 
 /* Casilla: un cuadro que se llena. */
 .daino-check {
@@ -313,7 +321,8 @@ kbd,
     box-shadow: inset 0 0 0 var(--u2) var(--d-ink);
 }
 
-.daino-check:focus-visible {
+.daino-check:focus-visible,
+.daino-check[data-pointed] {
     outline: var(--u2) solid var(--d-spike);
     outline-offset: var(--u2);
 }
@@ -355,7 +364,8 @@ kbd,
     color: var(--d-spike);
 }
 
-.daino-seg__option:focus-visible {
+.daino-seg__option:focus-visible,
+.daino-seg__option[data-pointed] {
     outline: none;
     box-shadow: inset 0 0 0 var(--u2) var(--d-spike);
 }

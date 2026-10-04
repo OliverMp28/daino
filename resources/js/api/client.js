@@ -1,8 +1,8 @@
 // API client — wrapper sobre fetch con manejo de Bearer + refresh + bridge.
 //
 // Responsabilidades:
-//   - Hidratar identidad al boot: standalone → GET /api/me/token; iframe →
-//     escucha AUTH_TOKEN del bridge.
+//   - Hidratar identidad al boot: standalone → GET /api/me/token; dentro del
+//     portal de Vout → el VOUT_AUTH que entrega el bridge.
 //   - Inyectar Authorization Bearer y X-CSRF-Token en cada request salvo GET.
 //   - Mantener la sesión viva: el access token de Vout vale 60 minutos y la
 //     sesión 30 días. El token se renueva con POST /auth/refresh al arrancar si
@@ -19,15 +19,31 @@
 //   - Cualquier otra cosa (503, red caída): Vout no contesta. No se toca nada;
 //     la sesión sigue ahí para el siguiente intento.
 //
+// Dentro del portal de Vout (iframe) es otra cosa: Daino no renueva nada. El
+// portal manda un VOUT_AUTH nuevo antes de que caduque el anterior. La sesión
+// termina cuando el portal lo dice (VOUT_SESSION_END: al ir a renovar ya no pudo)
+// o, como red, cuando llega la hora y no ha llegado ningún token nuevo.
+//
 // Restricciones (CLAUDE.md invariantes):
 //   - El access_token vive SOLO en la variable de módulo. Nunca localStorage.
 //   - El csrf_token también — viene en el mismo response que el access_token.
 //   - postMessage targetOrigin nunca "*" — eso lo cubre bridge.js, no aquí.
 
-import { isBridgeEmbedded, onAuthToken as onBridgeToken } from '../iframe/bridge.js';
+import { isBridgeEmbedded, note as bridgeNote, onAuth as onBridgeAuth, onSessionEnd as onBridgeSessionEnd } from '../iframe/bridge.js';
 
-/** Espera máxima al primer AUTH_TOKEN antes de dejar arrancar la UI en anónimo. */
+/** Espera máxima al primer VOUT_AUTH antes de dejar arrancar la UI en anónimo. */
 const BRIDGE_TOKEN_WAIT_MS = 5000;
+
+/**
+ * Embebido: cuánto se espera, pasada la hora de caducidad del token, antes de
+ * preguntar al servidor si de verdad caducó. El servidor lo acepta 60 s más
+ * (holgura de reloj): preguntar antes daría un "sigue valiendo" de más.
+ */
+const BRIDGE_EXPIRY_GRACE_MS = 65_000;
+/** Si el servidor dice que aún vale (o no contesta), cada cuánto se vuelve a mirar. */
+const BRIDGE_RECHECK_MS = 60_000;
+/** El mayor plazo que admite `setTimeout`. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /**
  * Con menos de esto por delante, el token se renueva ANTES de la petición en
@@ -47,6 +63,8 @@ let initPromise = null;
 let refreshing = null;
 /** La sesión se acabó sin que nadie la cerrase. La interfaz lo recoge una vez. */
 let sessionLost = false;
+/** Embebido: aviso programado para la hora en que caduca el token del portal. */
+let bridgeExpiryTimer = null;
 const authChangeHandlers = new Set();
 
 function emitAuthChange(kind /* 'login' | 'logout' | 'token-refreshed' */) {
@@ -75,11 +93,22 @@ function setAuth({ access, csrf, expiresMs, userPayload }) {
 
 function clearAuth() {
     const wasLoggedIn = user !== null;
+    stopBridgeExpiryWatch();
     accessToken = null;
     csrfToken = null;
     expiresAtMs = 0;
     user = null;
     if (wasLoggedIn) emitAuthChange('logout');
+}
+
+/**
+ * La sesión se acabó sin que nadie la cerrase: se pasa a anónimo y se avisa.
+ * Nunca se saca a nadie de la página: Daino se juega sin cuenta.
+ */
+function endSession() {
+    sessionLost = true;
+    clearAuth();
+    window.dispatchEvent(new CustomEvent('daino:auth:expired'));
 }
 
 /**
@@ -114,17 +143,18 @@ export function init() {
 
     initPromise = (async () => {
         if (isBridgeEmbedded()) {
-            // En iframe el AUTH_TOKEN llega por postMessage del parent, en el
+            // Dentro del portal el VOUT_AUTH llega por postMessage, en el
             // arranque o más tarde, y otra vez en cada renovación. Cada token
             // se traduce a identidad con GET /api/me (defecto D12: antes el
             // usuario quedaba a null y embebido no existían "Mis niveles" ni el
             // guardado de progreso). `init()` espera al primero hasta 5 s para
             // que la UI arranque ya con sesión si llega a tiempo; uno tardío se
             // procesa igual y emite `daino:auth:login` cuando llegue.
+            onBridgeSessionEnd(dropBridgeSession);
             await new Promise((resolve) => {
                 const timer = setTimeout(resolve, BRIDGE_TOKEN_WAIT_MS);
-                onBridgeToken((token) => {
-                    void adoptBridgeToken(token).finally(() => {
+                onBridgeAuth((auth) => {
+                    void adoptBridgeAuth(auth).finally(() => {
                         clearTimeout(timer);
                         resolve();
                     });
@@ -161,27 +191,88 @@ export function init() {
 }
 
 /**
- * Adopta un access token entregado por Vout. La primera vez resuelve la
- * identidad; en una renovación solo cambia el token.
+ * Adopta el access token que entrega el portal de Vout. La primera vez resuelve
+ * la identidad; en una renovación solo cambia el token.
  *
- * @param {string} token
+ * La identidad sale del token, validado por el servidor (GET /api/me). El
+ * `voutId` del mensaje solo sirve para una cosa: notar que ya no es la misma
+ * persona (cambió de cuenta en Vout con el juego abierto) y volver a preguntar.
+ *
+ * @param {import('../iframe/bridge.js').BridgeAuth} auth
  */
-async function adoptBridgeToken(token) {
+async function adoptBridgeAuth({ token, expiresAt, voutId }) {
+    if (user !== null && voutId !== null && voutId !== user.vout_id) {
+        clearAuth();
+    }
     accessToken = token;
+    watchBridgeExpiry(expiresAt);
     if (user !== null) {
         emitAuthChange('token-refreshed');
         return;
     }
     const res = await doRequest('GET', '/api/me', {});
-    if (accessToken !== token) return;   // llegó otro token mientras tanto
+    if (accessToken !== token) return;   // llegó otro token, o el fin de la sesión, mientras tanto
     if (res.ok && res.data?.user) {
         setAuth({ access: token, csrf: csrfToken, expiresMs: 0, userPayload: res.data.user });
+        bridgeNote('Token del portal', `el servidor de Daino lo acepta: sesión de ${res.data.user.username}`);
     } else {
-        // Token rechazado (caducado, otra audiencia, usuario borrado): se sigue
-        // jugando en anónimo hasta que Vout envíe uno válido.
+        // Token rechazado (caducado, otra audiencia): se sigue jugando en
+        // anónimo hasta que Vout envíe uno válido.
         console.warn('[client] el token de Vout no se aceptó:', res.status, res.data?.error);
+        bridgeNote('Token del portal', `el servidor de Daino NO lo acepta (${res.status} ${res.data?.error ?? ''}): se juega sin sesión`);
+        stopBridgeExpiryWatch();
         accessToken = null;
     }
+}
+
+/**
+ * El portal avisa de que ya no renovará (`VOUT_SESSION_END`): se cerró la sesión
+ * de Vout, se retiró el acceso a Daino o el juego dejó de estar en el portal. Se
+ * suelta la identidad en el momento, sin esperar a que caduque el token. Solo se
+ * avisa a quien estaba identificado: a los demás no se les acaba nada.
+ */
+function dropBridgeSession() {
+    if (user !== null) endSession();
+    else clearAuth();
+}
+
+/**
+ * Embebido: programa la comprobación para cuando caduque el token (`expiresAtS`,
+ * segundos Unix). Un VOUT_AUTH nuevo la reprograma: mientras el portal renueve,
+ * no llega a saltar.
+ */
+function watchBridgeExpiry(expiresAtS) {
+    stopBridgeExpiryWatch();
+    if (!(expiresAtS > 0)) return;
+    const wait = Math.max(0, expiresAtS * 1000 - Date.now()) + BRIDGE_EXPIRY_GRACE_MS;
+    bridgeExpiryTimer = setTimeout(confirmBridgeExpiry, Math.min(wait, MAX_TIMER_MS));
+}
+
+function stopBridgeExpiryWatch() {
+    if (bridgeExpiryTimer !== null) {
+        clearTimeout(bridgeExpiryTimer);
+        bridgeExpiryTimer = null;
+    }
+}
+
+/**
+ * Llegó la hora de caducidad y el portal no ha mandado un token nuevo: quien
+ * juega cerró sesión en Vout o retiró el acceso a Daino. Antes de darlo por
+ * hecho se pregunta al servidor, que es quien tiene la hora buena: con el reloj
+ * de este equipo adelantado, el token puede seguir valiendo un rato.
+ */
+async function confirmBridgeExpiry() {
+    bridgeExpiryTimer = null;
+    const token = accessToken;
+    if (token === null) return;
+    const res = await doRequest('GET', '/api/me', {});
+    if (accessToken !== token) return;   // llegó una renovación mientras tanto
+    if (res.status === 401) {
+        bridgeNote('Token del portal', 'caducó sin que llegara otro: se suelta la identidad');
+        endSession();
+        return;
+    }
+    bridgeExpiryTimer = setTimeout(confirmBridgeExpiry, BRIDGE_RECHECK_MS);
 }
 
 /**
@@ -287,9 +378,7 @@ async function doRefresh() {
     if (r.status === 401) {
         // Se acabó de verdad: Vout ya no acepta esta sesión (30 días sin
         // entrar, o acceso revocado desde Vout).
-        sessionLost = true;
-        clearAuth();
-        window.dispatchEvent(new CustomEvent('daino:auth:expired'));
+        endSession();
     } else {
         // Vout no contesta. La sesión no se toca: valdrá en el próximo intento.
         console.warn('[client] no se pudo renovar la sesión:', r.status, data?.error);

@@ -31,8 +31,12 @@ import { pixelText, setPixelText } from './pixel/text.js';
 import { spriteEl } from './pixel/sprite.js';
 import { formatPoints } from './catalogModel.js';
 import { rankingGhosts, rankingRow } from './rankingRow.js';
+import { signInNote } from './signIn.js';
 
 const MODAL_ROOT_ID = 'modal-root';
+
+/** Cuánto dura armado "Borrar datos locales" esperando la segunda pulsación. */
+const CLEAR_CONFIRM_MS = 6000;
 
 /** Nombres de los niveles de calidad (los de QUALITY_TIERS, game/RenderProfile.js). */
 const QUALITY_NAMES = Object.freeze({ high: 'Alta', medium: 'Media', low: 'Baja' });
@@ -129,18 +133,21 @@ export function openProfileModal() {
         meta.append(el('strong', 'daino-profile__name', user.username), el('span', 'daino-profile__id', `vout_id: ${user.vout_id}`));
         who.append(renderAvatar(user.avatar_url, user.username, 56, { tag: 'div' }), meta);
         body.append(who, el('p', null, 'Has iniciado sesión con Vout. Tus marcas se guardan y cuentan para el ranking.'));
+    } else if (isBridgeEmbedded()) {
+        body.appendChild(el('p', null, 'Vout no ha identificado tu sesión en este juego, así que tus marcas no se guardan. Vuelve al portal y ábrelo de nuevo.'));
     } else {
         body.appendChild(el('p', null, 'Daino se juega sin cuenta. Con tu sesión de Vout, tus marcas entran en el ranking y puedes guardar y publicar tus niveles.'));
     }
 
     let footer;
-    if (user === null) {
-        footer = linkButton('Iniciar sesión con Vout', '/auth/login', 'daino-btn daino-btn--strong');
-    } else if (isBridgeEmbedded()) {
-        // En iframe cerrar sesión no aplica: la sesión la lleva Vout. Este botón
+    if (isBridgeEmbedded()) {
+        // Dentro del portal la sesión la lleva Vout: aquí ni se inicia (su página
+        // de login no se puede abrir dentro del iframe) ni se cierra. Este botón
         // pide al portal que cierre el juego.
         footer = button('Volver al portal');
         footer.addEventListener('click', () => { postToParent({ type: 'EXIT' }); });
+    } else if (user === null) {
+        footer = linkButton('Iniciar sesión con Vout', '/auth/login', 'daino-btn daino-btn--strong');
     } else {
         footer = button('Cerrar sesión', 'daino-btn daino-btn--danger');
         footer.addEventListener('click', async () => {
@@ -154,7 +161,7 @@ export function openProfileModal() {
     }
 
     const dialog = createModal('profile', {
-        title: isAuthenticated() ? 'Tu perfil' : 'Iniciar sesión',
+        title: isAuthenticated() ? 'Tu perfil' : (isBridgeEmbedded() ? 'Sin sesión' : 'Iniciar sesión'),
         body,
         footer,
     });
@@ -219,10 +226,7 @@ async function loadRanking(list, note) {
         say('Aún no estás entre los diez primeros.');
     } else if (me === null) {
         note.hidden = false;
-        const link = el('a', 'daino-link', 'Inicia sesión');
-        link.href = '/auth/login';
-        link.dataset.interactive = 'true';
-        note.replaceChildren(link, document.createTextNode(' para que tus partidas cuenten.'));
+        note.replaceChildren(...signInNote(' para que tus partidas cuenten.'));
     }
 }
 
@@ -348,14 +352,30 @@ export function openSettingsModal(opts = {}) {
 
     // ----- Borrar datos locales -----
     const keys = listKeys();
-    const clearNote = el('p', 'daino-field__hint', keys.length === 0
-        ? 'No hay nada guardado en este navegador.'
-        : 'Volumen, preferencias y las marcas que hiciste sin sesión, guardados en este navegador.');
+    const stored = 'Volumen, preferencias y las marcas que hiciste sin sesión, guardados en este navegador.';
+    const clearNote = el('p', 'daino-field__hint', keys.length === 0 ? 'No hay nada guardado en este navegador.' : stored);
     const clearBtn = button('Borrar', 'daino-btn daino-btn--sm daino-btn--danger');
     clearBtn.disabled = keys.length === 0;
+    // Se confirma con una segunda pulsación, no con `window.confirm()`: dentro del
+    // portal de Vout el navegador no deja abrir diálogos del sistema (el iframe va
+    // sin `allow-modals`) y el botón no hacía nada.
+    let armed = null;
+    const disarm = () => {
+        clearTimeout(armed);
+        armed = null;
+        setLabel(clearBtn, 'Borrar');
+    };
     clearBtn.addEventListener('click', () => {
-        const sure = window.confirm('¿Borrar todos los datos locales de Daino? Esto incluye volumen, preferencias y las marcas guardadas sin sesión.');
-        if (!sure) return;
+        if (armed === null) {
+            setLabel(clearBtn, 'Sí, borrar');
+            clearNote.textContent = 'Se borran el volumen, las preferencias y las marcas guardadas sin sesión. Pulsa otra vez para confirmar.';
+            armed = setTimeout(() => {
+                disarm();
+                clearNote.textContent = stored;
+            }, CLEAR_CONFIRM_MS);
+            return;
+        }
+        disarm();
         clearAll();
         clearNote.textContent = 'Borrados. Recarga la página para volver a los valores de fábrica.';
         clearBtn.disabled = true;

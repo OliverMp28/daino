@@ -40,7 +40,7 @@ import {
     getLevels, invalidateLevels, loadMoreLevels, peekLevels, patchCachedLevel,
 } from '../api/levelsCache.js';
 import { requestCatalogPlay, requestPrefetch } from './playRequests.js';
-import { pickFileViaInput, uploadMaxMb } from './upload.js';
+import { canOpenFilePicker, pickFileViaInput, uploadMaxMb } from './upload.js';
 import { createLocalBests } from '../storage/localBests.js';
 import { cardView, emptyView, sceneChoiceView, tabsFor, PLAY_MODE, formatPoints } from './catalogModel.js';
 import { button, closeButton, el, labelOf, px, pxWords, setLabel, setTag, stars, tag } from './kit.js';
@@ -50,6 +50,7 @@ import { rankingGhosts, rankingRow } from './rankingRow.js';
 import { DIFFICULTY_NAMES } from '../game/levels/difficulty.js';
 import { createModal } from './modals.js';
 import { showToast } from './toast.js';
+import { signInNote } from './signIn.js';
 import { routePath } from './routeModel.js';
 import { shareLink } from './share.js';
 import { analysisView, difficultyChoiceView, PUBLISH_STATE } from './publishModel.js';
@@ -810,10 +811,7 @@ async function loadLevelRanking(level, list, note, seq) {
         list.appendChild(row({ rank: me.rank, user: getUser(), points: me.points, percentage: me.percentage }, true));
     }
     if (!isAuthenticated()) {
-        const link = el('a', 'daino-link', 'Inicia sesión');
-        link.href = '/auth/login';
-        link.dataset.interactive = 'true';
-        say(...(items.length === 0 ? ['Nadie ha dejado marca todavía. '] : []), link, ' para que tus partidas entren en el ranking.');
+        say(...(items.length === 0 ? ['Nadie ha dejado marca todavía. '] : []), ...signInNote(' para que tus partidas entren en el ranking.'));
     } else if (items.length === 0) {
         say('Nadie ha dejado marca todavía. La primera puede ser la tuya.');
     }
@@ -825,6 +823,7 @@ async function loadLevelRanking(level, list, note, seq) {
 async function publishLevel(level, btn, status) {
     // El nivel es privado: su MP3 está en el equipo del autor. El servidor
     // comprueba que el archivo es exactamente el del chart.
+    if (!canOpenFilePicker()) return;
     const file = await new Promise((resolve) => {
         const input = document.createElement('input');
         input.type = 'file';

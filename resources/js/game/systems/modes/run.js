@@ -68,6 +68,8 @@ export const RUN_MODE = Object.freeze({
     actions: Object.freeze(['jump', 'duck']),
     /** Tras entrar, cuánto tarda en poder actuar con garantías: caer desde el techo de otro modo. */
     settleS: 0.45,
+    /** Aquí mantener da forma al salto: un 'jumpTap' no lo alarga (ver `input`). */
+    tapJump: true,
 
     enter(body) {
         body.jumpBufferT = 0;
@@ -136,7 +138,11 @@ export const RUN_MODE = Object.freeze({
     input(body, input) {
         switch (input) {
             case 'jump':
-                body.jumpKey = true;
+            case 'jumpTap':
+                // 'jumpTap': un salto cuyo "soltar" no es de fiar (el control facial
+                // de Vout lo avisa medio segundo tarde). No cuenta como mantenido:
+                // da siempre el arco del nivel, dure lo que dure el gesto.
+                body.jumpKey = input === 'jump';
                 if (jump(body)) return 'jump';
                 // Pulsado un pelín antes de aterrizar: se guarda (jump buffer).
                 if (!body.grounded && !body.dead) body.jumpBufferT = JUMP_BUFFER_S;

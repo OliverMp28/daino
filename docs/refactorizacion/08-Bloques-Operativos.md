@@ -245,7 +245,112 @@ Razones por las que `/api/me/token` gana sobre `<meta>` tag:
 
 **Sin verificar.**
 - Una renovación de verdad contra Vout con el refresh token real (solo lo tiene el navegador del usuario): se comprueba recargando Daino más de una hora después de iniciar sesión.
-- El modo embebido en el portal de Vout. Lo que hay que mirar está en el código de Vout: qué `aud` lleva el token que manda por `postMessage`, si reenvía `AUTH_TOKEN` antes de que caduque, cuánto dura su sesión web y los atributos del `<iframe>`.
+- El modo embebido en el portal de Vout. Lo que hay que mirar está en el código de Vout: qué `aud` lleva el token que manda por `postMessage`, si reenvía `AUTH_TOKEN` antes de que caduque, cuánto dura su sesión web y los atributos del `<iframe>`. *(Resuelto en el Sub-bloque 3.7.)*
+
+---
+
+## Sub-bloque 3.7 — Dentro del portal de Vout: el contrato de Vout (Oct 2026) ✅
+
+> **Disparador.** Se le pidió al equipo de Vout una auditoría de cómo su portal atiende a un juego embebido. Tenía trabajo: su portal no hablaba el protocolo que Daino esperaba. Vout lo arregló de su lado y publicó el contrato (guía de integración, sección **"Identidad dentro del iFrame"**, `http://localhost/developers/docs/integration-guide`). **Mandan los nombres de Vout**: `AUTH_TOKEN` y `GAME_ACTION`, que Daino usaba desde el Bloque 3, no existen. La copia de la guía en `docs/vout-integration/` es anterior a esa sección.
+
+**El contrato.**
+
+| Dirección | Mensaje | Qué es |
+|---|---|---|
+| Daino → portal | `{ type: 'READY', suggestedPreset: 'runner' }` | Listo para recibir la identidad. Se repite cada 500 ms hasta que contesten (como mucho 60 s). |
+| portal → Daino | `{ type: 'VOUT_AUTH', token, expiresAt, voutId, username }` | Tras cada `READY` y en cada renovación (unos 5 min antes de caducar). Vale el último. |
+| portal → Daino | `{ type: 'VOUT_ACTION', event }` | Gesto del control facial. Daino entiende `JUMP` y `DUCK`. |
+| portal → Daino | `{ type: 'VOUT_CURSOR', x, y }` | No se usa: se ignora, como cualquier tipo desconocido. |
+| Daino → portal | `{ type: 'EXIT' }` | Volver al catálogo del portal. |
+
+El token es un access token normal de Vout (RS256, `iss`, `aud` = `client_id` de Daino, `vout_id`): lo valida el mismo código que en modo directo. El iframe va con `sandbox="allow-scripts allow-same-origin"` y `allow="autoplay; fullscreen"`, y está oculto hasta que termina el saludo.
+
+**Entregado.**
+- `resources/js/iframe/bridge.js` — reescrito para el contrato: `VOUT_AUTH` (`onAuth(fn)` entrega `{ token, expiresAt, voutId, username }`), `VOUT_ACTION` con lista cerrada de gestos (`GAME_ACTIONS`), `READY` repetido con `suggestedPreset`, y además del origen se exige `event.source === window.parent`.
+- `resources/js/api/client.js` — embebido: cada `VOUT_AUTH` sustituye el token; si trae otro `voutId` (otra cuenta de Vout con el juego abierto) se vuelve a preguntar quién es; a la hora de `expiresAt` + 65 s sin token nuevo se pregunta al servidor (`GET /api/me`) y, si dice 401, la sesión termina (`endSession()`: anónimo + `daino:auth:expired`). Embebido nunca se llama a `/auth/refresh`.
+- `resources/js/game/systems/input.js` — un gesto es un toque: el salto se suelta antes de `JUMP_HOLD.afterS` (`GESTURE_JUMP_MS`) y da el arco del nivel (antes, 160 ms contaban como salto mantenido).
+- Lo que el iframe no deja hacer: `resources/js/ui/signIn.js` (`signInNote`: dentro del portal no hay enlaces a `/auth/login`, que no puede abrirse en el iframe); el perfil ofrece siempre "Volver al portal"; "Borrar datos locales" se confirma con una segunda pulsación en vez de `window.confirm()` (bloqueado sin `allow-modals`: el botón no hacía nada); el aviso de sesión terminada sale también embebido (`ui/auth.js`).
+- `docker/nginx/default.conf` — `X-Frame-Options` solo en las respuestas que no traen su propia `Content-Security-Policy` (`map` sobre `$upstream_http_content_security_policy`): la página del juego manda solo `frame-ancestors 'self' <VOUT_ORIGIN>`.
+
+**Decisiones aprobadas (vinculantes):**
+- **El protocolo con el portal es el de Vout.** Los nombres de mensaje salen de su guía; Daino no inventa los suyos.
+- **Solo se escucha al portal**: origen exacto y la ventana que nos contiene. Solo se le escribe a su origen.
+- **La identidad es la del token validado en el servidor.** `voutId` y `username` del mensaje solo sirven para notar un cambio de cuenta.
+- **Embebido, Daino no renueva nada.** La sesión termina cuando el portal deja de renovar, y se confirma con el servidor, no con el reloj del equipo.
+- **Un gesto del control facial es un toque**, no una pulsación mantenida.
+- **Nada de la interfaz depende de lo que un iframe con `sandbox` no deja hacer**: ni `alert`/`confirm`, ni ventanas nuevas, ni formularios clásicos, ni navegar a la página de login de Vout.
+
+**Verificación.**
+- `tests/js/embedded-bridge.test.mjs` (11, con el tiempo simulado: una hora de sesión en un instante) y `catalog-client.test.mjs` al contrato nuevo. 532 JS, 106 PHP.
+- Navegador, build de producción, dentro de un portal de prueba montado en una página real del origen de Vout (`http://localhost/robots.txt`, con el mismo `sandbox` y `allow`, y el iframe oculto hasta el saludo) y tokens firmados con una clave de prueba añadida a la caché de claves: `READY` cada 500 ms hasta que el portal contesta; identidad por `GET /api/me`; sin chip de login; pestaña "Míos"; se juega con `JUMP` y `DUCK` (salto por gesto = 158 de alto, el del nivel; un gesto desconocido no hace nada); la marca se guarda; "Volver al portal" manda `EXIT`; "Borrar" funciona dentro del `sandbox`; con un token que caduca y sin renovación, 66 s después una petición, anónimo y aviso; con un token que Daino no acepta, anónimo sin enlaces de login. Sin errores de página.
+
+**Sin verificar / pendiente de Vout.**
+- El portal real (`http://localhost/play/daino`): hace falta una sesión de Vout. Lo prueba el usuario.
+- Pedido a Vout: `allow-orientation-lock` en el `sandbox` (sin él, "Poner en horizontal" no puede girar la pantalla dentro del portal); saber cuándo termina un gesto (el propulsor se juega manteniendo: con gestos sueltos, los niveles que lo tienen no se pueden superar con la cara); la hora del gesto en `VOUT_ACTION` (Daino fecha cada pulsación; hoy usa la llegada del mensaje); un aviso al cerrar sesión en Vout (hoy Daino se entera al caducar el token, hasta 60 min después).
+
+> **Lo que vino después.** Vout atendió todo lo pedido y la primera prueba real en su portal falló igualmente: ver el Sub-bloque 3.8, que **sustituye** lo dicho aquí sobre los gestos (`GAME_ACTIONS` y `GESTURE_JUMP_MS` ya no existen; `VOUT_CURSOR` sí se usa) y amplía la tabla de mensajes.
+
+---
+
+## Sub-bloque 3.8 — Jugar con la cara: teclas, clics y gestos del portal (Oct 2026) ✅
+
+> **Disparador.** Primera prueba real de Daino dentro del portal (`http://localhost/play/daino`): la identidad llegó bien, el portal detectaba los gestos del usuario y **Daino no reaccionaba a nada**. Causa: cada usuario de Vout tiene SU mapeo de gestos y lo lleva a todos los juegos (el de la prueba: cejas = Espacio mantenido, boca = clic izquierdo, cabeza = cursor, ceño = Escape, guiños = R y F). El navegador no deja que el portal pulse teclas ni haga clic dentro de un iframe de otro origen, así que el portal descartaba esas acciones; a Daino solo le llegaba `VOUT_CURSOR`, que ignoraba. El preset `runner` que Daino sugiere (acciones `JUMP` y `DUCK`) es opcional y el usuario no lo aceptó. Vout lo resolvió con mensajes nuevos: ahora dice **qué tecla o qué clic** y es el juego quien lo hace en su página.
+
+**El contrato, ampliado** (guía de Vout, "Control facial: qué llega a tu juego"). A la tabla del 3.7 se suman:
+
+| Dirección | Mensaje | Qué es |
+|---|---|---|
+| portal → Daino | `{ type: 'VOUT_KEY', code, key, state: 'down' \| 'up', at }` | Un gesto pulsa o suelta una tecla del mapeo del usuario. `code`/`key` son los de `KeyboardEvent`. |
+| portal → Daino | `{ type: 'VOUT_CLICK', button: 'left' \| 'right', at }` | Un gesto hace clic. Sin coordenadas: cae donde esté el cursor. |
+| portal → Daino | `{ type: 'VOUT_CURSOR', x, y }` | El cursor que mueve la cabeza, de 0 a 1 sobre el iframe. |
+| portal → Daino | `{ type: 'VOUT_ACTION', event, at }` | **Empieza** una acción de juego. |
+| portal → Daino | `{ type: 'VOUT_ACTION_END', event, at }` | **Termina**. Dos gestos pueden mantener la misma acción: el final llega una vez. |
+| portal → Daino | `{ type: 'VOUT_SESSION_END', reason }` | El portal ya no renovará (`signed_out`, `revoked`, `unavailable`). |
+
+`at` son milisegundos Unix: cuándo vio la cámara el gesto. El final de un gesto **de la cara** (cejas, boca) llega 0,6-0,75 s después de relajarlo; el de la **cabeza**, al instante. El iframe va ahora con `sandbox="allow-scripts allow-same-origin allow-orientation-lock"` y `allow="autoplay; fullscreen; clipboard-write; web-share"`, oculto por **opacidad** (con su tamaño real) hasta el saludo. Vout publica un SDK (`/sdk/vout-game.js`) que hace el saludo y convierte teclas y clics en eventos; Daino **no lo usa**: su saludo y su sesión ya están hechos y probados, y necesita cosas que el SDK no hace (lo de abajo).
+
+**Entregado.**
+- `resources/js/iframe/bridge.js` — solo el PROTOCOLO: quién puede hablar, qué forma tiene cada mensaje y a quién se entrega. `setPortalInput(fn)` (sustituye a `setOnGameAction`) entrega teclas, clics, cursor y acciones ya comprobados y con `timeStamp` = la hora del gesto en el reloj de `performance.now()` (`gestureTimeStamp`: un `at` en el futuro o de hace más de 2 s no es de fiar y vale la llegada). `onSessionEnd(fn)`. Depuración: `readDebugFlag`, `getTrace`, `note`.
+- `resources/js/iframe/remote.js` — **el mando**: qué hace Daino con cada cosa. Solo se carga dentro del portal (chunk aparte, 2,9 KB gzip).
+  - **Tecla** → se crea el evento de teclado en la página (el juego y los paneles lo reciben por donde reciben un teclado). Lo que el navegador hace solo con una tecla de verdad NO ocurre con un evento creado por código, así que se hace aquí si nadie atendió la tecla: Enter y Espacio pulsan lo señalado, Escape cierra o vuelve (`cancel` del diálogo), las flechas mueven lo señalado, Tab pasa al siguiente.
+  - **Clic** → donde apunta el cursor. Jugando, sobre el lienzo: mitad izquierda salta y mitad derecha agacha, como el táctil. Sobre la interfaz: pulsa lo que haya debajo (y lleva un deslizador a ese punto). Sin cursor todavía, el clic es "el botón": salta, o pulsa lo señalado. El clic derecho se ignora.
+  - **Acción** → `JUMP`, `DUCK` y `PAUSE`. Jugando: saltar, agacharse, pausar. **En los menús, un mando de dos botones**: agacharse pasa al siguiente y saltar lo pulsa (se explica una vez con un aviso). Sin esto, quien acepta el preset `runner` no podía llegar a jugar.
+  - Lo señalado se ve: `data-pointed`, con el mismo aspecto que el foco de cada pieza (`components.css`, `catalog.css`, `menu.css`).
+- `resources/js/ui/focusNav.js` — recorrer la interfaz sin ratón ni Tab: qué se puede señalar (lo visible y activo del diálogo de encima), el más cercano en una dirección (`pickInDirection`, puro), el siguiente, pulsar, ajustar un deslizador, lo que haría Esc.
+- `resources/js/game/systems/input.js` — cada pulsación tiene una **fuente** (`key:Space`, `touch:3`, `action:JUMP`): `press`/`release` van por parejas y `tap` es una pulsación que llega sin su "soltar". Un mismo salto no se cuenta dos veces y solo suelta lo que pulsó. `markRemote` marca los eventos de teclado creados por el mando; sus pulsaciones llevan `remote: true` y no se sueltan al perder el foco el iframe (las suelta el portal).
+- **Un gesto es un toque, salvo en el propulsor**: `GameSession` convierte un salto `remote` en `'jumpTap'`; correr (`tapJump: true`) lo trata como un salto que no cuenta como mantenido, dure lo que dure el gesto; los demás modos lo reciben como `'jump'` (`physics.applyInput`), así que el propulsor sube hasta que el portal avisa del final.
+- `resources/js/api/client.js` — `VOUT_SESSION_END` suelta la identidad en el momento (aviso solo a quien estaba identificado). La comprobación a la hora de caducidad sigue de red.
+- `resources/js/ui/voutDebug.js` (chunk aparte) — **depuración**: `?voutdebug=1` en la dirección de Daino la enciende y queda recordada en el navegador (`?voutdebug=0` la apaga); dentro del portal sale un recuadro con cada mensaje, cuántos de cada tipo, qué hizo Daino con él y cuánto tardó en llegar el gesto, y un botón "Copiar". El token no aparece nunca.
+- `resources/js/ui/upload.js` — `canOpenFilePicker()`: elegir un archivo necesita un clic de verdad; con un gesto se dice, en vez de no hacer nada.
+- `resources/js/ui/kit.js` — en un grupo de opciones en fila solo cambian de opción las flechas a izquierda y derecha: arriba y abajo salen del grupo.
+- `resources/js/main.js` — `READY` es lo primero que se hace al arrancar.
+
+**Decisiones aprobadas (vinculantes):**
+- **Daino atiende cualquier mapeo**: teclas, clic con cursor, o las acciones del preset. De la portada a jugar se llega con cualquiera de los tres.
+- **Un gesto es un toque; solo el propulsor atiende a cuánto dura.** El "soltar" de un gesto de la cara llega medio segundo tarde: si contara para el salto, todos los saltos serían el largo. Sustituye el temporizador fijo del 3.7.
+- **Un gesto no cuenta dos veces**: una acción que ya está mantenida no vuelve a empezar, una tecla que ya está abajo no vuelve a pulsarse, y solo termina lo que empezó.
+- **Lo que el navegador haría con una tecla o un clic de verdad lo hace el mando**, no un evento suelto: los eventos creados por código no pulsan botones ni cierran diálogos.
+- **Lo señalado se ve.**
+- **Lo que necesita un gesto de verdad y no lo tiene, se dice** (elegir un archivo).
+- **La hora del gesto (`at`) fecha la pulsación, pero no se puede actuar antes de saberlo**: el retraso de la cámara lo paga quien juega adelantándose. Lo que más ayuda es que el portal tarde menos.
+- **La depuración vive en su chunk y no enseña el token.**
+
+**Verificación.**
+- `tests/js/portal-input.test.mjs` (13: fuentes, toques, las tres formas jugando y en los menús, un salto que no se cuenta dos veces, el arco de un gesto, el propulsor, moverse con flechas) y `embedded-bridge.test.mjs` (15: los mensajes nuevos, lo mal formado, la hora del gesto, `VOUT_SESSION_END`). 549 JS, 106 PHP. Bundle principal 112,6 KB gzip (+1,7).
+- Navegador, build de producción, portal de prueba como en el 3.7 pero con el `sandbox` y el `allow` nuevos y el iframe oculto por opacidad, **sin un solo clic de verdad dentro del juego** (uno, en el portal):
+  - `READY` le llega al portal ~12 ms después del `load` del iframe (sale mientras la página termina de cargar); ventana y lienzo a tamaño completo con el iframe aún invisible.
+  - **El mapeo del usuario de la prueba real**: cursor sobre JUGAR (se ve señalado) y clic → catálogo; cursor y clic en una tarjeta → a jugar, **con audio** (contexto `running` sin ningún gesto de verdad dentro del iframe); Espacio salta; clic a la derecha agacha y a la izquierda salta; Escape pausa y reanuda; R y Espacio reintentan en resultados; Escape vuelve a niveles y cierra el catálogo.
+  - **Preset `runner`**: agacharse señala JUGAR, saltar lo pulsa, agacharse recorre el catálogo, saltar sobre una tarjeta juega; en resultados, saltar reintenta.
+  - **Solo teclas** (flechas, Enter, Escape): portada → catálogo → tarjeta → jugar; menú y AJUSTES recorridos con flechas; el volumen, con un clic sobre el deslizador.
+  - Salto medido paso a paso de la física: gesto con el final 0,7 s después = 158 de alto, igual que de un toque (una tecla de verdad mantenida, 188). Dos `JUMP` seguidos y un final = un salto.
+  - **Propulsor** (Dawn of Faith, segundo 88): con `JUMP` o con Espacio del portal mantenidos, el Dino sube hasta el techo y cae al llegar el final.
+  - "Elegir MP3" con un gesto: no se abre el selector y sale el aviso. "Volver al portal" manda `EXIT`. `VOUT_SESSION_END`: anónimo y aviso.
+  - Fuera del portal: teclado y táctil como antes, y el mando no se descarga.
+
+**Sin verificar / pendiente.**
+- **El portal real con la cámara**: lo prueba el usuario, con la depuración encendida. De ahí salen los retrasos reales de los gestos.
+- Pedido a Vout: acortar el final de los gestos de la cara (o detectar un gesto repetido dentro de esa espera): con 0,6-0,75 s, dos gestos seguidos se funden en uno y el propulsor no se puede soltar a tiempo; una acción `PAUSE` en el preset `runner`; si el portal dibuja el cursor encima del juego; una forma de pasar `?voutdebug=1` al iframe en producción (allí el recuerdo del navegador no cruza de un sitio a otro).
+- El audio arranca sin gesto dentro del iframe porque el portal lo cede (`allow="autoplay"`) y su página sí ha tenido uno: probado en Chrome; Safari y Firefox, sin probar.
 
 ---
 

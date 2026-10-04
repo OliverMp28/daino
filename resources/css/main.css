@@ -18,7 +18,7 @@
  *   dialogs.css     paneles (ranking, perfil, ajustes, subir canción), avisos y carga
  *   catalog.css     catálogo de niveles y ficha
  *   run.css         panel de pausa y de resultados
- *   dev.css         herramientas de desarrollo (solo en `bun run dev`)
+ *   dev.css         herramientas de desarrollo y de prueba (`bun run dev`, `?perf=1`, `?voutdebug=1`)
  */
 
 @import "./ui/tokens.css";

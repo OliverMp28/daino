@@ -80,7 +80,8 @@
 }
 
 .daino-menu__action:hover .daino-menu__cursor,
-.daino-menu__action:focus-visible .daino-menu__cursor {
+.daino-menu__action:focus-visible .daino-menu__cursor,
+.daino-menu__action[data-pointed] .daino-menu__cursor {
     opacity: 1;
 }
 

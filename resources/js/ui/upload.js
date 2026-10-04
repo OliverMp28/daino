@@ -74,6 +74,20 @@ function onDrop(ev) {
 }
 
 /**
+ * ¿Puede abrirse ahora el selector de archivos? El navegador solo lo abre dentro
+ * de un clic o un toque DE VERDAD. Uno hecho con un gesto (el control facial de
+ * Vout crea el clic por código) no lo es: sin este aviso, el botón no haría nada.
+ *
+ * @returns {boolean}  false si no se puede; ya se ha avisado.
+ */
+export function canOpenFilePicker() {
+    const activation = typeof navigator !== 'undefined' ? navigator.userActivation : undefined;
+    if (activation === undefined || activation.isActive) return true;
+    showToast('Elegir un archivo necesita un clic de ratón o un toque: el navegador no lo abre con un gesto.', 'info', 6000);
+    return false;
+}
+
+/**
  * Abre el selector de archivos nativo y procesa el primer MP3 elegido.
  *
  * El audio se desbloquea AQUÍ, en el clic, antes de abrir el diálogo: el
@@ -84,6 +98,7 @@ function onDrop(ev) {
  *        ese archivo (Ola 2, D11); el cargador comprueba que es el mismo audio.
  */
 export function pickFileViaInput(opts = {}) {
+    if (!canOpenFilePicker()) return;
     unlockAudio();
     const inp = document.createElement('input');
     inp.type = 'file';

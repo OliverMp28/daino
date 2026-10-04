@@ -8,11 +8,12 @@ import '@css/main.css';
 
 import { startEngine } from '@/game/engine.js';
 import { setupUpload } from '@/ui/upload.js';
-import { startBridge } from '@/iframe/bridge.js';
+import { readDebugFlag, startBridge } from '@/iframe/bridge.js';
 import * as client from '@/api/client.js';
 import * as auth from '@/ui/auth.js';
 import * as appController from '@/ui/AppController.js';
 import { startPixelGrid } from '@/ui/pixel/grid.js';
+import { showToast } from '@/ui/toast.js';
 
 let booted = false;
 
@@ -24,14 +25,23 @@ async function boot() {
     if (booted) return;
     booted = true;
 
+    // Dentro del portal de Vout, lo primero es decirle que estamos (READY): significa
+    // "puedo recibir la identidad", no "ya lo cargué todo". Sale antes de montar
+    // nada, y antes del evento `load` de la página, desde el que el portal cuenta
+    // sus 8 segundos para dar el juego por colgado.
+    const voutDebug = readDebugFlag();
+    const bridgeStatus = startBridge({ debug: voutDebug });
+    if (bridgeStatus.embedded) {
+        console.info('[daino] modo iframe — bridge activo');
+        // El mando del control facial (teclas, clics y gestos que el portal
+        // retransmite) solo existe aquí dentro: no pesa a quien juega por su cuenta.
+        void import('@/iframe/remote.js').then(({ startRemote }) => startRemote());
+        if (voutDebug) void import('@/ui/voutDebug.js').then(({ mountVoutDebug }) => mountVoutDebug());
+    }
+
     // La rejilla de la interfaz, antes de pintar nada: celdas enteras en píxeles de
     // pantalla a cualquier tamaño y zoom (T04).
     startPixelGrid();
-
-    const bridgeStatus = startBridge();
-    if (bridgeStatus.embedded) {
-        console.info('[daino] modo iframe — bridge activo');
-    }
 
     // Quién mira se pregunta YA, mientras arranca el motor (un segundo largo): al
     // montar la interfaz lo normal es saberlo, y un enlace a «Míos» o a un nivel
@@ -62,9 +72,18 @@ async function boot() {
 
     // Lectura de rendimiento en pantalla (T05.4): solo con `?perf=1`, y en su
     // propio chunk. Para probar en un móvil, donde no hay consola a mano.
-    if (new URLSearchParams(window.location.search).get('perf') === '1') {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('perf') === '1') {
         const { mountPerfReadout } = await import('@/ui/perfReadout.js');
         mountPerfReadout(engineApi);
+    }
+
+    // `?voutdebug=1` abierto por su cuenta solo deja la depuración encendida para
+    // cuando Daino se abra desde el portal (que lo carga sin parámetros): se dice.
+    if (!bridgeStatus.embedded && params.has('voutdebug')) {
+        showToast(voutDebug
+            ? 'Depuración de Vout encendida. Abre Daino desde el portal de Vout para verla.'
+            : 'Depuración de Vout apagada.', 'info', 7000);
     }
 
     if (engineApi.reducedMotion) {

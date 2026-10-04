@@ -241,3 +241,58 @@
     font-variant-numeric: tabular-nums;
     pointer-events: none;
 }
+
+/* ---------------------------------------------------------------------------
+ * Depuración del portal de Vout (`?voutdebug=1`, ui/voutDebug.js): qué mensajes
+ * llegan y qué hace Daino con cada uno. Arriba a la izquierda, bajo el marcador:
+ * sobre cualquier panel (capa de arriba), lejos del suelo, que es donde se juega,
+ * y sin tapar los paneles de pausa y de resultados, que van centrados. Letra de
+ * consola: es un registro, no parte del juego.
+ * ------------------------------------------------------------------------- */
+
+.daino-voutdebug {
+    position: fixed;
+    inset: auto;                /* anula el centrado por defecto de [popover] */
+    top: max(3.4rem, calc(var(--safe-top) + 3rem));
+    left: max(0.5rem, var(--safe-left));
+    z-index: 47;
+    width: min(31rem, calc(100vw - 1rem));
+    margin: 0;
+    padding: 0.4rem 0.55rem;
+    border: var(--d-line) solid var(--d-spike);
+    background: var(--d-ink);
+    color: var(--d-bone);
+    font: 500 0.66rem/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.daino-voutdebug__head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.daino-voutdebug__head strong { margin-right: auto; color: var(--d-spike); }
+
+.daino-voutdebug__btn {
+    padding: 0.15rem 0.5rem;
+    border: var(--d-line) solid var(--d-speck);
+    background: var(--d-ground);
+    color: var(--d-bone);
+    font: inherit;
+    cursor: pointer;
+}
+
+.daino-voutdebug__summary { margin: 0.3rem 0; color: var(--d-mute); }
+
+.daino-voutdebug__log {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-wrap: anywhere;
+}
+
+.daino-voutdebug__log li[data-bad="true"] { color: var(--d-warn); }
+
+.daino-voutdebug[data-folded="true"] .daino-voutdebug__summary,
+.daino-voutdebug[data-folded="true"] .daino-voutdebug__log { display: none; }
+.daino-voutdebug[data-folded="true"] { width: auto; }

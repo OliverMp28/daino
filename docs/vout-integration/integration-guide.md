@@ -1,8 +1,8 @@
 # Guía de Integración: Ecosistema de Usuarios Vout
 
-> **Versión:** 1.0  
+> **Versión:** 1.1  
 > **Protocolo:** OAuth 2.0 (Authorization Code + PKCE)  
-> **Última actualización:** Marzo 2026
+> **Última actualización:** Octubre 2026
 
 ---
 
@@ -34,6 +34,7 @@ Tu juego necesita saber **quién es el usuario** (para guardar puntuaciones, mos
 - Tu app se registra en Vout con `requires_auth = true`.
 - Recibes un `client_id` (y opcionalmente un `client_secret`).
 - Implementas el flujo OAuth2 estándar descrito a continuación.
+- Si además publicas el juego en el portal, dentro del iframe no hay redirect: el portal te pasa el token por `postMessage` (ver "Identidad dentro del iFrame").
 
 > **Nota:** El protocolo es **exactamente el mismo** para proyectos propios y de terceros. La única diferencia es que los proyectos propios de Vout (`is_first_party = true`) no muestran pantalla de autorización al usuario — la sesión se inicia de forma transparente.
 
@@ -576,16 +577,295 @@ Sin esta cabecera correctamente configurada, el iframe del portal mostrará un c
 
 ---
 
+## Identidad dentro del iFrame (handshake `postMessage`)
+
+Cuando un usuario abre tu juego desde el portal, ya tiene sesión en Vout. Mandarlo a `/oauth/authorize` sería hacerle repetir algo que ya hizo, así que el portal le entrega a tu juego un access token directamente, por `postMessage`. Nunca por la URL.
+
+Ese token es un access token normal de Vout: mismo formato, misma firma y mismos claims que los de `/oauth/token`. Lo validas con el código que ya tienes (ver "Validación Stateless del Token").
+
+### Lo más rápido: el SDK
+
+Vout publica un script que hace todo lo de esta sección por ti. Lo cargas, le dices el origen del portal y listo:
+
+```html
+<script src="https://vout.app/sdk/vout-game.js"></script>
+<script>
+    const vout = VoutGame.connect({
+        portalOrigin: 'https://vout.app',
+
+        // Identidad: llega al conectar y en cada renovación del token.
+        onAuth(session) {
+            // session = { token, expiresAt, voutId, username }
+            // Manda session.token a tu backend y valídalo allí.
+        },
+
+        // Ya no habrá más renovaciones: suelta la identidad.
+        onSessionEnd(reason) {},
+    });
+
+    // Para tu botón de "Salir":
+    // vout.exit();
+</script>
+```
+
+Con eso tu juego ya funciona con el control facial. Las teclas y clics que el jugador hace con la cara llegan a tu página como eventos de teclado y ratón normales (`keydown`, `keyup`, `click`…), así que **tu código de controles de siempre funciona sin tocarlo**.
+
+| Opción | Para qué |
+| :--- | :--- |
+| `portalOrigin` | Obligatorio. El origen exacto del portal. |
+| `onAuth(session)` | Identidad y token. Se llama al conectar y en cada renovación. |
+| `onSessionEnd(reason)` | El portal ya no renovará el token. |
+| `suggestedPreset` | Preset de gestos que tu juego recomienda (ver "Control facial"). |
+| `simulateInput` | `true` por defecto. Ponlo a `false` si prefieres tratar tú las teclas con `onKey` y `onClick`. |
+| `onAction(event, at)` / `onActionEnd(event, at)` | Eventos de juego (`JUMP`, `DUCK`…), si los usas. |
+| `onKey(key)` / `onClick(click)` / `onCursor(x, y)` | La entrada en crudo, por si quieres algo a medida. |
+
+Lo que devuelve: `vout.embedded` (si estás dentro del portal), `vout.session` (la última sesión, o `null`), `vout.exit()` y `vout.disconnect()`.
+
+Fuera del portal, `VoutGame.connect()` no hace nada y `vout.embedded` vale `false`. Puedes llamarlo siempre y usar tu flujo OAuth normal cuando no estés embebido.
+
+El archivo no tiene dependencias. Si prefieres no cargar código desde otro dominio, cópialo a tu proyecto.
+
+El resto de esta sección explica qué pasa por debajo. Léela si quieres implementar el protocolo a mano o entender los límites.
+
+### Los mensajes
+
+| Dirección | Mensaje | Cuándo |
+| :--- | :--- | :--- |
+| juego → portal | `{ type: 'READY', suggestedPreset?: string }` | Tu juego ya puede recibir la identidad. Repítelo hasta que llegue `VOUT_AUTH`. |
+| portal → juego | `{ type: 'VOUT_AUTH', token, expiresAt, voutId, username }` | En respuesta a cada `READY` válido, y otra vez cada vez que el portal renueva el token. |
+| portal → juego | `{ type: 'VOUT_SESSION_END', reason }` | Ya no habrá más renovaciones. `reason` es `'signed_out'`, `'revoked'` o `'unavailable'`. |
+| portal → juego | `{ type: 'VOUT_ACTION', event: string, at: number }` | Empieza una acción: un gesto del usuario mapeado a un evento de juego (control facial). |
+| portal → juego | `{ type: 'VOUT_ACTION_END', event: string, at: number }` | Termina esa acción: el usuario dejó de hacer el gesto. |
+| portal → juego | `{ type: 'VOUT_KEY', code, key, state: 'down' \| 'up', at }` | El usuario pulsa o suelta una tecla con un gesto. `code` y `key` son los de `KeyboardEvent`. |
+| portal → juego | `{ type: 'VOUT_CLICK', button: 'left' \| 'right', at }` | El usuario hace clic con un gesto. Aplícalo donde esté el cursor. |
+| portal → juego | `{ type: 'VOUT_CURSOR', x: number, y: number }` | Cursor por movimiento de cabeza. Coordenadas de 0 a 1, relativas a tu iframe. |
+| juego → portal | `{ type: 'EXIT' }` | El usuario quiere salir. El portal lo lleva al catálogo. |
+| juego → portal | `{ type: 'GAME_STATE', state: 'playing' \| 'paused' \| 'ended', score?: number }` | Reservado. El portal lo acepta, pero todavía no hace nada con él. |
+
+`expiresAt` es la expiración del token en segundos Unix (el mismo valor que su claim `exp`). `at` va en milisegundos Unix.
+
+Ignora cualquier `type` que no conozcas. El protocolo puede crecer y tu juego no debería romperse por ello.
+
+### Cómo ocurre
+
+1. El portal carga tu `embed_url` tal cual, sin parámetros.
+2. Tu juego envía `READY` a `window.parent`.
+3. El portal comprueba dos cosas: que `event.origin` es uno de los `allowed_origins` de tu app (comparación exacta de esquema, host y puerto) y que el mensaje viene del iframe que él mismo creó. Si algo no cuadra, lo descarta sin responder.
+4. El portal responde con `VOUT_AUTH`, dirigido solo a ese origen.
+5. Unos 5 minutos antes de que el token caduque, el portal pide uno nuevo y te manda otro `VOUT_AUTH`. Quédate siempre con el último.
+
+Tu iframe permanece oculto hasta que el handshake termina. Está oculto por opacidad, no con `display: none`: desde el primer momento tiene su tamaño real, así que puedes medir la ventana y arrancar tu bucle de juego con normalidad.
+
+Si no envías `READY` en los 8 segundos siguientes a que cargue tu página, el usuario ve un aviso de "El juego no responde" con un botón para reintentar. Un `READY` que llegue tarde sigue funcionando y quita el aviso solo. Aun así, envíalo en cuanto tu script arranque: `READY` significa "puedo recibir la identidad", no "ya cargué todos mis recursos".
+
+### Qué token recibes
+
+| | App con OAuth (`requires_auth = true`) | Juego solo catálogo |
+| :--- | :--- | :--- |
+| `aud` | Tu `client_id` | Un client interno del portal |
+| `scopes` | `["user:read"]` | `["game:play"]` |
+| Duración | 60 minutos | 60 minutos |
+| Pide consentimiento | Solo si tu app es de terceros y el usuario aún no la autorizó | No |
+
+Si tu app tiene client OAuth, el token está emitido para ti: valida `aud` contra tu `client_id` igual que en el flujo directo, y puedes usarlo como Bearer contra `/api/v1/user/me`.
+
+Si tu juego es solo de catálogo, el token no está emitido para ti. Úsalo, como mucho, para saludar al jugador por su nombre. Si necesitas una identidad en la que puedas confiar (guardar progreso, rankings), registra tu app con `requires_auth = true`.
+
+### Consentimiento
+
+Una app de terceros solo recibe la identidad de un usuario que la haya autorizado. Si entra por primera vez a tu juego desde el portal, antes de cargar tu iframe verá una pantalla de permisos con el scope `user:read`. Al aceptar, entra al juego.
+
+Es el mismo consentimiento que el del flujo directo, no uno aparte:
+
+- Si el usuario ya entró a tu web con "Entrar con Vout", el portal no le vuelve a preguntar.
+- Si autoriza desde el portal, tampoco verá la pantalla cuando entre a tu web pidiendo solo `user:read`.
+- Si lo revoca en `/settings/connected-apps`, el portal deja de renovarte el token y la próxima vez volverá a preguntar.
+
+Las apps propias de Vout (`is_first_party = true`) se saltan esta pantalla.
+
+### Renovación: la hace el portal, no tú
+
+Dentro de un iframe tus cookies son de terceros, y los navegadores las bloquean cada vez más. No cuentes con poder usar tu refresh token ni tu propia sesión mientras estás embebido.
+
+Por eso renueva el portal. Mientras el usuario siga con la pestaña abierta y con sesión en Vout, recibirás un `VOUT_AUTH` nuevo antes de que caduque el anterior.
+
+Cuando el portal intenta renovar y ya no puede, te lo dice con `VOUT_SESSION_END`:
+
+| `reason` | Qué pasó |
+| :--- | :--- |
+| `signed_out` | El usuario cerró sesión en Vout o su sesión caducó. |
+| `revoked` | El usuario revocó el acceso de tu app. |
+| `unavailable` | Tu juego dejó de estar disponible en el portal. |
+
+Al recibirlo, suelta la identidad. Ten en cuenta que el portal se entera en el momento de renovar, no en el instante en que ocurre: el aviso puede llegar hasta 55 minutos después. Si necesitas enterarte antes de una revocación, pregunta a `/api/v1/user/me` desde tu backend antes de una operación sensible: un token revocado recibe un 401 al instante.
+
+Como red de seguridad, si llega la hora de `expiresAt` sin un `VOUT_AUTH` nuevo ni un `VOUT_SESSION_END` (por ejemplo, el usuario se quedó sin conexión), da la sesión por terminada igualmente.
+
+Si el usuario cambia de cuenta de Vout en otra pestaña, el portal recarga la página del juego entera. Tu iframe arranca de cero y recibe la identidad nueva por el camino normal.
+
+> **Ojo en local.** Para el navegador, `http://localhost` y `http://localhost:8090` son el mismo sitio (el puerto no cuenta), así que en tu máquina tus cookies sí viajan dentro del iframe. El bloqueo solo aparece en producción, con dominios distintos. Que funcione en local no demuestra que tu refresh funcione embebido.
+
+### Control facial: qué llega a tu juego
+
+Vout permite jugar con gestos de la cara y movimientos de cabeza. El usuario elige qué hace cada gesto: pulsar una tecla, hacer clic o emitir un evento de juego.
+
+El navegador no deja que el portal simule teclas ni clics dentro de un iframe de otro origen. Por eso el portal no pulsa la tecla: le dice a tu juego cuál pulsar, con un mensaje, y es tu página la que crea el evento.
+
+| El usuario mapeó el gesto a… | Tu juego recibe | Con el SDK |
+| :--- | :--- | :--- |
+| Una tecla | `VOUT_KEY` al pulsar y al soltar | Eventos `keydown` y `keyup` reales |
+| Un clic | `VOUT_CLICK` | Eventos de ratón y puntero reales en la posición del cursor |
+| El cursor con la cabeza | `VOUT_CURSOR` | Eventos `mousemove` y `pointermove` |
+| Un evento de juego | `VOUT_ACTION` y `VOUT_ACTION_END` | Tus callbacks `onAction` y `onActionEnd` |
+
+Lo importante: **cada usuario tiene su propio mapeo**, y lo trae consigo a todos los juegos. La mayoría usa teclas (Espacio para saltar, flechas para moverse). Si tu juego ya se juega con teclado y conviertes `VOUT_KEY` en eventos de teclado, funciona con el mapeo de cualquier usuario sin que tengas que hacer nada más.
+
+Los presets que ofrece Vout:
+
+| Preset | Qué emite |
+| :--- | :--- |
+| `platformer` | Teclas: Espacio, flechas, Z, X, C |
+| `shooter` | Teclas, clic izquierdo y cursor con la cabeza |
+| `accessible` | Teclas: Espacio, Enter, flechas, Escape |
+| `runner` | Eventos de juego `JUMP` y `DUCK` |
+
+Si tu juego tiene acciones propias que no encajan con una tecla, puedes recomendar un preset enviando `suggestedPreset` en tu `READY` (por ejemplo `'runner'`). El portal le ofrecerá al usuario cambiar a ese preset durante la partida, sin tocar su configuración guardada. Es una sugerencia: el usuario puede rechazarla, así que no dependas solo de ella.
+
+#### Si conviertes las teclas a mano
+
+Sin el SDK, esto es lo mínimo para que una tecla del portal llegue a tu código de teclado:
+
+```js
+function onVoutKey(message) {
+    const event = new KeyboardEvent(message.state === 'down' ? 'keydown' : 'keyup', {
+        key: message.key,
+        code: message.code,
+        bubbles: true,
+        cancelable: true,
+    });
+    (document.activeElement || document.body).dispatchEvent(event);
+}
+```
+
+Tres cosas que el SDK ya resuelve y que tendrás que cuidar tú:
+
+- **`keyCode`.** Un evento creado así tiene `keyCode` a 0. Si tu juego o tu motor (Phaser, por ejemplo) lee `event.keyCode`, defínelo con `Object.defineProperty`.
+- **Pulsaciones muy cortas.** Un gesto en modo "toque" llega como tecla abajo y arriba seguidas. Si consultas el estado de las teclas una vez por fotograma, mantén la tecla un mínimo (el SDK usa 80 ms).
+- **Dónde escuchas.** El evento se despacha sobre el elemento con el foco y sube hasta `document` y `window`. Si escuchas en un `<canvas>` que no tiene el foco, no te llega.
+
+Estos eventos no cuentan como una acción real del usuario para el navegador (`isTrusted` es `false`). Sirven para tu lógica de juego, pero no para lo que exige un gesto real: entrar en pantalla completa, desbloquear el audio o copiar al portapapeles.
+
+#### Toques y acciones mantenidas
+
+Cada acción tiene un principio y un final. `VOUT_ACTION` llega cuando el usuario empieza el gesto y `VOUT_ACTION_END`, con el mismo `event`, cuando lo deja.
+
+- Si tu juego funciona a toques (saltar), quédate con `VOUT_ACTION` e ignora el final.
+- Si tiene mecánicas de mantener (planear, un propulsor), empieza con `VOUT_ACTION` y para con `VOUT_ACTION_END`.
+
+Dos detalles que conviene saber:
+
+- **El final no llega igual de rápido para todos los gestos.** Con la cabeza (arriba, abajo, a los lados) es inmediato. Con un gesto de la cara (cejas, boca) llega entre 0,6 y 0,75 segundos después de que el usuario relaje el gesto, porque el portal lo deduce al dejar de verlo. Para una acción que hay que soltar con precisión, la cabeza funciona mejor. Pasa lo mismo al soltar una tecla mantenida: con un gesto de la cara, el `VOUT_KEY` de soltar llega alrededor de medio segundo tarde.
+- **Dos gestos pueden mantener la misma acción.** En el preset `runner`, tanto levantar las cejas como subir la cabeza emiten `JUMP`. Puedes recibir dos `VOUT_ACTION` seguidos del mismo evento; el `VOUT_ACTION_END` llega una sola vez, cuando el usuario suelta el último.
+
+El portal cierra siempre lo que abre: si el usuario apaga la cámara, cambia de pestaña o cambia de preset con una acción en curso, recibes su `VOUT_ACTION_END`.
+
+#### Cuándo ocurrió el gesto
+
+`at` te dice cuándo pasó de verdad, en milisegundos Unix del reloj del navegador (el mismo que tu `Date.now()`, porque el portal y tu juego corren en el mismo equipo). Entre el gesto y el mensaje pasa el tiempo de analizar la imagen; con `at` puedes descontarlo, algo útil en un juego de ritmo.
+
+- En `VOUT_ACTION`, `at` es el instante de la imagen de cámara en la que el portal vio empezar el gesto.
+- En `VOUT_ACTION_END`, es la mejor estimación de cuándo terminó: la imagen en la que la cabeza salió de la zona, o la última en la que se vio el gesto de la cara.
+
+Trátalo como una pista y acótalo: si `at` queda en el futuro o más de un par de segundos atrás, usa el momento en que te llegó el mensaje.
+
+El usuario también puede mapear un gesto a un evento con el nombre que quiera, y te llegará tal cual en `event`. Trátalo como texto que no controlas: compáralo contra tu lista de acciones y descarta el resto.
+
+### Ejemplo mínimo sin el SDK
+
+```js
+// El origen del portal, fijo en tu configuración. Nunca lo deduzcas del mensaje.
+const VOUT_ORIGIN = 'https://vout.app';
+
+let session = null;
+
+window.addEventListener('message', (event) => {
+    if (event.origin !== VOUT_ORIGIN || event.source !== window.parent) return;
+
+    const message = event.data;
+    if (!message || typeof message.type !== 'string') return;
+
+    switch (message.type) {
+        case 'VOUT_AUTH':
+            // Llega tras READY y en cada renovación: quédate con el último.
+            session = { token: message.token, expiresAt: message.expiresAt };
+            // Mándalo a tu backend y valídalo allí (firma, iss, aud, exp).
+            break;
+        case 'VOUT_SESSION_END':
+            // No habrá más renovaciones: suelta la identidad.
+            session = null;
+            break;
+        case 'VOUT_ACTION':
+            // message.at: cuándo empezó el gesto (ms Unix).
+            if (message.event === 'JUMP') startJump(message.at);
+            if (message.event === 'DUCK') startDuck(message.at);
+            break;
+        case 'VOUT_ACTION_END':
+            // Solo te hace falta si tienes acciones que se mantienen.
+            if (message.event === 'JUMP') endJump(message.at);
+            if (message.event === 'DUCK') endDuck(message.at);
+            break;
+        case 'VOUT_KEY':
+            // Una tecla del mapeo del usuario: conviértela en un evento real.
+            onVoutKey(message);
+            break;
+        // VOUT_CLICK, VOUT_CURSOR y cualquier tipo desconocido: ignóralos si no los usas.
+    }
+});
+
+// Repite READY hasta que llegue VOUT_AUTH, por si el portal aún no escuchaba.
+(function announce() {
+    if (session) return;
+    window.parent.postMessage({ type: 'READY', suggestedPreset: 'runner' }, VOUT_ORIGIN);
+    setTimeout(announce, 500);
+})();
+
+function exitToPortal() {
+    window.parent.postMessage({ type: 'EXIT' }, VOUT_ORIGIN);
+}
+```
+
+Para saber si estás embebido, comprueba `window.parent !== window`. Fuera del portal, usa el flujo OAuth normal.
+
+### Reglas de seguridad
+
+- **Origen exacto en las dos direcciones.** Al enviar, pasa el origen del portal como `targetOrigin`, nunca `'*'`. Al recibir, descarta todo mensaje cuyo `event.origin` no sea exactamente el del portal.
+- **`voutId` y `username` son para pintar la interfaz, no para decidir nada.** Sirven para mostrar el nombre al instante. La identidad verificable es el claim `vout_id` del token, una vez validado.
+- **Valida el token como cualquier otro:** firma contra el JWKS, `iss`, `aud` igual a tu `client_id` y `exp`. Hazlo en tu backend.
+- **Guarda el token en memoria.** No lo escribas en `localStorage` ni lo pongas en una URL.
+
+### Lo que el iframe no te deja hacer
+
+El portal carga tu juego con `sandbox="allow-scripts allow-same-origin allow-orientation-lock"` y `allow="autoplay; fullscreen; clipboard-write; web-share"`. En la práctica:
+
+- **Sí puedes:** ejecutar scripts, usar `fetch`, reproducir audio, entrar en pantalla completa, bloquear la orientación de la pantalla (estando en pantalla completa), copiar al portapapeles y abrir el diálogo de compartir del sistema. Estas dos últimas solo en respuesta a una acción del usuario, como un clic.
+- **No puedes:** abrir ventanas emergentes, usar `alert()` o `confirm()`, enviar formularios HTML clásicos, leer el portapapeles ni navegar la ventana del portal. Para salir, envía `EXIT`.
+
+---
+
 ## Preguntas Frecuentes
 
 ### ¿Necesito una librería específica de Vout?
-**No.** Vout usa OAuth2 estándar. Cualquier librería OAuth2 compatible funciona.
+**No.** Vout usa OAuth2 estándar. Cualquier librería OAuth2 compatible funciona. Para el juego embebido en el portal hay un SDK opcional (`/sdk/vout-game.js`) que te ahorra implementar el protocolo del iframe.
 
 ### ¿Qué pasa si mi juego no tiene backend?
 Si tu juego es solo frontend (HTML/JS sin servidor), usa un cliente PKCE (`--public`) que no requiere `client_secret`. El flujo funciona directamente desde el navegador.
 
 ### ¿Puedo registrar mi app pero no usar autenticación?
 **Sí.** Registra tu app con `requires_auth = false`. Aparecerá en el catálogo de Vout sin necesidad de OAuth2.
+
+### ¿Puedo renovar el token desde dentro del iframe del portal?
+**No cuentes con ello.** Embebido, tus cookies son de terceros y el navegador puede bloquearlas. El portal renueva el token por ti y te lo reenvía con otro `VOUT_AUTH` antes de que caduque el anterior (ver "Identidad dentro del iFrame").
 
 ### ¿Cómo se diferencia un proyecto propio de uno de terceros?
 Las apps marcadas como `is_first_party = true` no muestran el prompt de autorización al usuario. El flujo OAuth2 es idéntico en ambos casos — la única diferencia es la experiencia de usuario.

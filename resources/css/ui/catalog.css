@@ -106,7 +106,8 @@ dialog.daino-catalog[open] {
     background: var(--d-edge);
 }
 
-.daino-catalog__tab:focus-visible {
+.daino-catalog__tab:focus-visible,
+.daino-catalog__tab[data-pointed] {
     outline: var(--u2) solid var(--d-spike);
     outline-offset: calc(-1 * var(--u2));
 }
@@ -185,7 +186,8 @@ dialog.daino-catalog[open] {
     --card-line: var(--d-bone);
 }
 
-.daino-card__open:focus-visible {
+.daino-card__open:focus-visible,
+.daino-card__open[data-pointed] {
     outline: none;
     --card-line: var(--d-spike);
     box-shadow: inset 0 0 0 var(--u2) var(--d-spike);
@@ -232,7 +234,8 @@ dialog.daino-catalog[open] {
 }
 
 .daino-card:hover .daino-card__play,
-.daino-card__open:focus-visible .daino-card__play {
+.daino-card__open:focus-visible .daino-card__play,
+.daino-card__open[data-pointed] .daino-card__play {
     background: var(--d-beat);
     color: var(--d-ink);
 }
@@ -501,7 +504,8 @@ dialog.daino-catalog[open] {
 
 .daino-detail__withdraw:hover:not(:disabled) { color: var(--d-bone); }
 .daino-detail__withdraw:disabled { opacity: 0.45; cursor: not-allowed; }
-.daino-detail__withdraw:focus-visible { outline: var(--u2) solid var(--d-spike); outline-offset: var(--u2); }
+.daino-detail__withdraw:focus-visible,
+.daino-detail__withdraw[data-pointed] { outline: var(--u2) solid var(--d-spike); outline-offset: var(--u2); }
 
 /* ----- Lo que elige el autor: dificultad (Ola 5) y escenario (T02.1) ----- */
 

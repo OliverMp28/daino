@@ -46,27 +46,28 @@ const bridge = await import('../../resources/js/iframe/bridge.js');
 const client = await import('../../resources/js/api/client.js');
 const catalog = await import('../../resources/js/api/levelsCache.js');
 
+// Un mensaje del portal: de su origen y de la ventana que contiene al juego.
 function sendFromParent(data, origin = VOUT) {
-    win.dispatchEvent(new MessageEvent('message', { data, origin }));
+    win.dispatchEvent(Object.assign(new Event('message'), { data, origin, source: win.parent }));
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 // --------------------------- D12: identidad embebida ---------------------------
 
-test('D12: embebido, el AUTH_TOKEN de Vout se traduce a usuario con GET /api/me', async () => {
+test('D12: embebido, el VOUT_AUTH de Vout se traduce a usuario con GET /api/me', async () => {
     assert.equal(bridge.startBridge().embedded, true);
-    assert.deepEqual(posted[0], { msg: { type: 'READY' }, origin: VOUT }, 'READY al origen de Vout, nunca "*"');
+    assert.deepEqual(posted[0], { msg: { type: 'READY', suggestedPreset: 'runner' }, origin: VOUT }, 'READY al origen de Vout, nunca "*"');
 
     let loginEvent = null;
     win.addEventListener('daino:auth:login', (ev) => { loginEvent = ev.detail; }, { once: true });
 
     const init = client.init();
-    sendFromParent({ type: 'AUTH_TOKEN', token: 'intruso' }, 'https://evil.test');   // origen ajeno: ignorado
+    sendFromParent({ type: 'VOUT_AUTH', token: 'intruso' }, 'https://evil.test');   // origen ajeno: ignorado
     await tick();
     assert.equal(calls.filter((c) => c.url === '/api/me').length, 0, 'un mensaje de otro origen no hace nada');
 
-    sendFromParent({ type: 'AUTH_TOKEN', token: 'good' });
+    sendFromParent({ type: 'VOUT_AUTH', token: 'good' });
     await init;
 
     assert.equal(client.getUser()?.username, 'embebida', 'antes quedaba a null y "Míos" no existía embebido');
@@ -77,7 +78,7 @@ test('D12: embebido, el AUTH_TOKEN de Vout se traduce a usuario con GET /api/me'
 
 test('D12: una renovación del token no vuelve a pedir identidad y se usa en adelante', async () => {
     const before = calls.filter((c) => c.url === '/api/me').length;
-    sendFromParent({ type: 'AUTH_TOKEN', token: 'renovado' });
+    sendFromParent({ type: 'VOUT_AUTH', token: 'renovado' });
     await tick();
     assert.equal(calls.filter((c) => c.url === '/api/me').length, before);
 

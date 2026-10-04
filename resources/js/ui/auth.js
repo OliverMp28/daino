@@ -27,6 +27,17 @@ let onExpired = null;
 
 export function mount(container) {
     if (chipEl !== null) return chipEl;
+
+    // La sesión puede acabarse sin que nadie la cierre (30 días sin entrar, o
+    // acceso retirado desde Vout). Se dice, también dentro del portal: quedarse
+    // sin sesión sin más parece un fallo. Puede haber ocurrido al arrancar,
+    // antes de montar esto.
+    if (onExpired === null) {
+        onExpired = () => announceSessionLost();
+        window.addEventListener('daino:auth:expired', onExpired);
+        announceSessionLost();
+    }
+
     if (isBridgeEmbedded()) {
         // Modo iframe: NO renderizamos chip. Vout ya lo muestra.
         return null;
@@ -39,21 +50,18 @@ export function mount(container) {
 
     onLogin = () => render();
     onLogout = () => render();
-    // La sesión puede acabarse sin que nadie la cierre (30 días sin entrar, o
-    // acceso retirado desde Vout). Se dice: pasar a "Iniciar sesión" sin más
-    // parece un fallo. Puede haber ocurrido al arrancar, antes de montar esto.
-    onExpired = () => announceSessionLost();
     window.addEventListener('daino:auth:login', onLogin);
     window.addEventListener('daino:auth:logout', onLogout);
-    window.addEventListener('daino:auth:expired', onExpired);
-    announceSessionLost();
 
     return chipEl;
 }
 
 function announceSessionLost() {
     if (!takeSessionLost()) return;
-    showToast('Tu sesión ha caducado. Inicia sesión otra vez para guardar tus marcas.', 'info', 6000);
+    // Dentro del portal no hay "Iniciar sesión" que ofrecer: la sesión es la de Vout.
+    showToast(isBridgeEmbedded()
+        ? 'Tu sesión de Vout ha terminado. Tus marcas ya no se guardan.'
+        : 'Tu sesión ha caducado. Inicia sesión otra vez para guardar tus marcas.', 'info', 6000);
 }
 
 export function dispose() {

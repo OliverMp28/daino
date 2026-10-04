@@ -104,13 +104,11 @@ final class HomeController
             'uploadMaxMb'  => Env::int('UPLOAD_MAX_SIZE_MB', 10),
         ]);
 
-        // Quién puede embeber Daino (Ola 2, defecto D21). Nginx envía
-        // `X-Frame-Options: SAMEORIGIN` a todo, y eso impedía que Vout —otro
-        // origen— mostrara el juego en su iframe: el modo embebido entero era
-        // inalcanzable. X-Frame-Options no admite listas de orígenes;
-        // `frame-ancestors` sí, y los navegadores que lo entienden ignoran
-        // X-Frame-Options cuando está presente (CSP nivel 2). Los que no lo
-        // entienden siguen protegidos por la cabecera de nginx.
+        // Quién puede embeber Daino (Ola 2, defecto D21): ella misma y el portal
+        // de Vout. `X-Frame-Options` no admite listas de orígenes; `frame-ancestors`
+        // sí. Nginx deja de mandar X-Frame-Options a las respuestas que traen esta
+        // cabecera (docker/nginx/default.conf): la guía de Vout pide no enviar las
+        // dos.
         return Response::html($html)
             ->header('Content-Security-Policy', 'frame-ancestors ' . self::frameAncestors($voutOrigin));
     }

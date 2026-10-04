@@ -158,7 +158,10 @@ export function range({ value, onInput, id, label }) {
 }
 
 /**
- * Opciones en fila, una elegida (un grupo de radio): las flechas cambian de opción.
+ * Opciones en fila, una elegida (un grupo de radio): las flechas a izquierda y
+ * derecha cambian de opción. Arriba y abajo no son del grupo: quien recorre la
+ * interfaz con flechas (el control facial de Vout, iframe/remote.js) sale con ellas
+ * hacia lo que haya encima o debajo, en vez de quedarse dando vueltas en la fila.
  *
  * @template T
  * @param {{ label: string, options: Array<{ value: T, label: string, className?: string, node?: Node }>, value: T, onChange: (value: T) => void }} cfg
@@ -193,7 +196,7 @@ export function segmented({ label, options, value, onChange }) {
         onChange(value);
     };
     group.addEventListener('keydown', (ev) => {
-        const step = ev.key === 'ArrowRight' || ev.key === 'ArrowDown' ? 1 : ev.key === 'ArrowLeft' || ev.key === 'ArrowUp' ? -1 : 0;
+        const step = ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0;
         if (step === 0) return;
         ev.preventDefault();
         const i = options.findIndex((o) => o.value === value);

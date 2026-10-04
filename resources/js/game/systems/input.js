@@ -1,8 +1,8 @@
 // input.js — fuente única de input del juego. Canales:
 //
 //   'jump'      — pulsación de salto. Teclado Space/ArrowUp (sin auto-repeat),
-//                 touch en la MITAD IZQUIERDA del viewport, GAME_ACTION 'JUMP'
-//                 del bridge (modo iframe en Vout).
+//                 touch en la MITAD IZQUIERDA del viewport, y lo que el jugador
+//                 hace con la cara dentro del portal de Vout (iframe/remote.js).
 //   'jumpEnd'   — se soltó el botón/tap de salto. Corriendo no cambia nada (el
 //                 salto es siempre el mismo arco); en el vuelo, soltar es bajar.
 //   'duckStart' — ↓/KeyS o touch en la MITAD DERECHA (doc 06 §6). Un toque basta
@@ -16,6 +16,15 @@
 //     (un frame largo), la tecla se procesa tarde, pero la GameSession la aplica
 //     en el paso de física que corresponde a cuándo se pulsó, no a cuándo se
 //     leyó. En un juego de ritmo esa diferencia decide si el salto cae en el beat.
+//   - Cada pulsación tiene una FUENTE (una tecla, un dedo, un gesto de Vout) y
+//     una fuente no pulsa dos veces sin soltar: `press` y `release` van por
+//     parejas. Un mismo salto no se cuenta dos veces aunque el aviso llegue
+//     repetido (dos gestos de Vout que mantienen la misma acción, una tecla que
+//     ya estaba abajo), y solo "suelta" lo que estaba pulsado.
+//   - Las pulsaciones del control facial de Vout llevan `remote: true`. Su
+//     "soltar" llega tarde (con un gesto de la cara, medio segundo o más después
+//     de relajarlo), así que no sirve para medir un salto: corriendo cuentan como
+//     un toque (el arco del nivel), y solo el propulsor atiende a cuánto duran.
 //   - Singleton que la GameSession instancia en `start()` y dispone en `stop()`.
 //   - EventEmitter mínimo: `on(event, fn)`, `off(event, fn)`.
 //   - Touch: el lado se decide en touchstart y se recuerda por touch id — el
@@ -28,10 +37,9 @@
 //     el teclado.
 //   - Nada se queda pulsado: si la ventana pierde el foco o la pestaña se oculta
 //     con una tecla o un dedo abajo, su `keyup`/`touchend` no llega nunca. Al
-//     perder el foco se suelta todo lo que estuviera mantenido.
+//     perder el foco se suelta lo que estuviera mantenido en ESTE equipo; lo que
+//     mantiene el portal lo suelta el portal, tenga o no el foco el juego.
 //   - Desacoplado de Pixi y de la entidad — la GameSession suscribe.
-
-import { setOnGameAction, isBridgeEmbedded } from '../../iframe/bridge.js';
 
 const KEYS_JUMP = new Set(['Space', 'ArrowUp']);
 const KEYS_DUCK = new Set(['ArrowDown', 'KeyS']);
@@ -62,9 +70,37 @@ export function takesTouch(target, playing, dialogOpen) {
     return typeof target?.closest === 'function' && target.closest(PLAY_SURFACE) !== null;
 }
 
-/** Duración del "tap" sintético de salto/agacharse que llega por el bridge
- *  (postMessage no trae keyup — cerramos el gesto tras este delay). */
-const BRIDGE_TAP_MS = 160;
+/**
+ * Lo que dura una pulsación que llega sin su "soltar" (un clic del control facial
+ * de Vout). Corriendo da igual lo que dure; con el propulsor es un empujón corto.
+ */
+const TAP_MS = 90;
+
+/**
+ * Eventos de teclado que no vienen de un teclado: el control facial de Vout
+ * (iframe/remote.js) crea en la página las teclas del mapeo de cada usuario. Aquí
+ * se apunta cuándo ocurrió el gesto de verdad (el evento se crea después).
+ * @type {WeakMap<Event, number>}
+ */
+const REMOTE_EVENTS = new WeakMap();
+
+/**
+ * Marca un evento de teclado como creado por el mando del portal.
+ *
+ * @template {Event} E
+ * @param {E} ev
+ * @param {number} timeStamp  Cuándo ocurrió el gesto, en el reloj de `performance.now()`.
+ * @returns {E}
+ */
+export function markRemote(ev, timeStamp) {
+    REMOTE_EVENTS.set(ev, timeStamp);
+    return ev;
+}
+
+/**
+ * @typedef {{ timeStamp: number, remote?: boolean }} Press
+ *   `remote`: viene del control facial de Vout (ver la cabecera).
+ */
 
 class InputHub {
     constructor() {
@@ -74,11 +110,13 @@ class InputHub {
         this._keyUp = null;
         this._touchStart = null;
         this._touchEnd = null;
-        /** @type {Map<number, 'jump' | 'duck'>} side abierto por cada touch id. */
-        this._touchSides = new Map();
-        /** @type {Map<string, 'jump' | 'duck'>} canal abierto por cada tecla mantenida. */
-        this._keysHeld = new Map();
-        this._releaseAll = null;
+        /**
+         * Lo que está pulsado ahora, por fuente: `key:Space`, `touch:3`, `action:JUMP`…
+         * @type {Map<string, { channel: 'jump' | 'duck', remote: boolean }>}
+         */
+        this._held = new Map();
+        this._taps = 0;
+        this._releaseLocal = null;
         this._onHidden = null;
         this._mounted = false;
     }
@@ -109,8 +147,51 @@ class InputHub {
     }
 
     /**
-     * Cablea los listeners DOM y el handler del bridge. Idempotente — segunda
-     * llamada es no-op para evitar duplicar listeners si el caller despista.
+     * Una fuente empieza a pulsar. Si ya estaba pulsando no pasa nada: una
+     * pulsación, un salto.
+     *
+     * @param {string} source              Quién pulsa (`key:Space`, `touch:3`, `action:JUMP`).
+     * @param {'jump' | 'duck'} channel
+     * @param {Press} [payload]
+     * @returns {boolean}  false si esa fuente ya estaba pulsando.
+     */
+    press(source, channel, payload = now()) {
+        if (this._held.has(source)) return false;
+        this._held.set(source, { channel, remote: payload.remote === true });
+        this.emit(channel === 'jump' ? 'jump' : 'duckStart', payload);
+        return true;
+    }
+
+    /**
+     * Una fuente suelta. Solo cuenta si estaba pulsando.
+     *
+     * @param {string} source
+     * @param {Press} [payload]
+     * @returns {boolean}  false si esa fuente no estaba pulsando.
+     */
+    release(source, payload = now()) {
+        const held = this._held.get(source);
+        if (held === undefined) return false;
+        this._held.delete(source);
+        this.emit(held.channel === 'jump' ? 'jumpEnd' : 'duckEnd', payload);
+        return true;
+    }
+
+    /**
+     * Una pulsación que llega entera, sin su "soltar" (un clic): se suelta sola.
+     *
+     * @param {'jump' | 'duck'} channel
+     * @param {Press} [payload]
+     */
+    tap(channel, payload = now()) {
+        const source = `tap:${++this._taps}`;
+        this.press(source, channel, payload);
+        setTimeout(() => this.release(source), TAP_MS);
+    }
+
+    /**
+     * Cablea los listeners DOM. Idempotente — segunda llamada es no-op para
+     * evitar duplicar listeners si el caller despista.
      */
     setup() {
         if (this._mounted) return;
@@ -130,9 +211,7 @@ class InputHub {
                 // ya cubre el "pulsé un pelín antes de aterrizar").
                 ev.preventDefault();
                 if (ev.repeat) return;
-                const channel = KEYS_JUMP.has(ev.code) ? 'jump' : 'duck';
-                this._keysHeld.set(ev.code, channel);
-                this.emit(channel === 'jump' ? 'jump' : 'duckStart', stamp(ev));
+                this.press(`key:${ev.code}`, KEYS_JUMP.has(ev.code) ? 'jump' : 'duck', stamp(ev));
                 return;
             }
             if (KEYS_PAUSE.has(ev.code)) {
@@ -146,23 +225,22 @@ class InputHub {
             }
         };
         this._keyUp = (ev) => {
-            this._keysHeld.delete(ev.code);
-            if (KEYS_JUMP.has(ev.code)) this.emit('jumpEnd', stamp(ev));
-            else if (KEYS_DUCK.has(ev.code)) this.emit('duckEnd', stamp(ev));
+            this.release(`key:${ev.code}`, stamp(ev));
         };
         window.addEventListener('keydown', this._keyDown);
         window.addEventListener('keyup', this._keyUp);
 
-        // Sin foco no llegan los `keyup` ni los `touchend`: se suelta todo ahora.
-        this._releaseAll = () => {
+        // Sin foco no llegan los `keyup` ni los `touchend`: se suelta ahora lo que
+        // estuviera pulsado en este equipo. Lo del portal de Vout no: su "soltar"
+        // llega por mensaje, con foco o sin él.
+        this._releaseLocal = () => {
             const at = now();
-            for (const channel of this._keysHeld.values()) this.emit(channel === 'jump' ? 'jumpEnd' : 'duckEnd', at);
-            for (const side of this._touchSides.values()) this.emit(side === 'jump' ? 'jumpEnd' : 'duckEnd', at);
-            this._keysHeld.clear();
-            this._touchSides.clear();
+            for (const [source, held] of [...this._held]) {
+                if (!held.remote) this.release(source, at);
+            }
         };
-        this._onHidden = () => { if (document.hidden) this._releaseAll(); };
-        window.addEventListener('blur', this._releaseAll);
+        this._onHidden = () => { if (document.hidden) this._releaseLocal(); };
+        window.addEventListener('blur', this._releaseLocal);
         document.addEventListener('visibilitychange', this._onHidden);
 
         this._touchStart = (ev) => {
@@ -172,40 +250,17 @@ class InputHub {
             ev.preventDefault();
             const half = window.innerWidth / 2;
             for (const t of ev.changedTouches) {
-                const side = t.clientX < half ? 'jump' : 'duck';
-                this._touchSides.set(t.identifier, side);
-                this.emit(side === 'jump' ? 'jump' : 'duckStart', stamp(ev));
+                this.press(`touch:${t.identifier}`, t.clientX < half ? 'jump' : 'duck', stamp(ev));
             }
         };
         this._touchEnd = (ev) => {
-            for (const t of ev.changedTouches) {
-                const side = this._touchSides.get(t.identifier);
-                if (!side) continue;
-                this._touchSides.delete(t.identifier);
-                this.emit(side === 'jump' ? 'jumpEnd' : 'duckEnd', stamp(ev));
-            }
+            for (const t of ev.changedTouches) this.release(`touch:${t.identifier}`, stamp(ev));
         };
         // passive:false porque hacemos preventDefault. En móviles el navegador
         // queja si lo dejas passive y luego cancelas el evento.
         document.body.addEventListener('touchstart', this._touchStart, { passive: false });
         document.body.addEventListener('touchend', this._touchEnd);
         document.body.addEventListener('touchcancel', this._touchEnd);
-
-        // Bridge: solo si estamos embebidos (Vout). Sin keyup remoto — el End
-        // se sintetiza con un timer corto (medio salto / agachada breve).
-        if (isBridgeEmbedded()) {
-            setOnGameAction((payload) => {
-                // postMessage no trae la marca de la pulsación original: la
-                // mejor aproximación es el instante en que llega el mensaje.
-                if (payload === 'JUMP') {
-                    this.emit('jump', now());
-                    setTimeout(() => this.emit('jumpEnd', now()), BRIDGE_TAP_MS);
-                } else if (payload === 'DUCK') {
-                    this.emit('duckStart', now());
-                    setTimeout(() => this.emit('duckEnd', now()), BRIDGE_TAP_MS * 2);
-                }
-            });
-        }
     }
 
     /** Despide listeners. La GameSession llama esto en `stop()`. */
@@ -213,18 +268,16 @@ class InputHub {
         if (!this._mounted) return;
         if (this._keyDown) window.removeEventListener('keydown', this._keyDown);
         if (this._keyUp) window.removeEventListener('keyup', this._keyUp);
-        if (this._releaseAll) window.removeEventListener('blur', this._releaseAll);
+        if (this._releaseLocal) window.removeEventListener('blur', this._releaseLocal);
         if (this._onHidden) document.removeEventListener('visibilitychange', this._onHidden);
         if (this._touchStart) document.body.removeEventListener('touchstart', this._touchStart);
         if (this._touchEnd) {
             document.body.removeEventListener('touchend', this._touchEnd);
             document.body.removeEventListener('touchcancel', this._touchEnd);
         }
-        if (isBridgeEmbedded()) setOnGameAction(null);
         this._handlers.clear();
-        this._touchSides.clear();
-        this._keysHeld.clear();
-        this._releaseAll = null;
+        this._held.clear();
+        this._releaseLocal = null;
         this._onHidden = null;
         this._keyDown = null;
         this._keyUp = null;
@@ -235,11 +288,17 @@ class InputHub {
 }
 
 /**
- * Payload de una emisión: el instante real del evento.
+ * Payload de una emisión: el instante real del evento. El de una tecla creada por
+ * el mando del portal es el de su gesto.
+ *
  * `Event.timeStamp` usa el mismo reloj que `performance.now()` en todos los
  * navegadores actuales. Si faltara, el instante de procesado es la alternativa.
+ *
+ * @returns {Press}
  */
 function stamp(ev) {
+    const remote = REMOTE_EVENTS.get(ev);
+    if (remote !== undefined) return { timeStamp: remote, remote: true };
     return { timeStamp: Number.isFinite(ev.timeStamp) && ev.timeStamp > 0 ? ev.timeStamp : performance.now() };
 }
 

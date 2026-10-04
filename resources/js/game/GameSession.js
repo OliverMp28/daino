@@ -842,7 +842,9 @@ export class GameSession {
      * Encola una acción del jugador fechada en el instante en que se pulsó.
      *
      * @param {'jump'|'jumpEnd'|'duckStart'|'duckEnd'} action
-     * @param {{ timeStamp?: number }} [payload]  Marca del evento del navegador.
+     * @param {{ timeStamp?: number, remote?: boolean }} [payload]  Marca del evento
+     *        del navegador. `remote`: viene del control facial de Vout, que avisa
+     *        tarde de cuándo se suelta: su salto no cuenta como mantenido.
      * @param {number} [songT]  Instante de canción explícito (herramientas y
      *        pruebas); si se da, sustituye a la conversión desde `timeStamp`.
      */
@@ -860,7 +862,7 @@ export class GameSession {
             nowMs,
             this._physics.time ?? -Infinity,
         );
-        this._inputs.push(action, at);
+        this._inputs.push(action === 'jump' && payload?.remote === true ? 'jumpTap' : action, at);
         if (starts) this._checkOnBeat(action, at);
         if (action === 'jump') this._timing.record(at);
     }
