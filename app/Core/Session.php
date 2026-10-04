@@ -83,21 +83,45 @@ final class Session
     {
         $_SESSION = [];
         if (ini_get('session.use_cookies')) {
-            $params = session_get_cookie_params();
-            setcookie(
-                self::COOKIE_NAME,
-                '',
-                [
-                    'expires'  => time() - 42000,
-                    'path'     => $params['path'],
-                    'domain'   => $params['domain'],
-                    'secure'   => $params['secure'],
-                    'httponly' => $params['httponly'],
-                    'samesite' => $params['samesite'] ?? 'Lax',
-                ],
-            );
+            Cookies::set(self::COOKIE_NAME, '', self::cookieAttrs(time() - 42000));
         }
-        session_destroy();
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_destroy();
+        }
+    }
+
+    /**
+     * Vuelve a enviar la cookie de sesión con la caducidad contada desde ahora.
+     *
+     * PHP solo la envía al crear la sesión, así que caducaba a los
+     * SESSION_LIFETIME_MIN del login aunque se entrase a diario, mientras que la
+     * cookie del refresh token se renueva en cada refresco: las dos tienen que
+     * caducar a la vez. Se llama al renovar el access token.
+     */
+    public static function keepAlive(): void
+    {
+        $id = session_id();
+        if (!is_string($id) || $id === '') {
+            return;
+        }
+        $lifetime = (int) session_get_cookie_params()['lifetime'];
+        Cookies::set(self::COOKIE_NAME, $id, self::cookieAttrs($lifetime > 0 ? time() + $lifetime : 0));
+    }
+
+    /**
+     * @return array{expires: int, path: string, domain: string, secure: bool, httponly: bool, samesite: string}
+     */
+    private static function cookieAttrs(int $expires): array
+    {
+        $params = session_get_cookie_params();
+        return [
+            'expires'  => $expires,
+            'path'     => $params['path'],
+            'domain'   => $params['domain'],
+            'secure'   => $params['secure'],
+            'httponly' => $params['httponly'],
+            'samesite' => $params['samesite'] ?? 'Lax',
+        ];
     }
 
     /**

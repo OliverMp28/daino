@@ -3,13 +3,16 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Core\Cookies;
 use App\Core\Env;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Models\User;
+use App\Services\JwksUnavailableException;
 use App\Services\JwtVerifier;
 use App\Services\PkceCookie;
+use App\Services\UserProvisioner;
 use App\Services\VoutAuthService;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 
@@ -23,18 +26,32 @@ use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
  *   POST /auth/refresh   → usa cookie daino_refresh para renovar tokens.
  *   GET  /api/me/token   → devuelve access_token + csrf_token al frontend.
  *
+ * Cómo dura una sesión: el access token de Vout vale 60 min; el refresh token
+ * (cookie `daino_refresh`) y la sesión de Daino, 30 días contados desde el
+ * último refresco. Mientras se entre al menos una vez cada 30 días no hay que
+ * volver a iniciar sesión: el cliente pide un token nuevo con `/auth/refresh`
+ * cuando `/api/me/token` o la API le dicen `must_refresh`.
+ *
  * CSRF: las rutas POST se protegen con CsrfMiddleware en el router; este
  * controller asume que el middleware ya validó cuando llega.
  *
- * VoutAuthService y JwtVerifier son inyectables por constructor para tests
- * (sin tocar Vout real). En runtime, el Router instancia con `new` sin args
- * y los services usan `fromEnv()` lazy.
+ * VoutAuthService, JwtVerifier y UserProvisioner son inyectables por
+ * constructor para tests (sin tocar Vout real). En runtime, el Router
+ * instancia con `new` sin args y los services usan `fromEnv()` lazy.
  */
 final class AuthController
 {
+    /**
+     * Con más de esto por delante, `/auth/refresh` devuelve el token de la
+     * sesión en vez de pedir otro a Vout. Va a juego con `REFRESH_MARGIN_MS`
+     * de `resources/js/api/client.js`: el cliente renueva justo por debajo.
+     */
+    private const REUSE_MARGIN_S = 60;
+
     public function __construct(
         private readonly ?VoutAuthService $vout = null,
         private readonly ?JwtVerifier $jwt = null,
+        private readonly ?UserProvisioner $users = null,
     ) {
     }
 
@@ -108,10 +125,7 @@ final class AuthController
             return Response::html('Login con Vout falló — vuelve a intentarlo' . $detail, 502);
         }
 
-        $user = User::findOrCreateByVoutId($info['vout_id'], [
-            'username'   => (string) ($info['username'] ?? $info['name'] ?? 'user'),
-            'avatar_url' => isset($info['avatar']) ? (string) $info['avatar'] : null,
-        ]);
+        $user = UserProvisioner::fromProfile($info);
         $user->update(['last_login_at' => date('Y-m-d H:i:s')]);
 
         Session::regenerate();
@@ -130,61 +144,94 @@ final class AuthController
     }
 
     /**
-     * Llamada desde el frontend cuando el access_token expira. Requiere la
-     * cookie daino_refresh (HttpOnly, Path=/auth/refresh) y CSRF (header).
-     * Devuelve nuevo access_token en JSON; rota la cookie con el nuevo
-     * refresh_token de Vout.
+     * Renueva el access token con el refresh token de la cookie `daino_refresh`
+     * (HttpOnly, Path=/auth/refresh). Requiere CSRF (header).
+     *
+     * Respuestas, y qué hace el cliente con cada una:
+     *   - 200: token nuevo (mismo contrato que `/api/me/token`).
+     *   - 401 `session_expired`: la sesión se acabó de verdad (Vout ya no
+     *     acepta el refresh token, o no hay). Hay que iniciar sesión otra vez.
+     *   - 503 `idp_unavailable`: Vout no contesta o contesta mal. La sesión y
+     *     el refresh token siguen intactos: se reintenta más tarde.
+     *
+     * Solo `invalid_grant` cierra la sesión. Antes la cerraba cualquier fallo,
+     * también un Vout apagado: se tiraba un refresh token que seguía valiendo.
      */
     public function refresh(Request $req): Response
     {
+        if (!Session::has('vout_id')) {
+            return self::sessionExpired();
+        }
+
+        // Vout da un refresh token nuevo en cada uso e invalida el anterior. Si
+        // otra pestaña acaba de renovar, esta petición trae la cookie vieja:
+        // canjearla daría `invalid_grant` y cerraría una sesión buena. PHP
+        // atiende las peticiones de una misma sesión de una en una, así que al
+        // llegar aquí el token de la otra pestaña ya está en la sesión.
+        $live = $this->liveSessionToken();
+        if ($live !== null) {
+            return Response::json($live);
+        }
+
         $refresh = $_COOKIE['daino_refresh'] ?? null;
         if (!is_string($refresh) || $refresh === '') {
-            return Response::json(['error' => 'no_refresh_cookie'], 401);
+            // Sesión identificada sin forma de renovarla: no sirve para nada.
+            Session::destroy();
+            return self::sessionExpired();
         }
-
-        $vout = $this->voutOrEnv();
-        $verifier = $this->jwtOrEnv();
 
         try {
-            $newToken = $vout->refresh($refresh);
-            $verifier->verify($newToken->getToken());
+            $newToken = $this->voutOrEnv()->refresh($refresh);
         } catch (IdentityProviderException $e) {
-            // Vout rechazó el refresh_token. Casos típicos:
-            //   - El user revocó Daino desde /settings/connected-apps en Vout.
-            //   - El refresh_token expiró (TTL ~30 días).
-            //   - Rotación: el refresh anterior ya fue canjeado y este es viejo.
-            // En todos: la sesión Daino debe morir y el frontend redirigir.
-            $this->clearRefreshCookie();
-            Session::destroy();
-            $oauthError = self::extractOAuthError($e);
-            if ($oauthError === 'invalid_grant') {
-                return Response::json([
-                    'error'       => 'session_expired',
-                    'redirect_to' => '/auth/login',
-                ], 401);
+            if (self::extractOAuthError($e) === 'invalid_grant') {
+                // El usuario revocó Daino en Vout, el refresh token caducó
+                // (30 días) o ya se había canjeado.
+                $this->clearRefreshCookie();
+                Session::destroy();
+                return self::sessionExpired();
             }
-            error_log('[daino] refresh IdP error: ' . $e->getMessage());
-            return Response::json(['error' => 'refresh_failed'], 401);
+            error_log('[daino] refresh: Vout respondió con error: ' . $e->getMessage());
+            return self::idpUnavailable();
         } catch (\Throwable $e) {
-            // Otros fallos (red, JWT mal formado, etc.). Limpiar y reportar.
-            $this->clearRefreshCookie();
-            Session::destroy();
-            error_log('[daino] refresh error: ' . $e->getMessage());
-            return Response::json(['error' => 'refresh_failed'], 401);
+            error_log('[daino] refresh: Vout no contesta: ' . $e->getMessage());
+            return self::idpUnavailable();
         }
 
-        $expiresAt = $newToken->getExpires() ?? (time() + 3600);
-        Session::set('access_token', $newToken->getToken());
-        Session::set('access_token_expires_at', $expiresAt);
+        // Desde aquí el refresh token anterior ya no vale: el nuevo se guarda
+        // ANTES de cualquier otra cosa que pueda fallar, o se pierde la cadena.
         $newRefresh = $newToken->getRefreshToken();
         if (is_string($newRefresh) && $newRefresh !== '') {
             $this->setRefreshCookie($newRefresh);
         }
 
-        return Response::json([
-            'access_token' => $newToken->getToken(),
-            'expires_at'   => $expiresAt,
-        ]);
+        $accessToken = $newToken->getToken();
+        try {
+            $claims = $this->jwtOrEnv()->verify($accessToken);
+        } catch (\Throwable $e) {
+            error_log('[daino] refresh: el token nuevo no se pudo verificar: ' . $e->getMessage());
+            return self::idpUnavailable();
+        }
+
+        $voutId = $claims['vout_id'] ?? null;
+        if (!is_string($voutId) || $voutId !== Session::get('vout_id')) {
+            // Un refresh token que da la identidad de otra persona no renueva esta sesión.
+            error_log('[daino] refresh: el token nuevo no es del usuario de la sesión.');
+            $this->clearRefreshCookie();
+            Session::destroy();
+            return self::sessionExpired();
+        }
+        $user = User::findByVoutId($voutId) ?? $this->usersOrDefault()->fromToken($accessToken, $voutId);
+        if ($user === null) {
+            return self::idpUnavailable();
+        }
+
+        $expiresAt = $newToken->getExpires() ?? (time() + 3600);
+        Session::set('user_id', $user->id);
+        Session::set('access_token', $accessToken);
+        Session::set('access_token_expires_at', $expiresAt);
+        Session::keepAlive();
+
+        return Response::json(self::tokenPayload($user, $accessToken, $expiresAt));
     }
 
     public function logout(Request $req): Response
@@ -203,20 +250,21 @@ final class AuthController
      * Bloque 6: el response 200 incluye `user: {vout_id, username, avatar_url}`
      * para que el HUD/menú pueda hidratar el chip de identidad en una sola
      * llamada al boot. Cambio aditivo — bridge.js solo lee `access_token`.
+     *
+     * Un 401 con `must_refresh` NO es "sin sesión": la sesión sigue viva y solo
+     * le falta un token nuevo. El cliente lo pide con `/auth/refresh` (por eso
+     * va el `csrf_token` en la respuesta).
      */
     public function meToken(Request $req): Response
     {
-        if (!Session::has('vout_id')) {
+        $voutId = Session::get('vout_id');
+        if (!is_string($voutId) || $voutId === '') {
             return Response::json(['error' => 'unauthenticated'], 401);
         }
         $expiresAt = (int) (Session::get('access_token_expires_at') ?? 0);
         $accessToken = Session::get('access_token');
         if (!is_string($accessToken) || $expiresAt <= time()) {
-            return Response::json([
-                'error'        => 'token_expired',
-                'must_refresh' => true,
-                'csrf_token'   => Session::csrfToken(),
-            ], 401);
+            return self::mustRefresh('token_expired');
         }
 
         // Auditoría Bloque 3 — MEDIO: re-validar firma/iss/aud/exp antes de
@@ -225,37 +273,84 @@ final class AuthController
         // token revocado entre callback y request al frontend.
         try {
             $this->jwtOrEnv()->verify($accessToken);
+        } catch (JwksUnavailableException $e) {
+            // No se pudo comprobar, que no es lo mismo que un token malo.
+            error_log('[daino] JWKS de Vout no disponible: ' . $e->getMessage());
+            return self::idpUnavailable();
         } catch (\Throwable) {
             Session::set('access_token', null);
             Session::set('access_token_expires_at', 0);
-            return Response::json([
-                'error'        => 'token_invalid',
-                'must_refresh' => true,
-                'csrf_token'   => Session::csrfToken(),
-            ], 401);
+            return self::mustRefresh('token_invalid');
         }
 
-        // Cargar el user para que el frontend no tenga que hacer un round-trip
-        // adicional. Si user_id está en sesión pero el row desapareció (ej.
-        // limpieza manual de DB), tratamos como sesión inválida — devolver
-        // 401 y forzar re-login.
-        $userId = Session::get('user_id');
-        $user = is_int($userId) ? User::findById($userId) : null;
+        // La identidad de la sesión es su `vout_id`, no `user_id`: si la base de
+        // datos se vació, un id puede ser ya de otra persona. Sin ficha, se
+        // rehace con el perfil de Vout en vez de cerrar la sesión.
+        $user = User::findByVoutId($voutId) ?? $this->usersOrDefault()->fromToken($accessToken, $voutId);
         if ($user === null) {
             Session::destroy();
             return Response::json(['error' => 'user_missing'], 401);
         }
+        Session::set('user_id', $user->id);
 
-        return Response::json([
+        return Response::json(self::tokenPayload($user, $accessToken, $expiresAt));
+    }
+
+    /**
+     * Lo que recibe el cliente con un token válido, igual desde `/api/me/token`
+     * que desde `/auth/refresh`. `expires_in` (segundos que le quedan) es lo que
+     * usa para saber cuándo renovar: no depende de que su reloj y el del servidor
+     * marquen la misma hora.
+     *
+     * @return array{access_token: string, expires_at: int, expires_in: int, csrf_token: string, user: array{vout_id: string, username: string, avatar_url: ?string}}
+     */
+    private static function tokenPayload(User $user, string $accessToken, int $expiresAt): array
+    {
+        return [
             'access_token' => $accessToken,
             'expires_at'   => $expiresAt,
+            'expires_in'   => max(0, $expiresAt - time()),
             'csrf_token'   => Session::csrfToken(),
-            'user'         => [
-                'vout_id'    => $user->voutId,
-                'username'   => $user->username,
-                'avatar_url' => $user->avatarUrl,
-            ],
-        ]);
+            'user'         => $user->publicProfile(),
+        ];
+    }
+
+    /**
+     * El token de la sesión, si todavía le queda margen de sobra.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function liveSessionToken(): ?array
+    {
+        $accessToken = Session::get('access_token');
+        $expiresAt = (int) (Session::get('access_token_expires_at') ?? 0);
+        $voutId = Session::get('vout_id');
+        if (!is_string($accessToken) || $accessToken === '' || !is_string($voutId)
+            || $expiresAt - time() <= self::REUSE_MARGIN_S
+        ) {
+            return null;
+        }
+        $user = User::findByVoutId($voutId);
+        return $user === null ? null : self::tokenPayload($user, $accessToken, $expiresAt);
+    }
+
+    private static function mustRefresh(string $error): Response
+    {
+        return Response::json([
+            'error'        => $error,
+            'must_refresh' => true,
+            'csrf_token'   => Session::csrfToken(),
+        ], 401);
+    }
+
+    private static function sessionExpired(): Response
+    {
+        return Response::json(['error' => 'session_expired'], 401);
+    }
+
+    private static function idpUnavailable(): Response
+    {
+        return Response::json(['error' => 'idp_unavailable'], 503);
     }
 
     /**
@@ -294,9 +389,14 @@ final class AuthController
         return $this->jwt ?? JwtVerifier::fromEnv();
     }
 
+    private function usersOrDefault(): UserProvisioner
+    {
+        return $this->users ?? new UserProvisioner($this->vout);
+    }
+
     private function setRefreshCookie(string $refreshToken): void
     {
-        setcookie('daino_refresh', $refreshToken, self::refreshCookieAttrs(time() + 30 * 24 * 3600));
+        Cookies::set('daino_refresh', $refreshToken, self::refreshCookieAttrs(time() + 30 * 24 * 3600));
     }
 
     /**
@@ -308,7 +408,7 @@ final class AuthController
      */
     private function clearRefreshCookie(): void
     {
-        setcookie('daino_refresh', '', self::refreshCookieAttrs(time() - 3600));
+        Cookies::set('daino_refresh', '', self::refreshCookieAttrs(time() - 3600));
     }
 
     /**

@@ -128,6 +128,19 @@ export function isBridgeEmbedded() {
 }
 
 /**
+ * Envía un mensaje al portal (p. ej. `{ type: 'EXIT' }`), siempre a su origen y
+ * nunca a "*". Fuera del portal no hace nada y devuelve false.
+ *
+ * @param {{ type: string }} message
+ * @returns {boolean}
+ */
+export function postToParent(message) {
+    if (!isEmbedded || !allowedOrigin) return false;
+    window.parent.postMessage(message, allowedOrigin);
+    return true;
+}
+
+/**
  * Registra el handler que recibirá las acciones de juego (`JUMP`, `DUCK`, etc.).
  * Bloque 5 conectará esto al sistema de input del motor.
  */

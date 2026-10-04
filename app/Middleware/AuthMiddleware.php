@@ -4,11 +4,14 @@ declare(strict_types=1);
 namespace App\Middleware;
 
 use App\Core\AuthContext;
+use App\Core\Env;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Models\User;
+use App\Services\JwksUnavailableException;
 use App\Services\JwtVerifier;
+use App\Services\UserProvisioner;
 use Closure;
 
 /**
@@ -19,17 +22,23 @@ use Closure;
  *  - Rutas web: exige sesión iniciada (`vout_id` en `$_SESSION`). Si falta,
  *    redirige a `/auth/login`.
  *
- * NO almacena claims en ningún sitio compartido — los controllers leen lo que
- * necesiten desde `$_SESSION` (web) o re-validan el JWT (API). Si en el futuro
- * Bloque 7 necesita claims propagados, se añade un AuthContext minimal aquí.
+ * El usuario autenticado queda en `AuthContext`; los controllers lo leen de ahí.
  *
- * El JwtVerifier es inyectable para tests; por defecto se construye con
- * `JwtVerifier::fromEnv()` la primera vez que se necesita.
+ * Qué significa cada respuesta para el cliente (`resources/js/api/client.js`):
+ *   - 401 `invalid_token` + `must_refresh`: el token no vale (lo normal: caducó).
+ *     Pide otro con `/auth/refresh` y reintenta.
+ *   - 503 `idp_unavailable`: no se pudo comprobar porque Vout no contesta. El
+ *     token puede ser bueno: no hay que renovar ni cerrar sesión.
+ *   - 401 `user_missing`: token bueno, pero no hay ficha local ni Vout da el perfil.
+ *
+ * JwtVerifier y UserProvisioner son inyectables para tests; por defecto se
+ * construyen desde el entorno la primera vez que se necesitan.
  */
 final class AuthMiddleware
 {
     public function __construct(
         private readonly ?JwtVerifier $verifier = null,
+        private readonly ?UserProvisioner $users = null,
     ) {
     }
 
@@ -47,11 +56,17 @@ final class AuthMiddleware
             }
             try {
                 $claims = ($this->verifier ?? JwtVerifier::fromEnv())->verify($token);
+            } catch (JwksUnavailableException $e) {
+                error_log('[daino] JWKS de Vout no disponible: ' . $e->getMessage());
+                return Response::json(['error' => 'idp_unavailable'], 503);
             } catch (\Throwable $e) {
-                return Response::json(
-                    ['error' => 'invalid_token', 'message' => $e->getMessage()],
-                    401,
-                );
+                // El motivo exacto solo en debug: no le sirve a un cliente y
+                // sí a quien tantea tokens.
+                $body = ['error' => 'invalid_token', 'must_refresh' => true];
+                if (Env::bool('APP_DEBUG', false)) {
+                    $body['message'] = $e->getMessage();
+                }
+                return Response::json($body, 401);
             }
 
             // Resolver el User local desde el claim `vout_id` del JWT.
@@ -68,16 +83,13 @@ final class AuthMiddleware
                     401,
                 );
             }
-            $user = User::findByVoutId($voutId);
+            // Sin ficha local: quien entra por el portal de Vout sin haber
+            // pasado nunca por /auth/callback. Se le da de alta con su perfil.
+            $user = User::findByVoutId($voutId)
+                ?? ($this->users ?? new UserProvisioner())->fromToken($token, $voutId);
             if ($user === null) {
-                // El JWT verifica firma pero no hay row en nuestra BD.
-                // Caminos posibles:
-                //  - El user fue borrado tras la emisión del JWT.
-                //  - El user nunca pasó por /auth/callback en este Daino
-                //    (improbable: el JWT se obtiene exactamente ahí).
-                // Frontend debe forzar re-login.
                 return Response::json(
-                    ['error' => 'user_missing', 'message' => 'Authenticated user no longer exists.'],
+                    ['error' => 'user_missing', 'message' => 'No se pudo obtener el perfil del usuario.'],
                     401,
                 );
             }

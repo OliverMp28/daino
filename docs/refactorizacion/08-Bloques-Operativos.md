@@ -207,6 +207,48 @@ Razones por las que `/api/me/token` gana sobre `<meta>` tag:
 
 ---
 
+## Sub-bloque 3.6 — La sesión dura lo que tiene que durar (Oct 2026) ✅
+
+> **Disparador.** "A veces, cuando entro después de un día, la sesión se pierde." Reproducido: con la sesión iniciada a las 22:45, recargar a las 23:46 enseñaba "Iniciar sesión". No tenía que ver con reiniciar contenedores (las sesiones están en `storage/sessions`, montado desde el disco) ni con Vout.
+
+**La causa.** Vout da dos cosas al iniciar sesión: un access token que vale 60 minutos y un refresh token que vale 30 días y sirve para pedir otro access token sin contraseña. Daino guardaba bien los dos y casi nunca usaba el segundo:
+
+1. **Al arrancar.** Con el access token caducado, `/api/me/token` respondía `401 {must_refresh: true}` y `client.init()` trataba cualquier 401 como "sin sesión". La sesión seguía viva en el servidor y el usuario veía "Iniciar sesión". Como además la sesión web de Vout dura poco, al pulsarlo pedía la contraseña: parecía que se había perdido todo.
+2. **Con la pestaña abierta más de una hora.** `AuthMiddleware` respondía `invalid_token` sin `must_refresh`, así que el reintento con renovación de `client.request()` era código muerto para la API: las marcas dejaban de guardarse sin avisar (el `expiresAt` que guardaba el cliente no se leía en ningún sitio).
+3. **Un Vout apagado cerraba la sesión.** `/auth/refresh` borraba sesión y cookie ante CUALQUIER excepción (red, timeout, 500): se tiraba un refresh token que seguía valiendo. No se notaba porque el refresh casi no se ejecutaba; al arreglar 1 y 2 habría pasado a diario en local, donde Vout suele estar apagado.
+4. **Dos pestañas se pisaban.** Vout (Passport) da un refresh token nuevo en cada uso e invalida el anterior. La segunda pestaña mandaba el viejo, recibía `invalid_grant` y Daino cerraba una sesión buena.
+5. **Entrar por el portal de Vout sin haber entrado nunca a Daino.** La ficha local solo se creaba en `/auth/callback`. Un token válido sin ficha recibía `user_missing` y jugaba como anónimo para siempre.
+6. **Menor.** Con Vout apagado más de una hora (TTL de la caché de claves), todos los tokens pasaban a ser "inválidos", y el mensaje de error llevaba la URL interna de Vout.
+
+**Entregado.**
+- `resources/js/api/client.js` — la sesión se mantiene sola: `init()` renueva si `/api/me/token` dice `must_refresh`; `request()`, `upload()` y `fetchBinary()` renuevan ANTES de la petición si al token le quedan menos de 60 s (`REFRESH_MARGIN_MS`), y tras un 401 con `must_refresh` renuevan y reintentan una vez. Una sola renovación a la vez (`refreshSession`, las demás esperan). La caducidad se cuenta con `expires_in` y el reloj del equipo. Un 401 de `/auth/refresh` = sesión acabada: anónimo + evento `daino:auth:expired` + `takeSessionLost()`; cualquier otra cosa (503, sin red) no toca nada. **Ya no se redirige a nadie a `/auth/login`.**
+- `app/Controllers/AuthController.php` — `refresh()` rehecho: solo `invalid_grant` cierra la sesión (401 `session_expired`); Vout caído o con error propio = 503 `idp_unavailable` con sesión y cookie intactas; el refresh token nuevo se guarda antes de verificar el access token; si la sesión ya tiene un token con más de 60 s (`REUSE_MARGIN_S`: otra pestaña acaba de renovar) se devuelve ese sin llamar a Vout; el token nuevo tiene que ser del `vout_id` de la sesión; una sesión sin refresh token se cierra en vez de pedir renovar para siempre. `meToken()` y `refresh()` devuelven lo mismo (`tokenPayload`: token, `expires_at`, `expires_in`, CSRF y usuario). La identidad de la sesión es su `vout_id`, no `user_id`.
+- `app/Core/Session.php` — `keepAlive()`: la cookie de sesión se reenvía con 30 días más en cada renovación. PHP solo la envía al crear la sesión: caducaba a los 30 días del login aunque se entrase a diario, mientras la del refresh token se renovaba.
+- `app/Middleware/AuthMiddleware.php` — `invalid_token` lleva `must_refresh` (y el motivo solo con `APP_DEBUG`); claves de Vout no disponibles = 503 `idp_unavailable`; sin ficha local, se da de alta con el perfil de Vout.
+- `app/Services/UserProvisioner.php` — el alta de usuario en un sitio: `fromProfile()` (login directo) y `fromToken()` (Bearer válido sin ficha: pide `/api/v1/user/me` con ese token y exige que el perfil sea el del token).
+- `app/Services/JwksCache.php` + `JwksUnavailableException.php` — si Vout no contesta, una clave ya descargada vale hasta 24 h (`STALE_SECONDS`); el archivo de caché es inyectable.
+- `app/Core/Cookies.php` — por donde la sesión y el refresco escriben cookies (para poder comprobarlo en los tests).
+- `resources/js/ui/auth.js` — aviso "Tu sesión ha caducado…" cuando se acaba sin que nadie la cierre. `resources/js/iframe/bridge.js` — `postToParent()`: el `EXIT` al portal va a su origen (antes iba a `"*"`, contra el invariante).
+
+**Decisiones aprobadas (vinculantes):**
+- **Un 401 con `must_refresh` no es "sin sesión".** La sesión dura 30 días desde el último refresco; mientras se entre una vez cada 30 días no hay que volver a iniciar sesión.
+- **Solo Vout cierra una sesión** (`invalid_grant`). Un fallo de red, un Vout apagado o un error del servidor no cierran nada ni borran el refresh token.
+- **Un refresh token se canjea una sola vez**: una renovación a la vez en el cliente, y en el servidor se reutiliza el token recién sacado.
+- **Daino no saca a nadie de la página.** Si la sesión se acaba, se pasa a anónimo y se dice.
+- **La ficha local se crea cuando hace falta**, venga de donde venga el token válido. La identidad es el `vout_id`.
+- **"Vout no contesta" y "el token no vale" son respuestas distintas** (503 y 401): la primera no hace renovar ni cerrar nada.
+
+**Verificación.**
+- `tests/php/AuthSessionTest.php` (15, con `tests/php/idp.php`: un Vout de mentira que firma tokens RS256 de verdad) y `tests/js/auth-client.test.mjs` (9). Eran los primeros tests de autenticación del repo. 106 PHP, 521 JS.
+- HTTP contra el Vout local real: un refresh token inventado da `invalid_grant` de Vout → 401 `session_expired`, sesión borrada y cookies limpiadas; sin CSRF, 403 y nada tocado; con un token vigente en la sesión y una cookie ya gastada, 200 con el de la sesión.
+- Navegador (build de producción): con el token caducado, arranca, renueva y aparece el nombre; con el refresh token rechazado, aviso, "Iniciar sesión" y sin salir de la página.
+
+**Sin verificar.**
+- Una renovación de verdad contra Vout con el refresh token real (solo lo tiene el navegador del usuario): se comprueba recargando Daino más de una hora después de iniciar sesión.
+- El modo embebido en el portal de Vout. Lo que hay que mirar está en el código de Vout: qué `aud` lleva el token que manda por `postMessage`, si reenvía `AUTH_TOKEN` antes de que caduque, cuánto dura su sesión web y los atributos del `<iframe>`.
+
+---
+
 ## Bloque 4 — Frontend foundation: PixiJS + audio + shader ✅
 
 > **Cerrado.** Ver `CLAUDE.md` § "Bloque 4 (frontend foundation) — completo" para la lista exhaustiva de archivos creados, decisiones y limitaciones.

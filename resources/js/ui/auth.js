@@ -13,15 +13,17 @@
 // (dispatcheados por client.js). No suscribe a onAuthChange porque queremos
 // que cualquier punto del UI pueda escuchar el mismo canal.
 
-import { getUser } from '../api/client.js';
+import { getUser, takeSessionLost } from '../api/client.js';
 import { isBridgeEmbedded } from '../iframe/bridge.js';
 import { openProfileModal } from './modals.js';
 import { renderAvatar } from './avatar.js';
 import { linkButton } from './kit.js';
+import { showToast } from './toast.js';
 
 let chipEl = null;
 let onLogin = null;
 let onLogout = null;
+let onExpired = null;
 
 export function mount(container) {
     if (chipEl !== null) return chipEl;
@@ -37,17 +39,30 @@ export function mount(container) {
 
     onLogin = () => render();
     onLogout = () => render();
+    // La sesión puede acabarse sin que nadie la cierre (30 días sin entrar, o
+    // acceso retirado desde Vout). Se dice: pasar a "Iniciar sesión" sin más
+    // parece un fallo. Puede haber ocurrido al arrancar, antes de montar esto.
+    onExpired = () => announceSessionLost();
     window.addEventListener('daino:auth:login', onLogin);
     window.addEventListener('daino:auth:logout', onLogout);
+    window.addEventListener('daino:auth:expired', onExpired);
+    announceSessionLost();
 
     return chipEl;
+}
+
+function announceSessionLost() {
+    if (!takeSessionLost()) return;
+    showToast('Tu sesión ha caducado. Inicia sesión otra vez para guardar tus marcas.', 'info', 6000);
 }
 
 export function dispose() {
     if (onLogin) window.removeEventListener('daino:auth:login', onLogin);
     if (onLogout) window.removeEventListener('daino:auth:logout', onLogout);
+    if (onExpired) window.removeEventListener('daino:auth:expired', onExpired);
     onLogin = null;
     onLogout = null;
+    onExpired = null;
     if (chipEl !== null) {
         chipEl.remove();
         chipEl = null;

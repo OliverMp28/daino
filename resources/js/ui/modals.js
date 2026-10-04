@@ -15,7 +15,7 @@
 // y los resultados de una partida, en `runPanel.js`.
 
 import { getUser, logout, isAuthenticated, request as apiRequest } from '../api/client.js';
-import { isBridgeEmbedded } from '../iframe/bridge.js';
+import { isBridgeEmbedded, postToParent } from '../iframe/bridge.js';
 import { renderAvatar } from './avatar.js';
 import {
     getVolume, setVolume,
@@ -140,9 +140,7 @@ export function openProfileModal() {
         // En iframe cerrar sesión no aplica: la sesión la lleva Vout. Este botón
         // pide al portal que cierre el juego.
         footer = button('Volver al portal');
-        footer.addEventListener('click', () => {
-            window.parent?.postMessage({ type: 'EXIT' }, '*');  // OJO: parent valida origin de su lado
-        });
+        footer.addEventListener('click', () => { postToParent({ type: 'EXIT' }); });
     } else {
         footer = button('Cerrar sesión', 'daino-btn daino-btn--danger');
         footer.addEventListener('click', async () => {

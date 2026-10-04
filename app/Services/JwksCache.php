@@ -14,23 +14,31 @@ use RuntimeException;
  * Política de refresh (doc 07 §E.3):
  *   - TTL del JSON cacheado: 1 h.
  *   - Si llega un `kid` desconocido, fuerza refresh inmediato (rotación).
+ *   - Si Vout no contesta, una clave ya conocida sigue valiendo hasta 24 h:
+ *     una caída de Vout no invalida los tokens que firmó antes de caer.
  *   - El JSON se persiste en `storage/cache/jwks.json` (gitignored).
  *
- * El fetcher HTTP es inyectable para tests sin Vout activo.
+ * El fetcher HTTP y el archivo de caché son inyectables para tests sin Vout
+ * activo (y sin pisar la caché real).
  */
 final class JwksCache
 {
     public const CACHE_FILE = __DIR__ . '/../../storage/cache/jwks.json';
     public const TTL_SECONDS = 3600;
+    /** Cuánto se sigue usando una clave ya descargada cuando Vout no contesta. */
+    public const STALE_SECONDS = 86400;
 
     /** @var \Closure(string): string  Fetcher HTTP del JWKS — recibe URL, devuelve body crudo. */
     private \Closure $fetcher;
+    private readonly string $cacheFile;
 
     public function __construct(
         private readonly string $jwksUrl = '',
         ?\Closure $fetcher = null,
+        ?string $cacheFile = null,
     ) {
         $this->fetcher = $fetcher ?? \Closure::fromCallable([self::class, 'defaultHttpFetch']);
+        $this->cacheFile = $cacheFile ?? self::CACHE_FILE;
     }
 
     public static function fromEnv(?\Closure $fetcher = null): self
@@ -41,19 +49,26 @@ final class JwksCache
     /**
      * Devuelve la Key (lcobucci) para un `kid` dado, o null si Vout no la
      * tiene ni siquiera tras un refresh forzado.
+     *
+     * @throws JwksUnavailableException  Vout no contesta y no hay copia local que sirva.
      */
     public function getKey(string $kid): ?Key
     {
         $cache = $this->loadCache();
-        if ($cache !== null && $this->isFresh($cache)) {
-            $jwk = self::findKid($cache['jwks'], $kid);
-            if ($jwk !== null) {
-                return self::jwkToKey($jwk);
-            }
-            // kid desconocido en caché fresco → forzar refresh (key rotation).
+        $known = $cache === null ? null : self::findKid($cache['jwks'], $kid);
+        if ($cache !== null && $known !== null && $this->isFresh($cache)) {
+            return self::jwkToKey($known);
         }
+        // Caché caducada, o kid desconocido en caché fresca (rotación de claves).
 
-        $fresh = $this->fetchAndStore();
+        try {
+            $fresh = $this->fetchAndStore();
+        } catch (JwksUnavailableException $e) {
+            if ($cache !== null && $known !== null && (time() - $cache['cached_at']) < self::STALE_SECONDS) {
+                return self::jwkToKey($known);
+            }
+            throw $e;
+        }
         $jwk = self::findKid($fresh, $kid);
         return $jwk === null ? null : self::jwkToKey($jwk);
     }
@@ -73,10 +88,10 @@ final class JwksCache
      */
     private function loadCache(): ?array
     {
-        if (!is_file(self::CACHE_FILE)) {
+        if (!is_file($this->cacheFile)) {
             return null;
         }
-        $body = file_get_contents(self::CACHE_FILE);
+        $body = file_get_contents($this->cacheFile);
         if ($body === false) {
             return null;
         }
@@ -108,33 +123,39 @@ final class JwksCache
         if ($this->jwksUrl === '') {
             throw new RuntimeException('JwksCache: VOUT_JWKS_URL no configurado.');
         }
-        $body = ($this->fetcher)($this->jwksUrl);
+        // Todo lo que impida tener un JWKS de Vout (no contesta, contesta otra
+        // cosa) es el mismo caso para quien llama: Vout no está disponible.
+        try {
+            $body = ($this->fetcher)($this->jwksUrl);
+        } catch (\Throwable $e) {
+            throw new JwksUnavailableException($e->getMessage(), 0, $e);
+        }
         try {
             /** @var array{keys?: list<array<string, mixed>>} $decoded */
             $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
         } catch (\JsonException $e) {
-            throw new RuntimeException('JwksCache: respuesta JWKS no es JSON: ' . $e->getMessage(), 0, $e);
+            throw new JwksUnavailableException('JwksCache: respuesta JWKS no es JSON: ' . $e->getMessage(), 0, $e);
         }
         if (!isset($decoded['keys']) || !is_array($decoded['keys'])) {
-            throw new RuntimeException('JwksCache: respuesta JWKS sin campo `keys`.');
+            throw new JwksUnavailableException('JwksCache: respuesta JWKS sin campo `keys`.');
         }
 
         /** @var array{keys: list<array<string, mixed>>} $jwks */
         $jwks = ['keys' => array_values($decoded['keys'])];
         $payload = ['cached_at' => time(), 'jwks' => $jwks];
 
-        $dir = dirname(self::CACHE_FILE);
+        $dir = dirname($this->cacheFile);
         if (!is_dir($dir) && !mkdir($dir, 0o775, true) && !is_dir($dir)) {
             throw new RuntimeException("JwksCache: no se pudo crear {$dir}.");
         }
         // Si el archivo existe pero no nos pertenece (caso típico: lo creó otro
         // user en un docker exec puntual), tirarlo. El directorio padre tiene
         // que ser escribible — lo es por defecto en storage/cache/.
-        if (is_file(self::CACHE_FILE) && !is_writable(self::CACHE_FILE)) {
-            @unlink(self::CACHE_FILE);
+        if (is_file($this->cacheFile) && !is_writable($this->cacheFile)) {
+            @unlink($this->cacheFile);
         }
         $written = file_put_contents(
-            self::CACHE_FILE,
+            $this->cacheFile,
             json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
             LOCK_EX,
         );
@@ -144,7 +165,7 @@ final class JwksCache
         // 0666 para que cualquier user (root via docker exec, www-data via FPM)
         // pueda sobrescribir más adelante. El JWKS es público y rebuildeable
         // desde Vout si se borra — no hay riesgo de divulgación.
-        @chmod(self::CACHE_FILE, 0o666);
+        @chmod($this->cacheFile, 0o666);
 
         return $jwks;
     }
