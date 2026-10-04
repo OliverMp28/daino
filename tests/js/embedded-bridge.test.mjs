@@ -4,7 +4,7 @@
 //   Daino → portal   READY (repetido hasta que contesten), EXIT
 //   portal → Daino   VOUT_AUTH (identidad; otra vez en cada renovación),
 //                    VOUT_SESSION_END (ya no renovará),
-//                    VOUT_KEY, VOUT_CLICK, VOUT_CURSOR, VOUT_ACTION y
+//                    VOUT_KEY, VOUT_POINTER, VOUT_CURSOR, VOUT_ACTION y
 //                    VOUT_ACTION_END (lo que el jugador hace con la cara)
 //
 // Dentro del portal Daino no renueva nada: el portal manda un token nuevo antes
@@ -170,14 +170,15 @@ test('embebido nunca se intenta /auth/refresh: dentro del iframe no hay cookie c
 
 // --------------------------- Control facial ---------------------------
 
-test('control facial: teclas, clics, cursor y acciones llegan comprobados y con la hora del gesto', () => {
+test('control facial: teclas, botón del ratón, cursor y acciones llegan comprobados y con la hora del gesto', () => {
     const got = [];
     bridge.setPortalInput((input) => { got.push(input); return null; });
     const at = Date.now() - 80;       // el portal vio el gesto hace 80 ms
 
     receive({ type: 'VOUT_KEY', code: 'Space', key: ' ', state: 'down', at });
     receive({ type: 'VOUT_KEY', code: 'Space', key: ' ', state: 'up', at });
-    receive({ type: 'VOUT_CLICK', button: 'left', at });
+    receive({ type: 'VOUT_POINTER', button: 'left', state: 'down', at });
+    receive({ type: 'VOUT_POINTER', button: 'left', state: 'up', at });
     receive({ type: 'VOUT_CURSOR', x: 1.4, y: -0.2 });          // fuera de 0-1: se acota
     receive({ type: 'VOUT_ACTION', event: 'JUMP', at });
     receive({ type: 'VOUT_ACTION_END', event: 'JUMP', at });
@@ -187,7 +188,8 @@ test('control facial: teclas, clics, cursor y acciones llegan comprobados y con 
     assert.deepEqual(shape, [
         { kind: 'key', code: 'Space', key: ' ', state: 'down' },
         { kind: 'key', code: 'Space', key: ' ', state: 'up' },
-        { kind: 'click', button: 'left' },
+        { kind: 'pointer', button: 'left', state: 'down' },
+        { kind: 'pointer', button: 'left', state: 'up' },
         { kind: 'cursor', x: 1, y: 0 },
         { kind: 'action', event: 'JUMP', phase: 'start' },
         { kind: 'action', event: 'JUMP', phase: 'end' },
@@ -205,8 +207,10 @@ test('control facial: lo mal formado, lo del contrato viejo y lo que no viene de
     receive({ type: 'VOUT_KEY', key: ' ', state: 'down' });
     receive({ type: 'VOUT_KEY', code: 'Space', key: ' ', state: 'pressed' });
     receive({ type: 'VOUT_KEY', code: 42, key: ' ', state: 'down' });
-    receive({ type: 'VOUT_CLICK', button: 'middle' });
-    receive({ type: 'VOUT_CLICK' });
+    receive({ type: 'VOUT_POINTER', button: 'middle', state: 'down' });
+    receive({ type: 'VOUT_POINTER', button: 'left', state: 'click' });
+    receive({ type: 'VOUT_POINTER', button: 'left' });
+    receive({ type: 'VOUT_CLICK', button: 'left' });               // lo sustituyó VOUT_POINTER: ya no existe
     receive({ type: 'VOUT_CURSOR', x: 'a', y: 0 });
     receive({ type: 'VOUT_ACTION', event: 42 });
     receive({ type: 'VOUT_ACTION' });
@@ -331,6 +335,35 @@ test('VOUT_SESSION_END sin sesión no avisa de nada, y un motivo desconocido tam
     await settle();
     assert.equal(client.isAuthenticated(), false);
     assert.equal(client.takeSessionLost(), true);
+});
+
+// --------------------------- Depuración pedida desde el portal ---------------------------
+
+test('VOUT_AUTH con debug: true enciende la depuración, y lo apuntado no lleva el token', async () => {
+    let started = 0;
+    bridge.onTraceStart(() => { started++; });
+    assert.equal(bridge.getTrace(), null, 'apagada mientras nadie la pida');
+
+    accepted.set('t6-secreto', ANA);
+    receive({ type: 'VOUT_AUTH', token: 't6-secreto', expiresAt: nowS() + HOUR_S, voutId: 'u-1', username: 'ana', debug: 'sí' });
+    assert.equal(bridge.getTrace(), null, 'solo con debug === true');
+    receive({ type: 'VOUT_AUTH', token: 't6-secreto', expiresAt: nowS() + HOUR_S, voutId: 'u-1', username: 'ana', debug: true });
+    receive({ type: 'VOUT_AUTH', token: 't6-secreto', expiresAt: nowS() + HOUR_S, voutId: 'u-1', username: 'ana', debug: true });
+    await settle();
+
+    assert.equal(started, 1, 'se enciende una vez');
+    const trace = bridge.getTrace();
+    receive({ type: 'VOUT_KEY', code: 'Space', key: ' ', state: 'down', at: Date.now() - 80 });
+    assert.deepEqual(trace.entries.filter((e) => e.dir === 'in').map((e) => e.type), ['VOUT_AUTH', 'VOUT_AUTH', 'VOUT_KEY']);
+    assert.equal(JSON.stringify(trace.entries).includes('t6-secreto'), false, 'el token no se apunta nunca');
+    assert.equal(trace.entries[0].data.tokenLength, 10);
+    const lag = trace.entries.at(-1).lagMs;
+    assert.ok(lag >= 80 && lag < 130, 'y cada gesto lleva cuánto tardó en llegar');
+
+    // Quien se apunta después de encendida se entera al momento.
+    let late = 0;
+    bridge.onTraceStart(() => { late++; });
+    assert.equal(late, 1);
 });
 
 // --------------------------- Salir ---------------------------

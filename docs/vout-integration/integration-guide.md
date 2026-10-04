@@ -608,7 +608,9 @@ Vout publica un script que hace todo lo de esta sección por ti. Lo cargas, le d
 </script>
 ```
 
-Con eso tu juego ya funciona con el control facial. Las teclas y clics que el jugador hace con la cara llegan a tu página como eventos de teclado y ratón normales (`keydown`, `keyup`, `click`…), así que **tu código de controles de siempre funciona sin tocarlo**.
+Con eso tu juego ya funciona con el control facial. Las teclas y el ratón que el jugador maneja con la cara llegan a tu página como eventos de teclado y ratón normales (`keydown`, `keyup`, `mousedown`, `click`…), así que **tu código de controles de siempre funciona sin tocarlo**. Un gesto mantenido es una tecla mantenida: si en tu juego mantener el salto lo hace más alto, con la cara también.
+
+El SDK hace además lo que el navegador haría con una tecla real y un evento creado por código no hace: Enter y Espacio pulsan el botón que tiene el foco, Tab pasa al siguiente control y Escape cierra un `<dialog>` abierto. Así un menú hecho en HTML se puede recorrer con gestos. Las flechas no mueven el foco: si tu menú se navega con flechas, eso lo gestionas tú.
 
 | Opción | Para qué |
 | :--- | :--- |
@@ -616,11 +618,11 @@ Con eso tu juego ya funciona con el control facial. Las teclas y clics que el ju
 | `onAuth(session)` | Identidad y token. Se llama al conectar y en cada renovación. |
 | `onSessionEnd(reason)` | El portal ya no renovará el token. |
 | `suggestedPreset` | Preset de gestos que tu juego recomienda (ver "Control facial"). |
-| `simulateInput` | `true` por defecto. Ponlo a `false` si prefieres tratar tú las teclas con `onKey` y `onClick`. |
+| `simulateInput` | `true` por defecto. Ponlo a `false` si prefieres tratar tú las teclas y el ratón con `onKey` y `onPointer`. |
 | `onAction(event, at)` / `onActionEnd(event, at)` | Eventos de juego (`JUMP`, `DUCK`…), si los usas. |
-| `onKey(key)` / `onClick(click)` / `onCursor(x, y)` | La entrada en crudo, por si quieres algo a medida. |
+| `onKey(key)` / `onPointer(pointer)` / `onCursor(x, y)` | La entrada en crudo, por si quieres algo a medida. |
 
-Lo que devuelve: `vout.embedded` (si estás dentro del portal), `vout.session` (la última sesión, o `null`), `vout.exit()` y `vout.disconnect()`.
+Lo que devuelve: `vout.embedded` (si estás dentro del portal), `vout.session` (la última sesión, o `null`), `vout.debug` (ver "Depurar la integración"), `vout.exit()` y `vout.disconnect()`.
 
 Fuera del portal, `VoutGame.connect()` no hace nada y `vout.embedded` vale `false`. Puedes llamarlo siempre y usar tu flujo OAuth normal cuando no estés embebido.
 
@@ -638,7 +640,7 @@ El resto de esta sección explica qué pasa por debajo. Léela si quieres implem
 | portal → juego | `{ type: 'VOUT_ACTION', event: string, at: number }` | Empieza una acción: un gesto del usuario mapeado a un evento de juego (control facial). |
 | portal → juego | `{ type: 'VOUT_ACTION_END', event: string, at: number }` | Termina esa acción: el usuario dejó de hacer el gesto. |
 | portal → juego | `{ type: 'VOUT_KEY', code, key, state: 'down' \| 'up', at }` | El usuario pulsa o suelta una tecla con un gesto. `code` y `key` son los de `KeyboardEvent`. |
-| portal → juego | `{ type: 'VOUT_CLICK', button: 'left' \| 'right', at }` | El usuario hace clic con un gesto. Aplícalo donde esté el cursor. |
+| portal → juego | `{ type: 'VOUT_POINTER', button: 'left' \| 'right', state: 'down' \| 'up', at }` | El usuario pulsa o suelta un botón del ratón con un gesto. Aplícalo donde esté el cursor. |
 | portal → juego | `{ type: 'VOUT_CURSOR', x: number, y: number }` | Cursor por movimiento de cabeza. Coordenadas de 0 a 1, relativas a tu iframe. |
 | juego → portal | `{ type: 'EXIT' }` | El usuario quiere salir. El portal lo lleva al catálogo. |
 | juego → portal | `{ type: 'GAME_STATE', state: 'playing' \| 'paused' \| 'ended', score?: number }` | Reservado. El portal lo acepta, pero todavía no hace nada con él. |
@@ -715,7 +717,7 @@ El navegador no deja que el portal simule teclas ni clics dentro de un iframe de
 | El usuario mapeó el gesto a… | Tu juego recibe | Con el SDK |
 | :--- | :--- | :--- |
 | Una tecla | `VOUT_KEY` al pulsar y al soltar | Eventos `keydown` y `keyup` reales |
-| Un clic | `VOUT_CLICK` | Eventos de ratón y puntero reales en la posición del cursor |
+| Un botón del ratón | `VOUT_POINTER` al pulsar y al soltar | Eventos `mousedown`, `mouseup` y `click` reales (y los de puntero) en la posición del cursor |
 | El cursor con la cabeza | `VOUT_CURSOR` | Eventos `mousemove` y `pointermove` |
 | Un evento de juego | `VOUT_ACTION` y `VOUT_ACTION_END` | Tus callbacks `onAction` y `onActionEnd` |
 
@@ -728,7 +730,7 @@ Los presets que ofrece Vout:
 | `platformer` | Teclas: Espacio, flechas, Z, X, C |
 | `shooter` | Teclas, clic izquierdo y cursor con la cabeza |
 | `accessible` | Teclas: Espacio, Enter, flechas, Escape |
-| `runner` | Eventos de juego `JUMP` y `DUCK` |
+| `runner` | Eventos de juego `JUMP`, `DUCK` y `PAUSE` |
 
 Si tu juego tiene acciones propias que no encajan con una tecla, puedes recomendar un preset enviando `suggestedPreset` en tu `READY` (por ejemplo `'runner'`). El portal le ofrecerá al usuario cambiar a ese preset durante la partida, sin tocar su configuración guardada. Es una sugerencia: el usuario puede rechazarla, así que no dependas solo de ella.
 
@@ -756,19 +758,28 @@ Tres cosas que el SDK ya resuelve y que tendrás que cuidar tú:
 
 Estos eventos no cuentan como una acción real del usuario para el navegador (`isTrusted` es `false`). Sirven para tu lógica de juego, pero no para lo que exige un gesto real: entrar en pantalla completa, desbloquear el audio o copiar al portapapeles.
 
+El cursor lo dibuja el portal: una retícula encima de tu juego, en la misma posición que te manda por `VOUT_CURSOR`. No hace falta que dibujes otro; resaltar lo que queda debajo ayuda.
+
 #### Toques y acciones mantenidas
 
-Cada acción tiene un principio y un final. `VOUT_ACTION` llega cuando el usuario empieza el gesto y `VOUT_ACTION_END`, con el mismo `event`, cuando lo deja.
+Un gesto mantenido es una acción mantenida. Todo lo que el usuario hace con un gesto tiene un principio y un final:
 
-- Si tu juego funciona a toques (saltar), quédate con `VOUT_ACTION` e ignora el final.
-- Si tiene mecánicas de mantener (planear, un propulsor), empieza con `VOUT_ACTION` y para con `VOUT_ACTION_END`.
+| Mapeo del gesto | Al empezar el gesto | Al terminarlo |
+| :--- | :--- | :--- |
+| Tecla en modo mantener | `VOUT_KEY` con `state: 'down'` | `VOUT_KEY` con `state: 'up'` |
+| Tecla en modo toque | `VOUT_KEY` `down` y `up` seguidos | Nada |
+| Botón del ratón | `VOUT_POINTER` con `state: 'down'` | `VOUT_POINTER` con `state: 'up'` |
+| Evento de juego | `VOUT_ACTION` | `VOUT_ACTION_END` |
 
-Dos detalles que conviene saber:
+Si tu juego distingue un toque de una pulsación larga (salto corto o alto, agacharse mientras se mantiene, planear), trata la entrada de Vout igual que la de un teclado. Tres detalles que conviene saber:
 
-- **El final no llega igual de rápido para todos los gestos.** Con la cabeza (arriba, abajo, a los lados) es inmediato. Con un gesto de la cara (cejas, boca) llega entre 0,6 y 0,75 segundos después de que el usuario relaje el gesto, porque el portal lo deduce al dejar de verlo. Para una acción que hay que soltar con precisión, la cabeza funciona mejor. Pasa lo mismo al soltar una tecla mantenida: con un gesto de la cara, el `VOUT_KEY` de soltar llega alrededor de medio segundo tarde.
+- **Cuánto tarda en llegar el final.** Con la cabeza (arriba, abajo, a los lados) es inmediato. Con un gesto de la cara (cejas, boca) llega una o dos décimas de segundo después de que el usuario lo relaje: lo que tarda la señal en caer más un margen corto para no confundir un fotograma malo con una suelta.
+- **Un gesto es más lento que un dedo.** El toque más rápido que una persona hace con las cejas o la boca dura entre 0,2 y 0,4 segundos. Si tu umbral entre "toque" y "mantenido" está pensado para un teclado (0,1 segundos, por ejemplo), todos los gestos te parecerán mantenidos. Para la entrada de Vout conviene un umbral más largo.
 - **Dos gestos pueden mantener la misma acción.** En el preset `runner`, tanto levantar las cejas como subir la cabeza emiten `JUMP`. Puedes recibir dos `VOUT_ACTION` seguidos del mismo evento; el `VOUT_ACTION_END` llega una sola vez, cuando el usuario suelta el último.
 
-El portal cierra siempre lo que abre: si el usuario apaga la cámara, cambia de pestaña o cambia de preset con una acción en curso, recibes su `VOUT_ACTION_END`.
+Dos gestos seguidos son dos acciones: en cuanto el usuario suelta, el siguiente gesto vuelve a empezar de cero, sin esperas.
+
+El portal suelta siempre lo que pulsa. Si el usuario apaga la cámara, cambia de pestaña, cambia de preset o sale del plano de la cámara con algo mantenido, recibes su final. Si deja de verse la cara, el final llega al cuarto de segundo.
 
 #### Cuándo ocurrió el gesto
 
@@ -819,7 +830,7 @@ window.addEventListener('message', (event) => {
             // Una tecla del mapeo del usuario: conviértela en un evento real.
             onVoutKey(message);
             break;
-        // VOUT_CLICK, VOUT_CURSOR y cualquier tipo desconocido: ignóralos si no los usas.
+        // VOUT_POINTER, VOUT_CURSOR y cualquier tipo desconocido: ignóralos si no los usas.
     }
 });
 
@@ -836,6 +847,12 @@ function exitToPortal() {
 ```
 
 Para saber si estás embebido, comprueba `window.parent !== window`. Fuera del portal, usa el flujo OAuth normal.
+
+### Depurar la integración
+
+Abre tu juego en el portal añadiendo `?voutdebug=1` a la dirección (por ejemplo `/play/tu-juego?voutdebug=1`). El portal no cambia la URL de tu iframe: te lo dice dentro de `VOUT_AUTH`, con el campo `debug: true`. Úsalo para encender tu propio modo de depuración.
+
+Con el SDK, `vout.debug` vale `true` y cada mensaje del portal se escribe en la consola (sin el token).
 
 ### Reglas de seguridad
 

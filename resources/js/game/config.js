@@ -141,6 +141,27 @@ export const FAST_FALL_DOWN_MULTIPLIER = 4;
  */
 export const JUMP_HOLD = Object.freeze({ afterS: 0.12, liftGravity: 0.7 });
 
+/**
+ * El salto mantenido con un GESTO (control facial de Vout: cejas, boca, cabeza).
+ *
+ * Un gesto es más lento que un dedo: el más rápido dura 0,2-0,4 s y su final llega
+ * una o dos décimas después. Con la regla del teclado (JUMP_HOLD: mantenido desde
+ * 0,12 s) todos los saltos de un gesto saldrían altos, y el salto del nivel, el que
+ * usa el charter, no se podría hacer. Y esperar más para alargar la subida no
+ * sirve: el Dino llega arriba a los 0,36 s y ya no queda subida que alargar.
+ *
+ * Así que con un gesto el salto es el del nivel hasta arriba, y si al llegar el
+ * gesto SIGUE, el Dino se impulsa otra vez: acaba a la misma altura que el salto
+ * mantenido del teclado y aterriza algo más tarde. Va siempre por encima del arco
+ * base, como aquel.
+ *
+ *   afterS        Cuánto tiene que durar el gesto para contar como mantenido.
+ *                 0,36 s es justo cuando el salto del nivel llega arriba.
+ *   boostS        Cuánto dura el impulso (soltar a mitad lo deja a medias).
+ *   boostGravity  Gravedad durante el impulso (× GRAVITY; negativa: hacia arriba).
+ */
+export const GESTURE_JUMP = Object.freeze({ afterS: 0.36, boostS: 0.1, boostGravity: -1.2 });
+
 /** Ventana tras dejar el suelo en la que el salto todavía cuenta (coyote time). */
 export const COYOTE_TIME_S = 0.09;
 

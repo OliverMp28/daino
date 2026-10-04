@@ -1,19 +1,24 @@
-// Depuración del portal de Vout, en pantalla. Solo se carga con `?voutdebug=1`
-// (main.js; se recuerda en el navegador), en su propio chunk y también en el build
-// de producción: lo que quien prueba el control facial necesita ver y poder pasar
-// sin abrir la consola.
+// Depuración del portal de Vout, en pantalla. Solo se carga cuando se pide: desde
+// el portal (`/play/daino?voutdebug=1`: el VOUT_AUTH trae `debug: true`) o, en
+// local, abriendo Daino con `?voutdebug=1` (se recuerda en el navegador). Va en su
+// propio chunk y también en el build de producción: es lo que quien prueba el
+// control facial necesita ver y poder pasar sin abrir la consola.
 //
 //   - Qué mensajes llegan del portal, cuántos de cada tipo y qué hace Daino con
 //     cada uno (lo apunta iframe/bridge.js; el token no aparece nunca).
-//   - Cuánto tarda un gesto en llegar: la hora del mensaje menos su `at`.
-//   - Un botón "Copiar" con el registro entero, para pegarlo en un informe.
+//   - Las medidas de los gestos (ui/voutStats.js): cuánto tardan en llegar su
+//     inicio y su final, cuánto duran y si alguno se corta.
+//   - Un botón "Copiar" con las medidas y el registro, para pegarlo en un informe.
 //
 // Va arriba a la izquierda y en la capa de arriba (popover): se ve también sobre
-// el catálogo o el panel de resultados, y no tapa donde se juega. Mientras hay un panel abierto no se puede pulsar (el
-// navegador desactiva todo lo que queda fuera de un diálogo): se copia desde el
-// menú o jugando. `window.__daino.voutLog()` devuelve el mismo texto.
+// el catálogo o el panel de resultados, y no tapa donde se juega. Mientras hay un
+// panel abierto no se puede pulsar (el navegador desactiva todo lo que queda fuera
+// de un diálogo): se copia desde el menú o jugando. `window.__daino.voutLog()`
+// devuelve el mismo texto.
 
+import { GESTURE_JUMP } from '../game/config.js';
 import { getTrace } from '../iframe/bridge.js';
+import { createGestureStats } from './voutStats.js';
 
 const ID = 'daino-voutdebug';
 /** Líneas del registro que se ven; el resto va en "Copiar". */
@@ -46,7 +51,7 @@ function describe({ type, data }) {
         }
         case 'VOUT_SESSION_END': return `motivo ${String(data.reason)}`;
         case 'VOUT_KEY': return `${String(data.code)} ${data.state === 'down' ? '↓' : data.state === 'up' ? '↑' : String(data.state)}`;
-        case 'VOUT_CLICK': return `botón ${String(data.button)}`;
+        case 'VOUT_POINTER': return `botón ${String(data.button)} ${data.state === 'down' ? '↓' : data.state === 'up' ? '↑' : String(data.state)}`;
         case 'VOUT_CURSOR': return `x ${Number(data.x).toFixed(2)} · y ${Number(data.y).toFixed(2)}`;
         case 'VOUT_ACTION':
         case 'VOUT_ACTION_END': return String(data.event);
@@ -69,38 +74,27 @@ function formatTrace(entry) {
     return `${time} ${arrow} ${entry.type}${detail ? ` ${detail}` : ''}${lag}${outcome}`;
 }
 
-/** Media y máximo de lo que tardaron en llegar los gestos (los mensajes con `at`). */
-function lagStats(entries) {
-    const lags = entries.map((e) => e.lagMs).filter((v) => v !== null && v >= 0 && v < 5000);
-    if (lags.length === 0) return null;
-    return {
-        mean: lags.reduce((a, b) => a + b, 0) / lags.length,
-        max: Math.max(...lags),
-        count: lags.length,
-    };
-}
-
-function summaryLine(trace) {
+function summaryLine(trace, stats) {
     const counts = Object.entries(trace.counts)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([type, n]) => `${type.replace('VOUT_', '')} ${n}`)
         .join(' · ');
-    const lag = lagStats(trace.entries);
-    const lagText = lag === null ? '' : ` — retraso de los gestos: ${Math.round(lag.mean)} ms de media, ${Math.round(lag.max)} de máximo`;
-    return `${counts || 'todavía no ha llegado nada'}${lagText}`;
+    const brief = stats.brief();
+    return `${counts || 'todavía no ha llegado nada'}${brief ? ` — ${brief}` : ''}`;
 }
 
-/** El registro entero, listo para pegar. */
-function report(trace) {
-    const lag = lagStats(trace.entries);
+/** Las medidas y el registro, listos para pegar. */
+function report(trace, stats) {
     return [
-        'Daino dentro del portal de Vout: registro de mensajes',
+        'Daino dentro del portal de Vout: medidas y registro de mensajes',
         `Fecha: ${new Date().toISOString()}`,
         `Navegador: ${navigator.userAgent}`,
         `Ventana del juego: ${window.innerWidth} × ${window.innerHeight}`,
-        `Recuento: ${summaryLine(trace)}`,
-        lag === null ? 'Sin gestos con hora (at).' : `Retraso de los gestos (llegada menos at): media ${Math.round(lag.mean)} ms, máximo ${Math.round(lag.max)} ms, sobre ${lag.count} mensajes.`,
+        `Recuento: ${summaryLine(trace, stats)}`,
         '',
+        ...stats.lines(),
+        '',
+        `REGISTRO (los últimos ${trace.entries.length} mensajes)`,
         '← lo que llega del portal · → lo que envía Daino · ⇒ lo que hizo Daino',
         ...trace.entries.map(formatTrace),
     ].join('\n');
@@ -127,6 +121,7 @@ async function copyText(text) {
 export function mountVoutDebug() {
     const trace = getTrace();
     if (trace === null || document.getElementById(ID) !== null) return;
+    const stats = createGestureStats({ holdThresholdMs: Math.round(GESTURE_JUMP.afterS * 1000) });
 
     const root = el('aside', 'daino-voutdebug');
     root.id = ID;
@@ -144,7 +139,7 @@ export function mountVoutDebug() {
     root.append(head, summary, log);
 
     copy.addEventListener('click', async () => {
-        const ok = await copyText(report(trace));
+        const ok = await copyText(report(trace, stats));
         copy.textContent = ok ? 'Copiado' : 'No se pudo';
         setTimeout(() => { copy.textContent = 'Copiar'; }, 2000);
     });
@@ -167,13 +162,17 @@ export function mountVoutDebug() {
     };
     raise();
 
-    // También a la consola: lo que llegó antes de montar esto y lo que vaya llegando.
-    for (const entry of trace.entries) console.info('[vout]', formatTrace(entry));
+    // A las medidas y a la consola: lo que llegó antes de montar esto y lo que vaya llegando.
+    const take = (entry) => {
+        stats.add(entry);
+        console.info('[vout]', formatTrace(entry));
+    };
+    for (const entry of trace.entries) take(entry);
     let dirty = true;
     let dialogs = 0;
     trace.subscribe((entry) => {
         dirty = true;
-        console.info('[vout]', formatTrace(entry));
+        take(entry);
     });
     setInterval(() => {
         const open = document.querySelectorAll('dialog[open]').length;
@@ -183,7 +182,7 @@ export function mountVoutDebug() {
         }
         if (!dirty) return;
         dirty = false;
-        summary.textContent = summaryLine(trace);
+        summary.textContent = summaryLine(trace, stats);
         log.replaceChildren(...trace.entries.slice(-SHOWN).map((entry) => {
             const item = el('li', null, formatTrace(entry));
             if (entry.outcome?.startsWith('descartado') || entry.outcome?.startsWith('error')) item.dataset.bad = 'true';
@@ -192,5 +191,5 @@ export function mountVoutDebug() {
     }, REFRESH_MS);
 
     window.__daino = window.__daino ?? {};
-    window.__daino.voutLog = () => report(trace);
+    window.__daino.voutLog = () => report(trace, stats);
 }

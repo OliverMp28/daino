@@ -50,9 +50,9 @@ export function integrateBody(body, dt, groundY) {
  * 'duckEnd'). Cada modo decide qué significa: corriendo, saltar o agacharse; en
  * antigravedad, cualquier pulsación invierte la gravedad.
  *
- * 'jumpTap' es el salto de quien no puede decir cuánto lo mantiene (el control
- * facial de Vout: su "soltar" llega medio segundo tarde). Solo lo distingue el
- * modo que lo declara (`tapJump`): para los demás es un 'jump' como cualquiera.
+ * 'jumpGesture' es el salto que pulsa un gesto del control facial de Vout. Solo
+ * lo distingue el modo que lo declara (`gestureJump`): para los demás es un 'jump'
+ * como cualquiera (el propulsor sube mientras dure, lo pulse quien lo pulse).
  *
  * @param {object} body
  * @param {string} input
@@ -60,7 +60,7 @@ export function integrateBody(body, dt, groundY) {
  */
 export function applyInput(body, input) {
     const mode = movementMode(body.mode);
-    return mode.input(body, input === 'jumpTap' && mode.tapJump !== true ? 'jump' : input);
+    return mode.input(body, input === 'jumpGesture' && mode.gestureJump !== true ? 'jump' : input);
 }
 
 /**

@@ -21,6 +21,7 @@ import {
     FAST_FALL_DOWN_MULTIPLIER,
     FAST_FALL_MULTIPLIER,
     FLIP_MODE,
+    GESTURE_JUMP,
     GRAVITY,
     JUMP_BUFFER_S,
     JUMP_HOLD,
@@ -68,8 +69,8 @@ export const RUN_MODE = Object.freeze({
     actions: Object.freeze(['jump', 'duck']),
     /** Tras entrar, cuánto tarda en poder actuar con garantías: caer desde el techo de otro modo. */
     settleS: 0.45,
-    /** Aquí mantener da forma al salto: un 'jumpTap' no lo alarga (ver `input`). */
-    tapJump: true,
+    /** Aquí mantener da forma al salto, y un gesto no se mantiene como una tecla (ver `integrate`). */
+    gestureJump: true,
 
     enter(body) {
         body.jumpBufferT = 0;
@@ -90,9 +91,16 @@ export const RUN_MODE = Object.freeze({
         let g = GRAVITY;
         if (body.fastFall) g = GRAVITY * (body.vy > 0 ? FAST_FALL_DOWN_MULTIPLIER : FAST_FALL_MULTIPLIER);
         else if (body.jumpT >= 0) {
-            // Mantenido, sube con menos gravedad: más alto y más tiempo en el aire.
-            // Solo pasado `afterS`: un toque es exactamente el arco base.
-            if (body.jumpHeld && body.vy < 0 && body.jumpT >= JUMP_HOLD.afterS) g = GRAVITY * JUMP_HOLD.liftGravity;
+            if (body.jumpHeld && body.jumpGesture) {
+                // Mantenido con un gesto (más lento que un dedo): el salto del nivel
+                // hasta arriba y, si el gesto sigue, otro impulso (GESTURE_JUMP).
+                const since = body.jumpT - GESTURE_JUMP.afterS;
+                if (since >= 0 && since < GESTURE_JUMP.boostS) g = GRAVITY * GESTURE_JUMP.boostGravity;
+            } else if (body.jumpHeld && body.vy < 0 && body.jumpT >= JUMP_HOLD.afterS) {
+                // Mantenido, sube con menos gravedad: más alto y más tiempo en el aire.
+                // Solo pasado `afterS`: un toque es exactamente el arco base.
+                g = GRAVITY * JUMP_HOLD.liftGravity;
+            }
             body.jumpT += dt;
         }
 
@@ -138,11 +146,11 @@ export const RUN_MODE = Object.freeze({
     input(body, input) {
         switch (input) {
             case 'jump':
-            case 'jumpTap':
-                // 'jumpTap': un salto cuyo "soltar" no es de fiar (el control facial
-                // de Vout lo avisa medio segundo tarde). No cuenta como mantenido:
-                // da siempre el arco del nivel, dure lo que dure el gesto.
-                body.jumpKey = input === 'jump';
+            case 'jumpGesture':
+                // 'jumpGesture': lo pulsa un gesto del control facial de Vout. Se
+                // mantiene como una tecla, pero con su propia regla (GESTURE_JUMP).
+                body.jumpKey = true;
+                body.jumpGesture = input === 'jumpGesture';
                 if (jump(body)) return 'jump';
                 // Pulsado un pelín antes de aterrizar: se guarda (jump buffer).
                 if (!body.grounded && !body.dead) body.jumpBufferT = JUMP_BUFFER_S;

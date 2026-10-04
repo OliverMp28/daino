@@ -8,7 +8,7 @@ import '@css/main.css';
 
 import { startEngine } from '@/game/engine.js';
 import { setupUpload } from '@/ui/upload.js';
-import { readDebugFlag, startBridge } from '@/iframe/bridge.js';
+import { onTraceStart, readDebugFlag, startBridge } from '@/iframe/bridge.js';
 import * as client from '@/api/client.js';
 import * as auth from '@/ui/auth.js';
 import * as appController from '@/ui/AppController.js';
@@ -36,7 +36,13 @@ async function boot() {
         // El mando del control facial (teclas, clics y gestos que el portal
         // retransmite) solo existe aquí dentro: no pesa a quien juega por su cuenta.
         void import('@/iframe/remote.js').then(({ startRemote }) => startRemote());
-        if (voutDebug) void import('@/ui/voutDebug.js').then(({ mountVoutDebug }) => mountVoutDebug());
+        // Y el aviso de que la música espera un clic de verdad (solo puede pasar aquí).
+        void import('@/iframe/soundGate.js').then(({ startSoundGate }) => startSoundGate());
+        // La depuración se enciende desde el portal (`/play/daino?voutdebug=1`: el
+        // VOUT_AUTH trae `debug: true`) o, en local, desde Daino (`?voutdebug=1`).
+        onTraceStart(() => {
+            void import('@/ui/voutDebug.js').then(({ mountVoutDebug }) => mountVoutDebug());
+        });
     }
 
     // La rejilla de la interfaz, antes de pintar nada: celdas enteras en píxeles de

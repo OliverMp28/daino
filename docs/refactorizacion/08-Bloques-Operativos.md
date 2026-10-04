@@ -352,6 +352,57 @@ El token es un access token normal de Vout (RS256, `iss`, `aud` = `client_id` de
 - Pedido a Vout: acortar el final de los gestos de la cara (o detectar un gesto repetido dentro de esa espera): con 0,6-0,75 s, dos gestos seguidos se funden en uno y el propulsor no se puede soltar a tiempo; una acción `PAUSE` en el preset `runner`; si el portal dibuja el cursor encima del juego; una forma de pasar `?voutdebug=1` al iframe en producción (allí el recuerdo del navegador no cruza de un sitio a otro).
 - El audio arranca sin gesto dentro del iframe porque el portal lo cede (`allow="autoplay"`) y su página sí ha tenido uno: probado en Chrome; Safari y Firefox, sin probar.
 
+> **Lo que vino después.** La cámara de verdad funcionó, y Vout cambió cómo avisa del final de un gesto: ver el Sub-bloque 3.9, que **sustituye** la decisión "un gesto es un toque" de aquí (`'jumpTap'`, `tapJump` e `Input.tap` ya no existen) y cambia `VOUT_CLICK` por `VOUT_POINTER`.
+
+---
+
+## Sub-bloque 3.9 — Gestos mantenidos: agachado mientras dure, salto alto y botón del ratón (Oct 2026) ✅
+
+> **Disparador.** Segunda prueba real, ya con la cámara funcionando. El usuario salta y se agacha con gestos, pero: **no puede quedarse agachado** (se levanta solo aunque mantenga el gesto), **no puede hacer el salto alto** que con Espacio sí puede, y nota algo de retraso. Las dos primeras venían de la decisión del 3.8 de tratar todo gesto como un toque, tomada porque el final de un gesto de la cara llegaba 0,6-0,75 s tarde. Vout lo cambió: ahora detecta el final cuando la señal del gesto cae, y llega una o dos décimas después de relajar la cara.
+
+**El contrato, otra vez ampliado** (guía de Vout, "Toques y acciones mantenidas"):
+- **Un gesto mantenido es una acción mantenida, para todo**: tecla en modo mantener (`VOUT_KEY` `down` … `up`), botón del ratón (`down` … `up`), evento de juego (`VOUT_ACTION` … `VOUT_ACTION_END`). Dos gestos seguidos son dos inicios.
+- **`VOUT_CLICK` ya no existe.** Lo sustituye `{ type: 'VOUT_POINTER', button: 'left' | 'right', state: 'down' | 'up', at }`: el botón queda pulsado lo que dura el gesto. Sin coordenadas: se aplica en el último `VOUT_CURSOR`.
+- `at` en todos los finales (el primer fotograma en el que el gesto ya no estaba).
+- Redes de Vout: si deja de verse la cara, el final llega a los 0,25 s; con la cabeza muy girada, a los 0,6-0,75 s; al apagar la cámara o cambiar de pestaña o de preset, al momento.
+- El preset `runner` tiene `PAUSE` (fruncir el ceño), con su final.
+- `VOUT_AUTH` puede traer `debug: true` (el usuario abrió `/play/daino?voutdebug=1`). El portal sigue cargando el juego sin parámetros.
+- El portal dibuja el cursor (una retícula) encima del juego: Daino no dibuja otro, solo resalta lo que hay debajo.
+- **Un gesto es más lento que un dedo**: el más rápido con cejas o boca dura 0,2-0,4 s.
+
+**El problema del salto alto.** Con el teclado, mantener más de 0,12 s alarga la subida (`JUMP_HOLD`). Con esa regla, todos los saltos de un gesto saldrían altos, y el salto del nivel (el que usa el charter para colocar los obstáculos) no se podría hacer con la cara. Y esperar más para decidir no sirve: el Dino llega arriba a los 0,36 s; alargar la subida desde los 0,25 s da 6 unidades de más, y desde los 0,30, 2. **Solución (`GESTURE_JUMP`)**: con un gesto, el salto es el del nivel hasta arriba; si al llegar (0,36 s) el gesto sigue, el Dino se impulsa otra vez durante 0,1 s. Acaba a la misma altura que el salto mantenido del teclado (188 frente a 188) y aterriza una décima más tarde (0,97 s frente a 0,85). Va siempre por encima del arco base.
+
+**Entregado.**
+- `resources/js/game/config.js` — `GESTURE_JUMP = { afterS: 0.36, boostS: 0.1, boostGravity: -1.2 }`.
+- `resources/js/game/systems/modes/run.js` — `gestureJump: true`; la entrada `'jumpGesture'` mantiene el salto como una tecla (`jumpKey`) pero con la regla de los gestos (`body.jumpGesture`). `physics.applyInput` se la da tal cual solo a ese modo; el propulsor y la antigravedad la reciben como `'jump'`. `GameSession._queueInput` convierte en `'jumpGesture'` todo salto `remote`.
+- `resources/js/iframe/bridge.js` — `VOUT_POINTER` (kind `pointer`, con `state`); `VOUT_CLICK` es ya un mensaje desconocido. `VOUT_AUTH.debug === true` enciende la depuración en marcha (`onTraceStart`).
+- `resources/js/iframe/remote.js` — botón del ratón con principio y final: jugando y sobre el lienzo, `down` empieza a saltar (mitad izquierda) o a agacharse (derecha) y `up` lo termina, como un dedo; sobre la interfaz, **el clic se hace al soltar y solo si el cursor sigue sobre lo mismo**; si el Dino choca con el botón abajo, soltarlo no pulsa nada del panel que aparezca. `releaseAll()`: al llegar `VOUT_SESSION_END` se suelta todo lo que un gesto mantenía.
+- `resources/js/game/systems/input.js` — `releaseRemote()`; al ocultarse la pestaña se suelta todo (al perder el foco el iframe, solo lo de este equipo: pulsar en el portal le quita el foco y los gestos siguen). `Input.tap` ya no existe.
+- `resources/js/ui/voutStats.js` (puro) + `voutDebug.js` — **las medidas que pide Vout**, en el recuadro y en "Copiar": retraso de los inicios y de los finales (llegada menos `at`), duración de cada gesto (`at` del final menos `at` del inicio) y cuánto lo vio mantenido el juego, lo raro (un final y otro inicio en menos de 150 ms = un gesto que se cortó solo; finales sin inicio; inicios repetidos; lo que sigue mantenido) y con qué mapeo se jugó.
+- `resources/js/iframe/soundGate.js` (chunk aparte, solo dentro del portal) + `AudioEngine.blocked`/`retry()` — **la música sin un clic de verdad**: si alguien abre `/play/daino` por su dirección o recarga y sigue solo con gestos, el navegador no deja sonar y el juego se quedaba quieto sin decir por qué. Ahora se dice ("…el navegador pide un clic de verdad en la página…") y se reintenta cada medio segundo: un clic en cualquier parte del portal basta.
+
+**Decisiones aprobadas (vinculantes):**
+- **Un gesto mantenido es una pulsación mantenida**: agachado mientras dure, el propulsor encendido, el botón del ratón abajo. Sustituye "un gesto es un toque" del 3.8.
+- **El salto alto de un gesto tiene su regla** (`GESTURE_JUMP`): un gesto corto da SIEMPRE el salto del nivel; mantenido, el alto. El umbral (0,36 s) se ajusta con las medidas reales de la cámara, no a ojo.
+- **En la interfaz, el clic del botón del ratón se hace al soltar y sobre lo mismo que se pulsó**, como con un ratón.
+- **Nada se queda pulsado**: un final sin su principio no hace nada, y lo que mantiene el portal se suelta si la sesión termina o la pestaña se oculta.
+- **Si la música no puede sonar, se dice por qué y qué hacer.**
+- **La depuración la enciende el portal** (`debug: true`); el `?voutdebug=1` de Daino queda como camino local.
+
+**Verificación.**
+- `tests/js/portal-input.test.mjs` (16) y `embedded-bridge.test.mjs` (16). 553 JS, 106 PHP. Bundle principal 112,2 KB gzip; `remote` 3,2, `voutDebug` 3,4 y `soundGate` 0,6 KB aparte.
+- Navegador, build de producción, portal de prueba como en el 3.8:
+  - El recuadro se enciende con `VOUT_AUTH.debug` (con la depuración local apagada). `VOUT_CLICK` no hace nada.
+  - Botón abajo sobre JUGAR: nada; al soltar, se abre el catálogo. Pulsar sobre una tarjeta, llevar el cursor a otro sitio y soltar: no juega.
+  - Salto medido paso a paso de la física: gesto de 0,25 s = 158 (el del nivel) y de 0,8 s = 188 (el alto), igual con Espacio del portal, con `JUMP` y con el botón del ratón a la izquierda.
+  - Agachado 1,52 s con el botón a la derecha mantenido 1,5 s, y lo mismo con `DUCK`.
+  - Finales sin principio: nada. `VOUT_SESSION_END` con `DUCK` mantenido: se levanta y la sesión termina. `PAUSE` con su final: pausa.
+  - **Sin ningún gesto de verdad en toda la página** (todo por CDP con `userGesture: false`): se llega a jugar, el audio queda `suspended`, la canción no avanza y sale el aviso; tras un clic de verdad en el portal (no en el juego), `running`, la canción avanza y el aviso se va.
+
+**Sin verificar / pendiente.**
+- **Las medidas con la cámara**: las saca el usuario (`/play/daino?voutdebug=1`, "Copiar"). Con ellas se decide si `GESTURE_JUMP.afterS` se queda en 0,36 s: si los gestos rápidos del usuario duran más que eso vistos desde el juego, saldrán altos y hay que subirlo (a costa de un salto alto más largo).
+- El retraso que nota el usuario: Daino no puede actuar antes de saber del gesto. Las medidas dirán cuánto es.
+
 ---
 
 ## Bloque 4 — Frontend foundation: PixiJS + audio + shader ✅

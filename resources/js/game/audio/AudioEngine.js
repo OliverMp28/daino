@@ -186,6 +186,19 @@ export class AudioEngine {
         if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') this.ctx.resume().catch(() => {});
     }
 
+    /**
+     * El audio está parado sin que nadie lo haya pedido: el navegador no le deja
+     * sonar (su política de autoplay: falta un gesto de verdad en la página).
+     */
+    get blocked() {
+        return this.ctx !== null && this.ctx.state === 'suspended' && this._holds.size === 0;
+    }
+
+    /** Vuelve a intentar que suene, si nadie lo tiene detenido. */
+    retry() {
+        if (this.blocked) this.ctx.resume().catch(() => {});
+    }
+
     /** Decodifica un ArrayBuffer (de FileReader) a AudioBuffer. */
     async decode(arrayBuffer) {
         if (this.ctx === null) await this.start();

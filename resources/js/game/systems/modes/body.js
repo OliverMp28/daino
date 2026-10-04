@@ -30,6 +30,7 @@ export const BODY_EVENT = Object.freeze({
  * @property {boolean} fastFall
  * @property {boolean} jumpKey     La tecla de salto está abajo.
  * @property {boolean} jumpHeld    Este salto sigue mantenido (sube más: JUMP_HOLD).
+ * @property {boolean} jumpGesture Lo mantiene un gesto de Vout, no una tecla: otra regla (GESTURE_JUMP).
  * @property {number} jumpT        Segundos desde que despegó del suelo (−1: no es un salto del suelo).
  * @property {number} coyoteT
  * @property {number} jumpBufferT
@@ -52,6 +53,7 @@ export function bodyState(groundY) {
         fastFall: false,
         jumpKey: false,
         jumpHeld: false,
+        jumpGesture: false,
         jumpT: -1,
         coyoteT: COYOTE_TIME_S,
         jumpBufferT: 0,

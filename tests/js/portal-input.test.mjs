@@ -2,29 +2,34 @@
 //
 // La primera prueba real (Oct 2026) falló entera: el portal detectaba los gestos
 // y Daino no reaccionaba a nada. Cada usuario de Vout trae su mapeo —el de aquella
-// prueba: cejas = Espacio mantenido, boca = clic, cabeza = cursor, ceño = Escape— y
-// Daino solo entendía las dos acciones de un preset que el usuario no había
-// aceptado. Ahora el portal dice qué tecla, qué clic o qué acción corresponde al
-// gesto y Daino lo hace en su página (iframe/remote.js):
+// prueba: cejas = Espacio mantenido, boca = botón del ratón, cabeza = cursor, ceño
+// = Escape— y Daino solo entendía las dos acciones de un preset que el usuario no
+// había aceptado. Ahora el portal dice qué tecla, qué botón o qué acción
+// corresponde al gesto y Daino lo hace en su página (iframe/remote.js):
 //
 //   - una tecla llega al juego y a los paneles como la de un teclado;
-//   - un clic cae donde apunta el cursor: jugando, mitad izquierda salta y mitad
-//     derecha agacha; en la interfaz, pulsa lo que haya debajo;
+//   - el botón del ratón se pulsa donde apunta el cursor: jugando, mitad izquierda
+//     salta y mitad derecha agacha; en la interfaz, hace clic al soltar;
 //   - las acciones JUMP y DUCK saltan y agachan jugando, y en los menús son un
 //     mando de dos botones (agacharse = siguiente, saltar = pulsar).
 //
-// Y dos reglas que salen de cómo llegan los gestos:
-//   - un gesto no cuenta dos veces (dos gestos pueden mantener la misma acción, y
-//     una tecla que ya está abajo no vuelve a pulsarse);
-//   - el "soltar" de un gesto de la cara llega medio segundo tarde: corriendo, un
-//     gesto es un toque (el salto del nivel); solo el propulsor atiende a cuánto dura.
+// La segunda prueba (con la cámara ya funcionando) dejó tres quejas: no se podía
+// quedar agachado, no se podía hacer el salto alto y se notaba retraso. Las dos
+// primeras venían de tratar todo gesto como un toque, porque su final llegaba
+// 0,6-0,75 s tarde. Vout lo arregló (el final llega en una o dos décimas, y todo
+// gesto tiene principio y final), así que:
+//
+//   - un gesto mantenido es una pulsación mantenida (agachado mientras dure, el
+//     propulsor encendido);
+//   - el salto alto de un gesto tiene su propia regla, porque un gesto es más
+//     lento que un dedo: el salto del nivel hasta arriba y, si el gesto sigue,
+//     otro impulso;
+//   - un gesto no cuenta dos veces, y nada se queda pulsado.
 
-import { test, mock } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 // --------------------------- Navegador simulado ---------------------------
-
-mock.timers.enable({ apis: ['setTimeout'] });
 
 const win = new EventTarget();
 win.innerWidth = 1000;
@@ -32,7 +37,7 @@ win.innerHeight = 500;
 globalThis.window = win;
 
 /** Lo que hay en pantalla: se cambia en cada caso. */
-const screen = { dialog: false, focused: null, under: null };
+const screen = { dialog: false, focused: null, under: null, control: null };
 const doc = new EventTarget();
 doc.body = new EventTarget();
 doc.hidden = false;
@@ -59,8 +64,9 @@ const CANVAS = node('#app');
 const { Input } = await import('../../resources/js/game/systems/input.js');
 const { createRemote } = await import('../../resources/js/iframe/remote.js');
 const { pickInDirection } = await import('../../resources/js/ui/focusNav.js');
-const { applyInput, bodyState, integrateBody } = await import('../../resources/js/game/systems/physics.js');
-const { PHYSICS_STEP_S } = await import('../../resources/js/game/config.js');
+const { createGestureStats } = await import('../../resources/js/ui/voutStats.js');
+const { applyInput, bodyState, integrateBody, settlePosture } = await import('../../resources/js/game/systems/physics.js');
+const { GESTURE_JUMP, PHYSICS_STEP_S } = await import('../../resources/js/game/config.js');
 
 // --------------------------- Una partida de mentira que escucha ---------------------------
 
@@ -77,6 +83,7 @@ function startPlaying() {
     for (const [name, fn] of Object.entries(listeners)) Input.on(name, fn);
     screen.dialog = false;
     screen.under = CANVAS;
+    screen.control = null;
     heard.length = 0;
 }
 function stopPlaying() {
@@ -92,6 +99,7 @@ function fakeNav() {
     const items = ['Jugar', 'Subir', 'Ajustes'].map(control);
     const nav = {
         log,
+        items,
         focused: null,
         current: () => nav.focused,
         first: () => { log.push('first'); nav.focused = items[0]; return nav.focused; },
@@ -106,8 +114,9 @@ function fakeNav() {
         adjust: () => false,
         dismiss: () => { log.push('dismiss'); return 'closed'; },
         labelOf: (el) => el.name,
-        controlAt: () => null,
-        clickAt: (target, x, y) => { log.push(`click ${Math.round(x)},${Math.round(y)}`); return items[2]; },
+        /** El control que hay bajo el cursor: el que diga `screen.control`. */
+        controlAt: () => screen.control,
+        clickAt: (target, x, y) => { log.push(`click ${Math.round(x)},${Math.round(y)}`); return screen.control; },
     };
     return nav;
 }
@@ -115,6 +124,8 @@ function fakeNav() {
 const at = (ms) => ({ timeStamp: ms });
 const key = (code, state, timeStamp = 100) => ({ kind: 'key', code, key: code === 'Space' ? ' ' : code, state, timeStamp });
 const action = (event, phase, timeStamp = 100) => ({ kind: 'action', event, phase, timeStamp });
+const pointer = (state, timeStamp = 100, button = 'left') => ({ kind: 'pointer', button, state, timeStamp });
+const cursor = (x, y = 0.5) => ({ kind: 'cursor', x, y });
 
 // --------------------------- El centro de pulsaciones ---------------------------
 
@@ -131,22 +142,18 @@ test('cada pulsación tiene una fuente: no pulsa dos veces sin soltar, y solo su
     stopPlaying();
 });
 
-test('un clic llega entero, sin su "soltar": se suelta solo', () => {
-    startPlaying();
-    Input.tap('duck', at(10));
-    assert.deepEqual(names(), ['duckStart']);
-    mock.timers.tick(90);
-    assert.deepEqual(names(), ['duckStart', 'duckEnd']);
-    stopPlaying();
-});
-
-test('al perder el foco se suelta lo de este equipo; lo que mantiene el portal lo suelta el portal', () => {
+test('al perder el foco se suelta lo de este equipo; lo del portal lo suelta el portal, salvo que la pestaña se oculte', () => {
     startPlaying();
     Input.press('key:ArrowDown', 'duck', at(1));
     Input.press('action:JUMP', 'jump', { timeStamp: 2, remote: true });
     win.dispatchEvent(new Event('blur'));     // clic en el panel del portal: el iframe pierde el foco
     assert.deepEqual(names(), ['duckStart', 'jump', 'duckEnd'], 'la tecla de verdad se suelta; el gesto sigue');
-    assert.equal(Input.release('action:JUMP'), true);
+
+    doc.hidden = true;                        // la pestaña deja de verse: nada puede quedarse pulsado
+    doc.dispatchEvent(new Event('visibilitychange'));
+    doc.hidden = false;
+    assert.deepEqual(names(), ['duckStart', 'jump', 'duckEnd', 'jumpEnd']);
+    assert.equal(Input.release('action:JUMP'), false, 'el final que mande el portal después ya no suelta nada');
     stopPlaying();
 });
 
@@ -156,13 +163,15 @@ test('acciones del preset runner: saltar, agacharse y pausar, con la hora del ge
     startPlaying();
     const remote = createRemote({ nav: fakeNav(), notify: () => {} });
 
-    assert.equal(remote.handle(action('JUMP', 'start', 740)), 'salto');
+    assert.match(remote.handle(action('JUMP', 'start', 740)), /salto/);
     assert.deepEqual(heard[0], ['jump', { timeStamp: 740, remote: true }], 'fechado cuando la cámara vio el gesto, no cuando llegó');
     remote.handle(action('DUCK', 'start'));
-    remote.handle(action('JUMP', 'end'));
+    remote.handle(action('JUMP', 'end', 900));
     remote.handle(action('DUCK', 'end'));
     remote.handle(action('PAUSE', 'start'));
+    remote.handle(action('PAUSE', 'end'));
     assert.deepEqual(names(), ['jump', 'duckStart', 'jumpEnd', 'duckEnd', 'pause']);
+    assert.deepEqual(heard[2], ['jumpEnd', { timeStamp: 900, remote: true }], 'el final también lleva su hora');
 
     // El usuario puede mapear un gesto a cualquier nombre: lo que Daino no tiene, se descarta.
     heard.length = 0;
@@ -183,13 +192,14 @@ test('un mismo salto no se cuenta dos veces: dos gestos mantienen la acción y t
     remote.handle(action('JUMP', 'end'));         // un fin de más no suelta nada
     assert.deepEqual(names(), ['jump', 'jumpEnd']);
 
+    // Dos gestos seguidos son dos saltos: soltado, el siguiente empieza de cero.
     remote.handle(action('JUMP', 'start'));
-    assert.deepEqual(names(), ['jump', 'jumpEnd', 'jump'], 'soltada, la siguiente sí es otro salto');
     remote.handle(action('JUMP', 'end'));
+    assert.deepEqual(names(), ['jump', 'jumpEnd', 'jump', 'jumpEnd']);
     stopPlaying();
 });
 
-test('teclas del mapeo del usuario: llegan al juego como las de un teclado', () => {
+test('teclas del mapeo del usuario: llegan al juego como las de un teclado, y se mantienen lo que dura el gesto', () => {
     startPlaying();
     const remote = createRemote({ nav: fakeNav(), notify: () => {} });
 
@@ -201,7 +211,9 @@ test('teclas del mapeo del usuario: llegan al juego como las de un teclado', () 
     assert.deepEqual(heard[1], ['jumpEnd', { timeStamp: 900, remote: true }]);
 
     remote.handle(key('ArrowDown', 'down'));
+    assert.deepEqual(names(), ['jump', 'jumpEnd', 'duckStart'], 'agachado mientras dure el gesto…');
     remote.handle(key('ArrowDown', 'up'));
+    remote.handle(key('ArrowDown', 'up'));        // un "soltar" sin su "pulsar" no hace nada
     remote.handle(key('Escape', 'down'));
     assert.deepEqual(names(), ['jump', 'jumpEnd', 'duckStart', 'duckEnd', 'pause']);
 
@@ -215,31 +227,74 @@ test('teclas del mapeo del usuario: llegan al juego como las de un teclado', () 
     stopPlaying();
 });
 
-test('el clic cae donde apunta la cabeza: mitad izquierda salta y mitad derecha agacha, como el táctil', () => {
+test('el botón del ratón se pulsa donde apunta la cabeza: izquierda salta y derecha agacha, mientras dure, como un dedo', () => {
     startPlaying();
     const nav = fakeNav();
     const remote = createRemote({ nav, notify: () => {} });
-    const click = { kind: 'click', button: 'left', timeStamp: 50 };
 
-    // Sin cursor todavía, el clic no tiene sitio: es "el botón", y jugando es saltar.
-    assert.match(remote.handle(click), /salto/);
-    remote.handle({ kind: 'cursor', x: 0.2, y: 0.5 });
-    assert.match(remote.handle(click), /izquierda: salto/);
-    remote.handle({ kind: 'cursor', x: 0.8, y: 0.5 });
-    assert.match(remote.handle(click), /derecha: agacharse/);
-    assert.deepEqual(names(), ['jump', 'jump', 'duckStart']);
-    assert.deepEqual(heard[2][1], { timeStamp: 50, remote: true });
-    mock.timers.tick(90);
-    assert.deepEqual(names().slice(3).sort(), ['duckEnd', 'jumpEnd', 'jumpEnd']);
+    // Sin cursor todavía, el botón no tiene sitio: es "el botón", y jugando es saltar.
+    assert.match(remote.handle(pointer('down', 50)), /salto/);
+    remote.handle(pointer('up', 60));
+    remote.handle(cursor(0.2));
+    assert.match(remote.handle(pointer('down')), /izquierda: salto/);
+    remote.handle(pointer('up'));
+    assert.deepEqual(names(), ['jump', 'jumpEnd', 'jump', 'jumpEnd']);
+    assert.deepEqual(heard[0][1], { timeStamp: 50, remote: true });
 
-    // Sobre un botón (el de pausa del HUD) el clic es del botón, no un salto.
+    // A la derecha: agachado hasta que se suelta (antes, un clic lo levantaba solo).
     heard.length = 0;
-    screen.under = node('button', '#hud-root');
-    assert.match(remote.handle(click), /clic en «Ajustes»/);
-    assert.deepEqual([names(), nav.log], [[], ['click 800,250']]);
+    remote.handle(cursor(0.8));
+    assert.match(remote.handle(pointer('down')), /derecha: agacharse/);
+    remote.handle(pointer('down'));               // sigue pulsado: no es otra pulsación
+    remote.handle(cursor(0.1));                   // la cabeza se mueve con el botón abajo: sigue agachado
+    assert.deepEqual(names(), ['duckStart']);
+    remote.handle(pointer('up'));
+    remote.handle(pointer('up'));                 // un "soltar" de más no hace nada
+    assert.deepEqual(names(), ['duckStart', 'duckEnd']);
 
-    assert.match(remote.handle({ kind: 'click', button: 'right', timeStamp: 50 }), /ignorado/);
+    // El botón derecho no se usa.
+    assert.match(remote.handle(pointer('down', 1, 'right')), /ignorado/);
+    assert.deepEqual(names(), ['duckStart', 'duckEnd']);
+    assert.deepEqual(nav.log, []);
+    stopPlaying();
+});
+
+test('si el Dino choca con el botón pulsado, soltarlo no pulsa nada del panel de resultados', () => {
+    startPlaying();
+    const nav = fakeNav();
+    const remote = createRemote({ nav, notify: () => {} });
+    remote.handle(cursor(0.2, 0.6));
+    remote.handle(pointer('down'));               // saltando…
+    screen.dialog = true;                         // …choca: aparece el panel, con "Reintentar" bajo el cursor
+    screen.control = nav.items[0];
+    remote.handle(pointer('up'));
+    assert.deepEqual(names(), ['jump', 'jumpEnd'], 'solo suelta lo del juego');
+    assert.deepEqual(nav.log, [], 'y no hace clic en lo que haya aparecido debajo');
+    stopPlaying();
+});
+
+test('cuando la sesión termina se suelta todo lo que un gesto mantenía: nada se queda pulsado', () => {
+    startPlaying();
+    const remote = createRemote({ nav: fakeNav(), notify: () => {} });
+    remote.handle(action('JUMP', 'start'));
+    remote.handle(key('ArrowDown', 'down'));
+    remote.handle(cursor(0.2));
+    remote.handle(pointer('down'));
+    Input.press('key:KeyS', 'duck', at(1));       // una tecla de verdad: no es del portal
+    heard.length = 0;
+
+    remote.releaseAll();
+    assert.deepEqual(names().sort(), ['duckEnd', 'jumpEnd', 'jumpEnd']);
+    // Los finales que lleguen después no hacen nada, y el siguiente gesto empieza de cero.
+    heard.length = 0;
+    remote.handle(action('JUMP', 'end'));
+    remote.handle(key('ArrowDown', 'up'));
+    remote.handle(pointer('up'));
     assert.deepEqual(names(), []);
+    remote.handle(action('JUMP', 'start'));
+    assert.deepEqual(names(), ['jump']);
+    remote.handle(action('JUMP', 'end'));
+    Input.release('key:KeyS');
     stopPlaying();
 });
 
@@ -257,10 +312,11 @@ test('en los menús las dos acciones son un mando: agacharse pasa al siguiente y
     assert.match(remote.handle(action('DUCK', 'start')), /señala «Subir»/);
     remote.handle(action('DUCK', 'end'));
     assert.match(remote.handle(action('JUMP', 'start')), /pulsa «Subir»/);
-    // El gesto sigue mantenido (su fin llega medio segundo después): no vuelve a pulsar.
+    // El gesto sigue mantenido: no vuelve a pulsar.
     remote.handle(action('JUMP', 'start'));
     remote.handle(action('JUMP', 'end'));
     assert.match(remote.handle(action('PAUSE', 'start')), /cierra el panel/);
+    remote.handle(action('PAUSE', 'end'));
 
     assert.deepEqual(nav.log, ['first', 'step 1', 'activate Subir', 'dismiss']);
     assert.equal(said.length, 1, 'cómo funciona se explica una vez');
@@ -290,14 +346,54 @@ test('en los menús las teclas hacen lo que haría un teclado: flechas, Enter, E
     screen.dialog = false;
 });
 
+test('en la interfaz el clic se hace al soltar el botón, y solo si sigue sobre lo mismo', () => {
+    const nav = fakeNav();
+    const remote = createRemote({ nav, notify: () => {} });
+    screen.dialog = true;
+    screen.under = node('button', 'dialog');
+    screen.control = nav.items[0];
+
+    remote.handle(cursor(0.3, 0.4));
+    assert.match(remote.handle(pointer('down')), /sobre «Jugar»: el clic, al soltar/);
+    assert.deepEqual(nav.log, [], 'pulsar todavía no es hacer clic');
+    assert.match(remote.handle(pointer('up')), /clic en «Jugar»/);
+    assert.deepEqual(nav.log, ['click 300,200']);
+
+    // Pulsa sobre un botón, la cabeza se va a otro, suelta: no hay clic (como con un ratón).
+    nav.log.length = 0;
+    remote.handle(pointer('down'));
+    screen.control = nav.items[2];
+    remote.handle(cursor(0.6, 0.4));
+    assert.match(remote.handle(pointer('up')), /clic anulado/);
+    assert.deepEqual(nav.log, []);
+
+    // Fuera de cualquier botón (el velo de un panel): el clic también llega, y lo cierra.
+    screen.control = null;
+    remote.handle(pointer('down'));
+    assert.match(remote.handle(pointer('up')), /donde no hay ningún botón/);
+    assert.deepEqual(nav.log, ['click 600,200']);
+
+    // Sin cursor: el botón pulsa lo que tiene el foco, al soltar.
+    const blind = fakeNav();
+    const other = createRemote({ nav: blind, notify: () => {} });
+    blind.focused = blind.items[1];
+    other.handle(pointer('down'));
+    assert.deepEqual(blind.log, []);
+    assert.match(other.handle(pointer('up')), /pulsa «Subir»/);
+    screen.dialog = false;
+    screen.control = null;
+    assert.deepEqual(names(), []);
+});
+
 test('con un panel encima de la partida, el gesto es del panel y no un salto', () => {
     startPlaying();
     screen.dialog = true;                          // pausa o resultados
     const nav = fakeNav();
     const remote = createRemote({ nav, notify: () => {} });
 
-    remote.handle({ kind: 'cursor', x: 0.3, y: 0.4 });
-    remote.handle({ kind: 'click', button: 'left', timeStamp: 1 });
+    remote.handle(cursor(0.3, 0.4));
+    remote.handle(pointer('down'));
+    remote.handle(pointer('up'));
     remote.handle(action('JUMP', 'start'));
     remote.handle(key('Space', 'down'));
     assert.deepEqual(names(), []);
@@ -305,46 +401,77 @@ test('con un panel encima de la partida, el gesto es del panel y no un salto', (
     stopPlaying();
 });
 
-// --------------------------- Un gesto es un toque ---------------------------
+// --------------------------- El salto de un gesto ---------------------------
 
-/** Altura máxima de un salto con estas entradas ([paso, entrada]). */
-function apex(inputs) {
+/** Un salto con estas entradas ([segundos, entrada]): altura, tiempo en el aire y su recorrido. */
+function jumpArc(inputs) {
     const GROUND = 1000;
     const body = bodyState(GROUND);
     const rest = body.y;
-    let top = rest;
+    const heights = [];
     for (let i = 0; i < 400; i++) {
-        for (const [step, input] of inputs) if (step === i) applyInput(body, input);
+        for (const [t, input] of inputs) if (Math.round(t / PHYSICS_STEP_S) === i) applyInput(body, input);
         integrateBody(body, PHYSICS_STEP_S, GROUND);
-        top = Math.min(top, body.y);
+        heights.push(rest - body.y);
         if (i > 2 && body.grounded) break;
     }
-    return rest - top;
+    return { apex: Math.max(...heights), airS: heights.length * PHYSICS_STEP_S, heights };
 }
 
-test('corriendo, un gesto da el salto del nivel dure lo que dure; mantener una tecla de verdad sí lo alarga', () => {
-    const tap = apex([[0, 'jump'], [1, 'jumpEnd']]);
-    const held = apex([[0, 'jump']]);
-    // El "soltar" de un gesto de la cara llega 0,6-0,75 s después de relajarlo.
-    const gesture = apex([[0, 'jumpTap'], [80, 'jumpEnd']]);
-    const gestureNeverReleased = apex([[0, 'jumpTap']]);
+test('un gesto corto da el salto del nivel; mantenido, el salto alto (un gesto es más lento que un dedo)', () => {
+    const tap = jumpArc([[0, 'jump'], [0.05, 'jumpEnd']]);
+    const keyHeld = jumpArc([[0, 'jump']]);
 
-    assert.ok(held > tap + 20, `mantener sube más (${held.toFixed(0)} frente a ${tap.toFixed(0)})`);
-    assert.equal(gesture, tap, 'el gesto: exactamente el arco con el que se colocó el nivel');
-    assert.equal(gestureNeverReleased, tap);
+    // Un gesto rápido de cejas o de boca dura 0,2-0,4 s y su final llega una o dos décimas
+    // después: con la regla del teclado (mantenido desde 0,12 s) TODOS saldrían altos.
+    for (const releasedAt of [0.2, 0.3, 0.35]) {
+        const quick = jumpArc([[0, 'jumpGesture'], [releasedAt, 'jumpEnd']]);
+        assert.equal(quick.apex, tap.apex, `gesto soltado a los ${releasedAt} s: el arco con el que se colocó el nivel`);
+        assert.equal(quick.airS, tap.airS);
+    }
+    const sameWithKey = jumpArc([[0, 'jump'], [0.3, 'jumpEnd']]);
+    assert.ok(sameWithKey.apex > tap.apex + 15, 'esa misma duración, con una tecla, ya es un salto alto');
+
+    // Mantenido: llega tan alto como el salto mantenido del teclado, y aterriza algo más tarde.
+    const held = jumpArc([[0, 'jumpGesture']]);
+    assert.ok(Math.abs(held.apex - keyHeld.apex) <= 4, `alto de gesto ${held.apex.toFixed(0)} frente a ${keyHeld.apex.toFixed(0)} del teclado`);
+    assert.ok(held.apex > tap.apex + 25);
+    assert.ok(held.airS > keyHeld.airS && held.airS < keyHeld.airS + 0.15, `en el aire ${held.airS.toFixed(2)} s frente a ${keyHeld.airS.toFixed(2)}`);
+    // Siempre por encima del salto del nivel: mantener nunca quita margen sobre un obstáculo.
+    tap.heights.forEach((h, i) => assert.ok(held.heights[i] >= h - 1e-9, `paso ${i}`));
+
+    // Soltar durante el impulso lo deja a medias; después, ya no cambia nada.
+    const half = jumpArc([[0, 'jumpGesture'], [GESTURE_JUMP.afterS + GESTURE_JUMP.boostS / 2, 'jumpEnd']]);
+    assert.ok(half.apex > tap.apex && half.apex < held.apex);
+    assert.equal(jumpArc([[0, 'jumpGesture'], [0.6, 'jumpEnd']]).apex, held.apex);
 });
 
-test('con el propulsor el gesto sí se mantiene: sube hasta que el portal avisa del final', () => {
+test('agacharse y el propulsor duran lo que dura el gesto; en antigravedad un gesto invierte como cualquier pulsación', () => {
     const body = bodyState(1000);
-    body.mode = 'fly';
-    applyInput(body, 'jumpTap');
-    assert.equal(body.flyHeld, 1);
-    applyInput(body, 'jumpEnd');
-    assert.equal(body.flyHeld, 0);
+    const nothingAbove = () => false;
+    const run = (steps) => {
+        for (let i = 0; i < steps; i++) {
+            integrateBody(body, PHYSICS_STEP_S, 1000);
+            settlePosture(body, nothingAbove);
+        }
+    };
+    applyInput(body, 'duckStart');
+    run(240);                                      // dos segundos con el gesto mantenido
+    assert.equal(body.ducking, true, 'sigue agachado: antes se levantaba solo a los 0,4 s');
+    applyInput(body, 'duckEnd');
+    run(2);
+    assert.equal(body.ducking, false, 'y se levanta al soltar');
 
-    body.mode = 'flip';
-    body.grounded = true;
-    assert.equal(applyInput(body, 'jumpTap'), 'flip', 'y en antigravedad invierte, como cualquier pulsación');
+    const flyer = bodyState(1000);
+    flyer.mode = 'fly';
+    applyInput(flyer, 'jumpGesture');
+    assert.equal(flyer.flyHeld, 1);
+    applyInput(flyer, 'jumpEnd');
+    assert.equal(flyer.flyHeld, 0);
+
+    flyer.mode = 'flip';
+    flyer.grounded = true;
+    assert.equal(applyInput(flyer, 'jumpGesture'), 'flip');
 });
 
 // --------------------------- Moverse con flechas ---------------------------
@@ -376,4 +503,54 @@ test('moverse con flechas: el control más cercano hacia allí, y antes lo que e
     const grid = [rect(0, 0, 200, 150), rect(220, 0, 200, 150), rect(0, 170, 200, 150), rect(220, 170, 200, 150)];
     assert.equal(pickInDirection(grid[1], [grid[0], grid[2], grid[3]], 'down'), 2);
     assert.equal(pickInDirection(grid[2], [grid[0], grid[1], grid[3]], 'right'), 2);
+});
+
+// --------------------------- Las medidas de la depuración ---------------------------
+
+test('la depuración mide los gestos: retraso del inicio y del final, cuánto duran y lo que se corta', () => {
+    const stats = createGestureStats({ holdThresholdMs: 360 });
+    let clock = 10_000;
+    /** Un mensaje del portal: el gesto ocurrió en `at` y llegó `lag` ms después. */
+    const message = (type, data, gestureAt, lag) => {
+        clock = gestureAt + lag;
+        stats.add({ at: clock, dir: 'in', type, data: { ...data, at: gestureAt }, outcome: null, lagMs: lag });
+    };
+
+    // Cejas = Espacio: tres gestos de 250, 300 y 500 ms; el inicio tarda 80-120 ms y el final 150-170.
+    message('VOUT_KEY', { code: 'Space', state: 'down' }, 1000, 80);
+    message('VOUT_KEY', { code: 'Space', state: 'up' }, 1250, 150);
+    message('VOUT_KEY', { code: 'Space', state: 'down' }, 2000, 120);
+    message('VOUT_KEY', { code: 'Space', state: 'up' }, 2300, 170);
+    message('VOUT_KEY', { code: 'Space', state: 'down' }, 3000, 100);
+    message('VOUT_KEY', { code: 'Space', state: 'up' }, 3500, 160);
+    // Boca = botón: uno que se corta solo (final y, 40 ms después, otro inicio) y un final que nadie empezó.
+    message('VOUT_POINTER', { button: 'left', state: 'down' }, 4000, 90);
+    message('VOUT_POINTER', { button: 'left', state: 'up' }, 4400, 100);
+    message('VOUT_POINTER', { button: 'left', state: 'down' }, 4440, 90);
+    message('VOUT_POINTER', { button: 'left', state: 'up' }, 4900, 100);
+    message('VOUT_POINTER', { button: 'left', state: 'up' }, 5000, 100);
+    // Preset runner: dos gestos mantienen JUMP, y uno que sigue sin terminar.
+    message('VOUT_ACTION', { event: 'JUMP' }, 6000, 70);
+    message('VOUT_ACTION', { event: 'JUMP' }, 6100, 70);
+    message('VOUT_ACTION_END', { event: 'JUMP' }, 6400, 60);
+    message('VOUT_ACTION', { event: 'DUCK' }, 7000, 70);
+    // Lo que no es un gesto no cuenta.
+    stats.add({ at: clock, dir: 'in', type: 'VOUT_CURSOR', data: { x: 0.5, y: 0.5 }, outcome: null, lagMs: null });
+    stats.add({ at: clock, dir: 'out', type: 'READY', data: {}, outcome: null, lagMs: null });
+
+    const text = stats.lines().join('\n');
+    assert.match(text, /VOUT_KEY down: media 100 ms, peor 120 ms \(3 mensajes\)/);
+    assert.match(text, /VOUT_KEY up: media 160 ms, peor 170 ms \(3 mensajes\)/);
+    assert.match(text, /key:Space: 3 gestos · duración mín 250, mediana 300, máx 500 ms/);
+    // En el juego se ven algo más largos (el final tarda más que el inicio): 320, 350 y 560 ms.
+    assert.match(text, /key:Space: .* en el juego: mediana 350 ms, 1 de 3 de 360 ms o más/);
+    assert.match(text, /duraciones: 250 300 500/);
+    assert.match(text, /pointer:left: 1 veces un final y, menos de 150 ms después, otro inicio/);
+    assert.match(text, /pointer:left: 1 finales sin inicio/);
+    assert.match(text, /action:JUMP: 1 inicios con el gesto ya empezado/);
+    assert.match(text, /action:DUCK: sigue mantenido/);
+    assert.match(text, /Mapeo usado: teclas y ratón.*\(3 teclas, 2 pulsaciones del botón\) y acciones.*\(3\)/);
+    assert.match(stats.brief(), /inicio \d+ ms · final \d+ ms · gesto \d+ ms/);
+
+    assert.match(createGestureStats().lines().join('\n'), /no ha llegado ningún gesto/);
 });

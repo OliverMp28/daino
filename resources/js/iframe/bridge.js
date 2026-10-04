@@ -6,12 +6,13 @@
 //
 //   Daino → portal   { type: 'READY', suggestedPreset: 'runner' }
 //   Daino → portal   { type: 'EXIT' }                           volver al catálogo
-//   portal → Daino   { type: 'VOUT_AUTH', token, expiresAt, voutId, username }
+//   portal → Daino   { type: 'VOUT_AUTH', token, expiresAt, voutId, username, debug? }
 //   portal → Daino   { type: 'VOUT_SESSION_END', reason }       no habrá más renovaciones
 //
 //   Control facial (lo que el jugador hace con la cara, según SU mapeo de gestos):
 //   portal → Daino   { type: 'VOUT_KEY', code, key, state, at } pulsa o suelta una tecla
-//   portal → Daino   { type: 'VOUT_CLICK', button, at }         clic donde esté el cursor
+//   portal → Daino   { type: 'VOUT_POINTER', button, state, at } pulsa o suelta un botón del ratón,
+//                                                               donde esté el cursor
 //   portal → Daino   { type: 'VOUT_CURSOR', x, y }              cursor con la cabeza (0 a 1)
 //   portal → Daino   { type: 'VOUT_ACTION', event, at }         empieza una acción de juego
 //   portal → Daino   { type: 'VOUT_ACTION_END', event, at }     termina
@@ -33,8 +34,14 @@
 //     iframe de otro origen: el portal dice QUÉ tecla o QUÉ clic y es Daino quien
 //     lo hace en su página. Cada usuario trae su mapeo de gestos; el preset
 //     `runner` que se sugiere en `READY` (acciones JUMP y DUCK) es opcional.
+//   - Un gesto mantenido es una pulsación mantenida: todo tiene su principio
+//     (tecla o botón `down`, `VOUT_ACTION`) y su final (`up`, `VOUT_ACTION_END`),
+//     que llega una o dos décimas después de relajar el gesto. El portal suelta
+//     siempre lo que pulsa.
 //   - `at` (milisegundos Unix) dice cuándo ocurrió el gesto: entre la imagen de la
 //     cámara y el mensaje pasa el tiempo de analizarla.
+//   - `debug: true` en `VOUT_AUTH` (el usuario abrió el portal con `?voutdebug=1`)
+//     enciende la depuración: el portal carga el juego sin parámetros.
 //
 // Restricciones (CLAUDE.md invariantes):
 //   - Solo se escucha al portal: `event.origin` exacto y `event.source` igual a
@@ -80,7 +87,7 @@ const TRACE_LIMIT = 400;
  * el gesto en el reloj de `performance.now()` (el de las pulsaciones del juego).
  *
  * @typedef {{ kind: 'key', code: string, key: string, state: 'down' | 'up', timeStamp: number }
- *         | { kind: 'click', button: 'left' | 'right', timeStamp: number }
+ *         | { kind: 'pointer', button: 'left' | 'right', state: 'down' | 'up', timeStamp: number }
  *         | { kind: 'cursor', x: number, y: number }
  *         | { kind: 'action', event: string, phase: 'start' | 'end', timeStamp: number }} PortalInput
  */
@@ -109,6 +116,7 @@ let readySent = 0;
  * @type {{ entries: TraceEntry[], counts: Record<string, number>, listeners: Set<(entry: TraceEntry) => void> } | null}
  */
 let trace = null;
+const traceStartListeners = new Set();
 
 function isInIframe() {
     try {
@@ -193,6 +201,7 @@ function dispatch(data) {
                 username: typeof data.username === 'string' ? data.username : null,
             };
             stopAnnouncing();
+            if (data.debug === true) startTrace();
             if (first) console.info('[bridge] identidad recibida del portal');
             for (const fn of authListeners) {
                 try { fn(auth); } catch (err) { console.error('[bridge] listener VOUT_AUTH:', err); }
@@ -212,9 +221,10 @@ function dispatch(data) {
             if (!isName(code) || typeof key !== 'string' || (state !== 'down' && state !== 'up')) return 'descartado: tecla mal formada';
             return deliver({ kind: 'key', code, key, state, timeStamp: gestureTimeStamp(data.at) });
         }
-        case 'VOUT_CLICK': {
-            if (data.button !== 'left' && data.button !== 'right') return 'descartado: clic sin botón';
-            return deliver({ kind: 'click', button: data.button, timeStamp: gestureTimeStamp(data.at) });
+        case 'VOUT_POINTER': {
+            const { button, state } = data;
+            if ((button !== 'left' && button !== 'right') || (state !== 'down' && state !== 'up')) return 'descartado: botón mal formado';
+            return deliver({ kind: 'pointer', button, state, timeStamp: gestureTimeStamp(data.at) });
         }
         case 'VOUT_CURSOR': {
             if (!Number.isFinite(data.x) || !Number.isFinite(data.y)) return 'descartado: cursor sin coordenadas';
@@ -292,7 +302,7 @@ export function startBridge({ debug = false } = {}) {
     }
 
     isEmbedded = true;
-    if (debug) trace = { entries: [], counts: {}, listeners: new Set() };
+    if (debug) startTrace();
     window.addEventListener('message', handleMessage);
     announceReady();
 
@@ -362,10 +372,10 @@ export function setPortalInput(fn) {
 // --------------------------- Depuración ---------------------------
 
 /**
- * ¿Se pidió la depuración? `?voutdebug=1` en la dirección del juego la enciende y
- * queda recordada en este navegador: el portal carga Daino con su dirección tal
- * cual, sin parámetros, así que se enciende abriendo Daino una vez por su cuenta.
- * `?voutdebug=0` la apaga.
+ * ¿Se pidió la depuración desde Daino? `?voutdebug=1` en la dirección del juego la
+ * enciende y queda recordada en este navegador (el portal carga Daino sin
+ * parámetros); `?voutdebug=0` la apaga. Es el camino local. El normal es el del
+ * portal: `/play/daino?voutdebug=1` hace que `VOUT_AUTH` traiga `debug: true`.
  *
  * @param {string} [search]
  * @param {Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null} [storage]
@@ -393,6 +403,26 @@ function safeStorage() {
     } catch {
         return null;
     }
+}
+
+/** Enciende la depuración (una vez) y avisa a quien la enseña. */
+function startTrace() {
+    if (trace !== null) return;
+    trace = { entries: [], counts: {}, listeners: new Set() };
+    for (const fn of traceStartListeners) {
+        try { fn(); } catch (err) { console.error('[bridge] depuración:', err); }
+    }
+}
+
+/**
+ * Avisa cuando la depuración se enciende: al arrancar (`startBridge({ debug })`)
+ * o más tarde, si el portal la pide en `VOUT_AUTH`. Si ya lo está, avisa ahora.
+ *
+ * @param {() => void} fn
+ */
+export function onTraceStart(fn) {
+    traceStartListeners.add(fn);
+    if (trace !== null) fn();
 }
 
 /**
@@ -451,6 +481,7 @@ export function _resetForTests() {
     isEmbedded = false;
     readySent = 0;
     trace = null;
+    traceStartListeners.clear();
     authListeners.clear();
     sessionEndListeners.clear();
 }

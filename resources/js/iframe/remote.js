@@ -16,10 +16,11 @@
 //                             foco, Esc cierra el diálogo, las flechas mueven) NO
 //                             ocurre con un evento creado por código: se hace aquí
 //                             (`defaultAction`), si nadie ha atendido la tecla.
-//   Un clic (VOUT_CLICK)      Cae donde apunta el cursor (VOUT_CURSOR, la cabeza).
-//                             Jugando, sobre el lienzo: mitad izquierda salta y
-//                             mitad derecha agacha, como el táctil. Sobre la
-//                             interfaz: pulsa lo que haya debajo.
+//   Un botón del ratón        Se pulsa y se suelta donde apunta el cursor
+//   (VOUT_POINTER)            (VOUT_CURSOR, la cabeza). Jugando, sobre el lienzo:
+//                             mitad izquierda salta y mitad derecha agacha,
+//                             mientras dure, como un dedo. Sobre la interfaz: el
+//                             clic se hace al soltar, si sigue sobre lo mismo.
 //   Una acción (VOUT_ACTION)  JUMP, DUCK y PAUSE (preset `runner`). Jugando son
 //                             saltar, agacharse y pausar. En los menús, un mando
 //                             de dos botones: agacharse pasa al siguiente y saltar
@@ -33,15 +34,19 @@
 //     que mueve la cabeza hay que saber dónde va a caer el clic.
 //   - Un gesto no cuenta dos veces: una acción que ya está mantenida (otro gesto
 //     con el mismo nombre) no vuelve a empezar, y solo termina lo que empezó.
+//   - Un gesto mantenido es una pulsación mantenida: agachado mientras dure, el
+//     propulsor encendido, el salto alto (con la regla de los gestos, GESTURE_JUMP).
+//   - Nada se queda pulsado: el portal suelta lo que pulsa, un final sin su
+//     principio no hace nada, y si la sesión termina se suelta todo aquí.
 //   - Las pulsaciones llevan la hora del gesto (`timeStamp`, de `at`) y van
-//     marcadas `remote` (game/systems/input.js: corriendo son un toque).
+//     marcadas `remote` (game/systems/input.js).
 //   - Cada función devuelve en una línea lo que hizo: lo enseña la depuración
 //     (`?voutdebug=1`).
 
 import { Input, markRemote, takesTouch } from '../game/systems/input.js';
 import * as focusNav from '../ui/focusNav.js';
 import { showToast } from '../ui/toast.js';
-import { setPortalInput } from './bridge.js';
+import { onSessionEnd, setPortalInput } from './bridge.js';
 
 /**
  * Las acciones de juego que Daino entiende. `event` es texto que elige el usuario
@@ -60,6 +65,9 @@ const CURSOR_MOVED = 0.004;
 
 const POINTED = 'data-pointed';
 
+/** La fuente de pulsaciones del botón del ratón que mantiene un gesto. */
+const POINTER_SOURCE = 'pointer:left';
+
 const SCAN_HINT = 'Con gestos: agáchate para pasar al botón siguiente y salta para pulsarlo.';
 
 /**
@@ -74,6 +82,11 @@ export function createRemote({ nav = focusNav, notify = (message) => showToast(m
     let pointFrame = 0;
     /** Acciones que algún gesto mantiene ahora. */
     const heldActions = new Set();
+    /**
+     * El botón izquierdo, mientras un gesto lo mantiene: dónde se pulsó. null: suelto.
+     * @type {{ game: boolean, target?: Element | null, control?: Element | null } | null}
+     */
+    let pointerDown = null;
     let scanExplained = false;
 
     const dialogOpen = () => document.querySelector('dialog[open]') !== null;
@@ -137,24 +150,48 @@ export function createRemote({ nav = focusNav, notify = (message) => showToast(m
         return defaultAction(code, target) ?? 'nadie usa esta tecla aquí';
     }
 
-    function onClick({ button, timeStamp }) {
-        if (button !== 'left') return 'ignorado: Daino no usa el clic derecho';
+    /** Dónde apunta el cursor, en píxeles de la ventana. null: todavía no hay cursor. */
+    function cursorPoint() {
+        return cursor === null ? null : { x: cursor.x * window.innerWidth, y: cursor.y * window.innerHeight };
+    }
+
+    function onPointer({ button, state, timeStamp }) {
+        if (button !== 'left') return 'ignorado: Daino no usa el botón derecho';
         const payload = { timeStamp, remote: true };
-        if (cursor === null) {
-            // Sin cursor el clic no tiene sitio: es "el botón".
-            if (!playing()) return press();
-            Input.tap('jump', payload);
-            return 'clic sin cursor: salto';
+        const at = cursorPoint();
+
+        if (state === 'down') {
+            if (pointerDown !== null) return 'el botón ya estaba pulsado: nada';
+            const target = at === null ? null : document.elementFromPoint(at.x, at.y);
+            // Sin cursor el botón no tiene sitio: es "el botón" (salta jugando).
+            const inGame = at === null ? playing() : takesTouch(target, Input.has('jump'), dialogOpen());
+            if (inGame) {
+                const jump = at === null || at.x < window.innerWidth / 2;
+                Input.press(POINTER_SOURCE, jump ? 'jump' : 'duck', payload);
+                pointerDown = { game: true };
+                if (at === null) return 'botón sin cursor: salto';
+                return jump ? 'botón en la mitad izquierda: salto' : 'botón en la mitad derecha: agacharse';
+            }
+            // En la interfaz el clic se hace al soltar, como con un ratón.
+            const control = at === null ? nav.current() : nav.controlAt(target);
+            pointerDown = { game: false, target, control };
+            if (control === null) return 'botón pulsado donde no hay nada que pulsar';
+            point(control);
+            return `botón pulsado sobre «${nav.labelOf(control)}»: el clic, al soltar`;
         }
-        const x = cursor.x * window.innerWidth;
-        const y = cursor.y * window.innerHeight;
-        const target = document.elementFromPoint(x, y);
-        if (takesTouch(target, Input.has('jump'), dialogOpen())) {
-            const jump = x < window.innerWidth / 2;
-            Input.tap(jump ? 'jump' : 'duck', payload);
-            return jump ? 'clic en la mitad izquierda: salto' : 'clic en la mitad derecha: agacharse';
+
+        const down = pointerDown;
+        pointerDown = null;
+        if (down === null) return 'soltar sin haber pulsado: nada';
+        if (down.game) {
+            Input.release(POINTER_SOURCE, payload);
+            return 'suelta';
         }
-        const control = nav.clickAt(target, x, y);
+        if (at === null) return press();
+        const target = document.elementFromPoint(at.x, at.y);
+        const same = down.control !== null ? nav.controlAt(target) === down.control : target === down.target;
+        if (!same) return 'clic anulado: el cursor ya no está sobre lo mismo';
+        const control = nav.clickAt(target, at.x, at.y);
         return control === null ? 'clic donde no hay ningún botón' : `clic en «${nav.labelOf(control)}»`;
     }
 
@@ -199,7 +236,7 @@ export function createRemote({ nav = focusNav, notify = (message) => showToast(m
                 return 'pausa';
             }
             Input.press(source, channel, { timeStamp, remote: true });
-            return channel === 'jump' ? 'salto' : 'agacharse';
+            return channel === 'jump' ? 'salto (alto si el gesto sigue)' : 'agacharse (mientras dure)';
         }
 
         // En los menús: un mando de dos botones.
@@ -220,11 +257,21 @@ export function createRemote({ nav = focusNav, notify = (message) => showToast(m
         handle(input) {
             switch (input.kind) {
                 case 'key': return onKey(input);
-                case 'click': return onClick(input);
+                case 'pointer': return onPointer(input);
                 case 'cursor': return onCursor(input);
                 case 'action': return onAction(input);
                 default: return null;
             }
+        },
+
+        /**
+         * Suelta todo lo que algún gesto mantiene. Para cuando los finales del
+         * portal pueden no llegar (la sesión terminó): nada se queda pulsado.
+         */
+        releaseAll() {
+            heldActions.clear();
+            pointerDown = null;
+            Input.releaseRemote();
         },
     };
 }
@@ -233,5 +280,6 @@ export function createRemote({ nav = focusNav, notify = (message) => showToast(m
 export function startRemote() {
     const remote = createRemote();
     setPortalInput(remote.handle);
+    onSessionEnd(() => remote.releaseAll());
     return remote;
 }

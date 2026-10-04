@@ -3,8 +3,9 @@
 //   'jump'      — pulsación de salto. Teclado Space/ArrowUp (sin auto-repeat),
 //                 touch en la MITAD IZQUIERDA del viewport, y lo que el jugador
 //                 hace con la cara dentro del portal de Vout (iframe/remote.js).
-//   'jumpEnd'   — se soltó el botón/tap de salto. Corriendo no cambia nada (el
-//                 salto es siempre el mismo arco); en el vuelo, soltar es bajar.
+//   'jumpEnd'   — se soltó el botón/tap de salto. Corriendo, soltar pronto deja el
+//                 salto en el del nivel (mantener lo alarga); en el vuelo, soltar
+//                 es bajar.
 //   'duckStart' — ↓/KeyS o touch en la MITAD DERECHA (doc 06 §6). Un toque basta
 //                 para agacharse; mantener sigue valiendo.
 //   'duckEnd'   — se soltó el agacharse.
@@ -21,10 +22,10 @@
 //     parejas. Un mismo salto no se cuenta dos veces aunque el aviso llegue
 //     repetido (dos gestos de Vout que mantienen la misma acción, una tecla que
 //     ya estaba abajo), y solo "suelta" lo que estaba pulsado.
-//   - Las pulsaciones del control facial de Vout llevan `remote: true`. Su
-//     "soltar" llega tarde (con un gesto de la cara, medio segundo o más después
-//     de relajarlo), así que no sirve para medir un salto: corriendo cuentan como
-//     un toque (el arco del nivel), y solo el propulsor atiende a cuánto duran.
+//   - Las pulsaciones del control facial de Vout llevan `remote: true`. Se
+//     mantienen como las de un teclado (agachado mientras dure el gesto, el
+//     propulsor encendido), pero un gesto es más lento que un dedo: el salto
+//     mantenido tiene su propia regla (GESTURE_JUMP, modes/run.js).
 //   - Singleton que la GameSession instancia en `start()` y dispone en `stop()`.
 //   - EventEmitter mínimo: `on(event, fn)`, `off(event, fn)`.
 //   - Touch: el lado se decide en touchstart y se recuerda por touch id — el
@@ -37,8 +38,9 @@
 //     el teclado.
 //   - Nada se queda pulsado: si la ventana pierde el foco o la pestaña se oculta
 //     con una tecla o un dedo abajo, su `keyup`/`touchend` no llega nunca. Al
-//     perder el foco se suelta lo que estuviera mantenido en ESTE equipo; lo que
-//     mantiene el portal lo suelta el portal, tenga o no el foco el juego.
+//     perder el foco se suelta lo que estuviera mantenido en ESTE equipo (lo del
+//     portal no: llega aunque el juego no tenga el foco, y pulsar en el portal se
+//     lo quita). Al ocultarse la pestaña se suelta todo, también lo del portal.
 //   - Desacoplado de Pixi y de la entidad — la GameSession suscribe.
 
 const KEYS_JUMP = new Set(['Space', 'ArrowUp']);
@@ -69,12 +71,6 @@ export function takesTouch(target, playing, dialogOpen) {
     if (!playing || dialogOpen) return false;
     return typeof target?.closest === 'function' && target.closest(PLAY_SURFACE) !== null;
 }
-
-/**
- * Lo que dura una pulsación que llega sin su "soltar" (un clic del control facial
- * de Vout). Corriendo da igual lo que dure; con el propulsor es un empujón corto.
- */
-const TAP_MS = 90;
 
 /**
  * Eventos de teclado que no vienen de un teclado: el control facial de Vout
@@ -115,7 +111,6 @@ class InputHub {
          * @type {Map<string, { channel: 'jump' | 'duck', remote: boolean }>}
          */
         this._held = new Map();
-        this._taps = 0;
         this._releaseLocal = null;
         this._onHidden = null;
         this._mounted = false;
@@ -178,15 +173,15 @@ class InputHub {
     }
 
     /**
-     * Una pulsación que llega entera, sin su "soltar" (un clic): se suelta sola.
+     * Suelta lo que mantiene el portal de Vout (y nada más). Para cuando sus
+     * finales pueden no llegar: la sesión terminó, o la pestaña se ocultó.
      *
-     * @param {'jump' | 'duck'} channel
      * @param {Press} [payload]
      */
-    tap(channel, payload = now()) {
-        const source = `tap:${++this._taps}`;
-        this.press(source, channel, payload);
-        setTimeout(() => this.release(source), TAP_MS);
+    releaseRemote(payload = now()) {
+        for (const [source, held] of [...this._held]) {
+            if (held.remote) this.release(source, payload);
+        }
     }
 
     /**
@@ -232,14 +227,18 @@ class InputHub {
 
         // Sin foco no llegan los `keyup` ni los `touchend`: se suelta ahora lo que
         // estuviera pulsado en este equipo. Lo del portal de Vout no: su "soltar"
-        // llega por mensaje, con foco o sin él.
+        // llega por mensaje, con foco o sin él. Con la pestaña oculta, todo.
         this._releaseLocal = () => {
             const at = now();
             for (const [source, held] of [...this._held]) {
                 if (!held.remote) this.release(source, at);
             }
         };
-        this._onHidden = () => { if (document.hidden) this._releaseLocal(); };
+        this._onHidden = () => {
+            if (!document.hidden) return;
+            this._releaseLocal();
+            this.releaseRemote();
+        };
         window.addEventListener('blur', this._releaseLocal);
         document.addEventListener('visibilitychange', this._onHidden);
 
