@@ -50,7 +50,9 @@ services:
   # Escalar: `docker compose up -d --scale analyzer=3` (se reparten la cola).
   analyzer:
     build:
-      context: ./analyzer
+      context: .
+      dockerfile: analyzer/Dockerfile
+      target: dev
     image: daino-analyzer:dev
     restart: unless-stopped
     command: ["worker"]

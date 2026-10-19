@@ -13,10 +13,17 @@ use RuntimeException;
  * ni URLs (CLAUDE.md, Architectural invariants).
  *
  * Cookie: HttpOnly, SameSite=Lax, Secure activo si APP_ENV != local.
+ *
+ * Con Secure se llama `__Host-DAINO_SESSID`: el navegador solo acepta una
+ * cookie con ese nombre si la pone este mismo host, por HTTPS, con Path=/ y sin
+ * Domain. En producción Daino vive en daino.vout.tech junto a otras apps del
+ * mismo dominio; una de ellas podría escribir una cookie `DAINO_SESSID` con
+ * Domain=.vout.tech y el navegador la mandaría aquí. Con el prefijo no puede.
  */
 final class Session
 {
     private const COOKIE_NAME = 'DAINO_SESSID';
+    private const HOST_PREFIX = '__Host-';
     private const CSRF_KEY = '_csrf_token';
 
     public static function start(): void
@@ -34,7 +41,7 @@ final class Session
         $secure = Env::string('APP_ENV', 'production') !== 'local';
 
         session_save_path($sessionPath);
-        session_name(self::COOKIE_NAME);
+        session_name(self::cookieName($secure));
         session_set_cookie_params([
             'lifetime' => $lifetimeMin * 60,
             'path'     => '/',
@@ -83,7 +90,7 @@ final class Session
     {
         $_SESSION = [];
         if (ini_get('session.use_cookies')) {
-            Cookies::set(self::COOKIE_NAME, '', self::cookieAttrs(time() - 42000));
+            Cookies::set(session_name(), '', self::cookieAttrs(time() - 42000));
         }
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_destroy();
@@ -105,7 +112,16 @@ final class Session
             return;
         }
         $lifetime = (int) session_get_cookie_params()['lifetime'];
-        Cookies::set(self::COOKIE_NAME, $id, self::cookieAttrs($lifetime > 0 ? time() + $lifetime : 0));
+        Cookies::set(session_name(), $id, self::cookieAttrs($lifetime > 0 ? time() + $lifetime : 0));
+    }
+
+    /**
+     * El prefijo `__Host-` exige Secure: en local (HTTP) el navegador rechazaría
+     * la cookie, así que allí va sin él.
+     */
+    private static function cookieName(bool $secure): string
+    {
+        return $secure ? self::HOST_PREFIX . self::COOKIE_NAME : self::COOKIE_NAME;
     }
 
     /**

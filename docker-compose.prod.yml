@@ -1,0 +1,110 @@
+# Daino en producción (Coolify, build pack "Docker Compose").
+#
+#   navegador ─HTTPS─▶ Cloudflare ─túnel─▶ proxy de Coolify ─HTTP─▶ daino-web:80
+#   daino-web (nginx) ─FastCGI─▶ daino-php:9000 ─▶ MariaDB (contenedor aparte)
+#   daino-analyzer ─▶ MariaDB (cola analysis_jobs) + lee los audios del volumen
+#
+# Ningún servicio publica puertos en el host: el dominio (https://daino.vout.tech)
+# se asigna en Coolify al servicio daino-web, puerto 80. MariaDB NO está aquí:
+# es la instancia compartida; DB_HOST es su nombre en la red de Docker (en
+# Coolify, activar "Connect To Predefined Network" si es un recurso de Coolify).
+#
+# Las variables `${X:?}` son obligatorias (Coolify las pide en la pestaña
+# Environment Variables). La lista y su sentido, en .env.production.example.
+#
+# Sin analizador (VPS sin margen): ANALYZER_ENABLED=false y quitar el servicio
+# daino-analyzer; publicar un nivel vuelve a ser inmediato con el chart del
+# navegador.
+
+x-db-env: &db-env
+  DB_HOST: ${DB_HOST:?}
+  DB_PORT: ${DB_PORT:-3306}
+  DB_DATABASE: ${DB_DATABASE:?}
+  DB_USER: ${DB_USER:?}
+  DB_PASSWORD: ${DB_PASSWORD:?}
+
+services:
+  daino-web:
+    build:
+      context: .
+      dockerfile: docker/production/Dockerfile
+      target: web
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      - daino-php
+    mem_limit: 64m
+
+  daino-php:
+    build:
+      context: .
+      dockerfile: docker/production/Dockerfile
+      target: php
+    restart: unless-stopped
+    expose:
+      - "9000"
+    environment:
+      <<: *db-env
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: ${APP_URL:?}
+      APP_KEY: ${APP_KEY:?}
+      SESSION_LIFETIME_MIN: ${SESSION_LIFETIME_MIN:-43200}
+      # Vacía: las vistas usan public/build/manifest.json, no el servidor de Vite.
+      VITE_DEV_SERVER: ""
+      VOUT_ISSUER: ${VOUT_ISSUER:?}
+      VOUT_AUTHORIZE_URL: ${VOUT_AUTHORIZE_URL:?}
+      VOUT_TOKEN_URL: ${VOUT_TOKEN_URL:?}
+      VOUT_JWKS_URL: ${VOUT_JWKS_URL:?}
+      VOUT_USERINFO_URL: ${VOUT_USERINFO_URL:?}
+      VOUT_CLIENT_ID: ${VOUT_CLIENT_ID:?}
+      VOUT_CLIENT_SECRET: ${VOUT_CLIENT_SECRET:-}
+      VOUT_REDIRECT_URI: ${VOUT_REDIRECT_URI:?}
+      VOUT_SCOPES: ${VOUT_SCOPES:-user:read}
+      VOUT_ORIGIN: ${VOUT_ORIGIN:?}
+      UPLOAD_MAX_SIZE_MB: ${UPLOAD_MAX_SIZE_MB:-10}
+      ANALYZER_ENABLED: ${ANALYZER_ENABLED:-true}
+      DAINO_MIGRATE_ON_START: ${DAINO_MIGRATE_ON_START:-true}
+    volumes:
+      - daino-sessions:/var/www/html/storage/sessions
+      - daino-uploads:/var/www/html/storage/uploads/levels
+      - daino-official:/var/www/html/storage/official
+    mem_limit: 256m
+
+  daino-analyzer:
+    build:
+      context: .
+      dockerfile: analyzer/Dockerfile
+      target: production
+    restart: unless-stopped
+    command: ["worker"]
+    # Solo variables de BD y del worker: nada de secretos OAuth ni APP_KEY.
+    environment:
+      <<: *db-env
+      # 1 vCPU: un hilo de PyTorch. Más hilos no aceleran y quitan CPU al resto.
+      ANALYZER_TORCH_THREADS: ${ANALYZER_TORCH_THREADS:-1}
+      ANALYZER_JOB_TIMEOUT_SECONDS: ${ANALYZER_JOB_TIMEOUT_SECONDS:-900}
+      ANALYZER_POLL_SECONDS: ${ANALYZER_POLL_SECONDS:-5}
+    # Solo lee los audios; escribe únicamente en la BD.
+    volumes:
+      - daino-uploads:/srv/daino/storage/uploads/levels:ro
+      - daino-official:/srv/daino/storage/official:ro
+    # Pico medido: 640-890 MB por canción de 3-4 min (casi todo PyTorch).
+    mem_limit: ${ANALYZER_MEM_LIMIT:-1200m}
+    # Que un análisis (minutos de CPU) no deje sin procesador a las demás apps.
+    cpus: ${ANALYZER_CPUS:-0.7}
+    healthcheck:
+      test: ["CMD", "python", "-m", "daino_analyzer", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  # Sesiones de PHP: sin volumen, cada despliegue cierra todas las sesiones.
+  daino-sessions:
+  # MP3 subidos por los usuarios al publicar un nivel (PHP escribe, el analizador lee).
+  daino-uploads:
+  # MP3 del catálogo oficial (no están en el repo: se copian a mano una vez).
+  daino-official:

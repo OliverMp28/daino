@@ -1,5 +1,10 @@
 # Evita enviar al contexto de build de Docker cosas que no se necesitan.
 # Acelera docker build y reduce el tamaño de las imágenes.
+#
+# El contexto es la raíz del repo para docker/production/Dockerfile y para
+# analyzer/Dockerfile. Nada de lo de aquí debe acabar en una imagen: secretos
+# (.env), sesiones y audios (storage/), dependencias del host (vendor/,
+# node_modules/: se instalan dentro) ni el build local (public/build/).
 
 .git/
 .github/
@@ -13,9 +18,9 @@ vendor/
 public/build/
 public/hot
 
-storage/logs/
-storage/cache/
-storage/uploads/
+storage/
+tests/
+.playwright-mcp/
 
 # Docs e histórico — no se meten en la imagen PHP
 docs/
