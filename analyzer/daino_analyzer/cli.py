@@ -1,6 +1,7 @@
 """Línea de órdenes del analizador.
 
-    python -m daino_analyzer worker                      procesa la cola de análisis (servicio)
+    python -m daino_analyzer worker                      procesa la cola de análisis (servicio);
+                                                         con ANALYZER_ENABLED=false espera sin hacer nada
     python -m daino_analyzer analyze <mp3> [--out f]     analiza un archivo y escribe el JSON
     python -m daino_analyzer report <mp3>...             resumen legible de varias canciones
     python -m daino_analyzer bake-official [--from DIR]  hornea los niveles oficiales
@@ -17,7 +18,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -56,10 +60,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "worker":
+        if not analyzer_enabled():
+            return _idle()
         from daino_analyzer.worker import run_forever
 
         return run_forever()
     if args.command == "health":
+        if not analyzer_enabled():
+            return 0
         from daino_analyzer.worker import health
 
         return health()
@@ -78,6 +86,32 @@ def main(argv: list[str] | None = None) -> int:
 
         return sonify(Path(args.file), Path(args.out), chords=args.chords, melody=args.melody)
     return 2
+
+
+def analyzer_enabled(env: dict[str, str] | None = None) -> bool:
+    """`ANALYZER_ENABLED`, la misma variable que lee PHP (`PublishService`).
+
+    Sin definir = encendido (el docker-compose de desarrollo no la pasa). Apagado
+    con los mismos valores que `Env::bool`: false, 0, no, off.
+    """
+    value = (env if env is not None else os.environ).get("ANALYZER_ENABLED", "").strip().lower()
+    return value not in ("false", "0", "no", "off")
+
+
+def _idle() -> int:
+    """Analizador apagado: el contenedor sigue en pie, sano y sin hacer nada.
+
+    Así encenderlo es cambiar la variable y volver a desplegar, sin tocar el
+    compose. No abre la base de datos ni carga PyTorch: ~10 MB y ninguna CPU.
+    """
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_args: stop.set())
+    print(json.dumps({"ts": round(time.time(), 3), "event": "worker_disabled",
+                      "message": "ANALYZER_ENABLED=false: no se procesa la cola"}), flush=True)
+    while not stop.wait(3600):
+        pass
+    return 0
 
 
 def _cast(dry_run: bool, level: str | None) -> int:

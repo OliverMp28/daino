@@ -49,6 +49,11 @@ use App\Core\ViteAssets;
     <!-- Contrato con resources/js/ui/upload.js: tamaño máximo de MP3. -->
     <meta name="daino:upload-max-mb" content="<?= View::e($uploadMaxMb) ?>">
 
+    <!-- Contrato con resources/js/ui/catalog.js: si el servidor analiza lo que se
+         publica (ANALYZER_ENABLED). Sin él, publicar es inmediato y no hay
+         dificultades que elegir: la ficha no puede prometer lo contrario. -->
+    <meta name="daino:server-analysis" content="<?= ($serverAnalysis ?? true) ? 'on' : 'off' ?>">
+
     <title><?= View::e($title) ?></title>
 
     <!-- Lo que ve quien recibe un enlace (T06): el nombre del nivel y qué es Daino. -->

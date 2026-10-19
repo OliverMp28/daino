@@ -4,17 +4,23 @@
 #   daino-web (nginx) ─FastCGI─▶ daino-php:9000 ─▶ MariaDB (contenedor aparte)
 #   daino-analyzer ─▶ MariaDB (cola analysis_jobs) + lee los audios del volumen
 #
+# Las imágenes NO se construyen aquí: las publica en GHCR el workflow
+# .github/workflows/images.yml (tags `sha-<commit>` y `latest`). DAINO_IMAGE_TAG
+# elige cuál se despliega, la misma para las tres.
+#
 # Ningún servicio publica puertos en el host: el dominio (https://daino.vout.tech)
 # se asigna en Coolify al servicio daino-web, puerto 80. MariaDB NO está aquí:
 # es la instancia compartida; DB_HOST es su nombre en la red de Docker (en
-# Coolify, activar "Connect To Predefined Network" si es un recurso de Coolify).
+# Coolify, activar "Connect To Predefined Network").
 #
 # Las variables `${X:?}` son obligatorias (Coolify las pide en la pestaña
 # Environment Variables). La lista y su sentido, en .env.production.example.
 #
-# Sin analizador (VPS sin margen): ANALYZER_ENABLED=false y quitar el servicio
-# daino-analyzer; publicar un nivel vuelve a ser inmediato con el chart del
-# navegador.
+# Analizador: ANALYZER_ENABLED (una sola variable, la leen PHP y el worker).
+#   false → publicar es inmediato con el chart del navegador y el contenedor del
+#           analizador queda en pie sin hacer nada (~10 MB, sin CPU ni BD).
+#   true  → un nivel no es público hasta que el analizador lo procesa.
+# Encenderlo = cambiar la variable y volver a desplegar.
 
 x-db-env: &db-env
   DB_HOST: ${DB_HOST:?}
@@ -25,10 +31,7 @@ x-db-env: &db-env
 
 services:
   daino-web:
-    build:
-      context: .
-      dockerfile: docker/production/Dockerfile
-      target: web
+    image: ghcr.io/olivermp28/daino-web:${DAINO_IMAGE_TAG:-latest}
     restart: unless-stopped
     expose:
       - "80"
@@ -37,10 +40,7 @@ services:
     mem_limit: 64m
 
   daino-php:
-    build:
-      context: .
-      dockerfile: docker/production/Dockerfile
-      target: php
+    image: ghcr.io/olivermp28/daino-php:${DAINO_IMAGE_TAG:-latest}
     restart: unless-stopped
     expose:
       - "9000"
@@ -73,15 +73,13 @@ services:
     mem_limit: 256m
 
   daino-analyzer:
-    build:
-      context: .
-      dockerfile: analyzer/Dockerfile
-      target: production
+    image: ghcr.io/olivermp28/daino-analyzer:${DAINO_IMAGE_TAG:-latest}
     restart: unless-stopped
     command: ["worker"]
     # Solo variables de BD y del worker: nada de secretos OAuth ni APP_KEY.
     environment:
       <<: *db-env
+      ANALYZER_ENABLED: ${ANALYZER_ENABLED:-true}
       # 1 vCPU: un hilo de PyTorch. Más hilos no aceleran y quitan CPU al resto.
       ANALYZER_TORCH_THREADS: ${ANALYZER_TORCH_THREADS:-1}
       ANALYZER_JOB_TIMEOUT_SECONDS: ${ANALYZER_JOB_TIMEOUT_SECONDS:-900}
@@ -93,7 +91,7 @@ services:
     # Pico medido: 640-890 MB por canción de 3-4 min (casi todo PyTorch).
     mem_limit: ${ANALYZER_MEM_LIMIT:-1200m}
     # Que un análisis (minutos de CPU) no deje sin procesador a las demás apps.
-    cpus: ${ANALYZER_CPUS:-0.7}
+    cpus: ${ANALYZER_CPUS:-0.5}
     healthcheck:
       test: ["CMD", "python", "-m", "daino_analyzer", "health"]
       interval: 30s

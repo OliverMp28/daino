@@ -8,6 +8,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\View;
 use App\Models\Level;
+use App\Services\PublishService;
 
 /**
  * Sirve la página del juego. Es una sola (el menú, el catálogo y la partida son
@@ -102,6 +103,7 @@ final class HomeController
             'canonicalUrl' => self::isOrigin($appUrl) ? $appUrl . $path : '',
             'voutOrigin'   => $voutOrigin,
             'uploadMaxMb'  => Env::int('UPLOAD_MAX_SIZE_MB', 10),
+            'serverAnalysis' => PublishService::analyzerEnabled(),
         ]);
 
         // Quién puede embeber Daino (Ola 2, defecto D21): ella misma y el portal

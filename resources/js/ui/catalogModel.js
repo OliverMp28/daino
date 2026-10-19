@@ -154,10 +154,12 @@ export function cardView(level, localBest = null) {
  * Cordillera si ninguno encaja claramente. La opción enseña la propuesta.
  *
  * @param {object} level  Fila de GET /api/levels.
+ * @param {{ serverAnalysis?: boolean }} [opts]  `serverAnalysis`: si el servidor
+ *        analiza lo que se publica (`<meta name="daino:server-analysis">`).
  * @returns {{ current: string, options: Array<{ value: string, label: string, hint: string, cover: import('./coverModel.js').CoverSpec }> } | null}
  *          `cover`: la muestra del ambiente es su portada, a su hora de siempre.
  */
-export function sceneChoiceView(level) {
+export function sceneChoiceView(level, { serverAnalysis = true } = {}) {
     if (level?.is_mine !== true) return null;
     const chosen = SELECTABLE_SCENES.find((s) => s.id === level.scene);
     const proposed = autoSceneId(level);
@@ -165,20 +167,23 @@ export function sceneChoiceView(level) {
     return {
         current: chosen ? chosen.id : 'auto',
         options: [
-            { value: 'auto', label: `Automático: ${auto.label}`, hint: autoSceneHint(level, proposed !== null), cover: sceneCoverSpec(auto) },
+            { value: 'auto', label: `Automático: ${auto.label}`, hint: autoSceneHint(level, proposed !== null, serverAnalysis), cover: sceneCoverSpec(auto) },
             ...SELECTABLE_SCENES.map((s) => ({ value: s.id, label: s.label, hint: s.blurb, cover: sceneCoverSpec(s) })),
         ],
     };
 }
 
 /** Por qué Automático es lo que es: propuesta, ningún encaje, o aún sin escuchar. */
-function autoSceneHint(level, proposed) {
+function autoSceneHint(level, proposed, serverAnalysis) {
     if (proposed) return 'Elegido por cómo suena tu canción.';
     const job = level.analysis?.status;
     if (job === 'queued' || job === 'running') return 'Se decidirá cuando termine de analizarse tu canción.';
     // El techo de dificultad solo existe con el análisis del servidor.
     if (level.difficulty_ceiling !== null && level.difficulty_ceiling !== undefined) {
         return 'Tu canción no encaja claramente con ningún otro ambiente.';
+    }
+    if (!serverAnalysis) {
+        return 'El ambiente automático sale del análisis en el servidor, que ahora no está activo: se juega en la Cordillera.';
     }
     return 'Al publicarla, el servidor escuchará tu canción y propondrá el ambiente que mejor le pegue.';
 }

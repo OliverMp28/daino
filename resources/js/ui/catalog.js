@@ -704,8 +704,9 @@ function openDetail(level, fromButton, opts = {}) {
     if (choice !== null) info.appendChild(choice);
     info.append(actions, status);
     if (publish.canPublish && publish.state === PUBLISH_STATE.PRIVATE) {
-        info.appendChild(el('p', 'daino-detail__hint',
-            'Publicar sube tu MP3 y lo analizamos a fondo. Después eliges su dificultad —solo las que admita la canción— y lo publicas.'));
+        info.appendChild(el('p', 'daino-detail__hint', serverAnalysisOn()
+            ? 'Publicar sube tu MP3 y lo analizamos a fondo. Después eliges su dificultad —solo las que admita la canción— y lo publicas.'
+            : 'Publicar sube tu MP3 y lo publica al momento, tal como lo juegas ahora. El análisis a fondo en el servidor no está activo: por ahora no se puede elegir otra dificultad.'));
     }
     if (publish.canConfirm) {
         info.appendChild(el('p', 'daino-detail__hint',
@@ -818,6 +819,14 @@ async function loadLevelRanking(level, list, note, seq) {
 }
 
 // --------------------------- Publicar ---------------------------
+
+/**
+ * Si el servidor analiza lo que se publica (`ANALYZER_ENABLED`). Sin él, publicar
+ * es inmediato con el chart de este navegador y no hay dificultades que elegir.
+ */
+function serverAnalysisOn() {
+    return document.querySelector('meta[name="daino:server-analysis"]')?.getAttribute('content') !== 'off';
+}
 
 /** Paso 1: sube el MP3 del nivel privado para que el servidor lo analice. */
 async function publishLevel(level, btn, status) {
@@ -998,7 +1007,7 @@ async function applyDifficulty(level, value, box, guarded, status) {
  * @returns {HTMLElement | null}
  */
 function renderSceneChoice(level, status) {
-    const view = sceneChoiceView(level);
+    const view = sceneChoiceView(level, { serverAnalysis: serverAnalysisOn() });
     if (view === null) return null;
 
     const box = el('fieldset', 'daino-choice daino-scene');

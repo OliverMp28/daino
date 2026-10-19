@@ -119,8 +119,11 @@ test('selector del escenario: Automático enseña su propuesta, o por qué no la
         analizando: sceneChoiceView({ ...mine, scene_auto: null, analysis: { status: 'running' } }).options[0].hint,
         'sin encaje': sceneChoiceView({ ...mine, scene_auto: null, difficulty_ceiling: 3 }).options[0].hint,
         'sin análisis del servidor': sceneChoiceView({ ...mine, scene_auto: null, difficulty_ceiling: null }).options[0].hint,
+        // Despliegue con ANALYZER_ENABLED=false: no se promete que el servidor la escuchará.
+        'analizador apagado': sceneChoiceView({ ...mine, scene_auto: null, difficulty_ceiling: null }, { serverAnalysis: false }).options[0].hint,
     };
-    assert.equal(new Set(Object.values(hints)).size, 3, JSON.stringify(hints));
+    assert.equal(new Set(Object.values(hints)).size, 4, JSON.stringify(hints));
+    assert.doesNotMatch(hints['analizador apagado'], /escuchará/);
     assert.equal(sceneChoiceView({ ...mine, scene_auto: null }).options[0].label, `Automático: ${SCENES[DEFAULT_SCENE].label}`);
 });
 
