@@ -16,9 +16,9 @@ use RuntimeException;
  *
  * Con Secure se llama `__Host-DAINO_SESSID`: el navegador solo acepta una
  * cookie con ese nombre si la pone este mismo host, por HTTPS, con Path=/ y sin
- * Domain. En producción Daino vive en daino.vout.tech junto a otras apps del
+ * Domain. En producción Daino vive en daino.vout.cloud junto a otras apps del
  * mismo dominio; una de ellas podría escribir una cookie `DAINO_SESSID` con
- * Domain=.vout.tech y el navegador la mandaría aquí. Con el prefijo no puede.
+ * Domain=.vout.cloud y el navegador la mandaría aquí. Con el prefijo no puede.
  */
 final class Session
 {

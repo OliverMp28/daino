@@ -13,7 +13,11 @@
 #   docker build -f docker/production/Dockerfile --target php -t daino-php:prod .
 #   docker build -f docker/production/Dockerfile --target web -t daino-web:prod .
 
-ARG PHP_IMAGE=php:8.5.3-fpm-alpine
+# Versión exacta, la misma que docker/php/Dockerfile (desarrollo): builds
+# reproducibles, cada parche se sube a propósito. Vout usa un tag flotante
+# (8.5) con un mínimo; aquí ese mínimo es la versión fijada.
+# 8.5.12 corrige CVE-2026-109618 y CVE-2026-109619 (ejecución remota en FPM).
+ARG PHP_IMAGE=php:8.5.12-fpm-alpine
 
 # --- Assets: Vite + Tailwind con Bun -----------------------------------------
 FROM oven/bun:1.3.13-alpine AS assets
@@ -73,7 +77,8 @@ ENTRYPOINT ["daino-entrypoint"]
 CMD ["php-fpm"]
 
 # --- nginx ----------------------------------------------------------------------
-FROM nginx:1.27-alpine AS web
+# 1.30: la rama estable con parches (la 1.27 dejó de recibirlos en abril de 2025).
+FROM nginx:1.30-alpine AS web
 COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY public /var/www/html/public
 COPY --from=assets /src/public/build /var/www/html/public/build

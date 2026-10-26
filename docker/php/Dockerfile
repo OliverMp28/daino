@@ -1,8 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
-# Daino PHP-FPM — pineado a 8.5.3 para matchear Vout.
-# Alpine para imagen ligera. No usar ":8.5" ni ":8.5-fpm-alpine" (tags flotantes).
-FROM php:8.5.3-fpm-alpine
+# Daino PHP-FPM (desarrollo). Versión exacta, la misma que la imagen
+# de producción (docker/production/Dockerfile): 8.5.12 corrige CVE-2026-109618 y
+# CVE-2026-109619. Alpine para imagen ligera. Sin tags flotantes (":8.5"): cada
+# parche de PHP se sube a mano en los dos Dockerfiles, en composer.json y en el
+# tag de la imagen de docker-compose.yml.
+FROM php:8.5.12-fpm-alpine
 
 LABEL org.opencontainers.image.title="Daino PHP-FPM"
 LABEL org.opencontainers.image.description="Runtime PHP para el backend de Daino (Resource Server contra Vout IdP)."
@@ -11,7 +14,7 @@ LABEL org.opencontainers.image.source="https://github.com/OliverMp28/daino"
 # Dependencias del sistema + extensiones PHP
 #
 # Notas sobre PHP 8.5:
-#   - `pdo` ya viene cargado en la imagen base (php:8.5.3-fpm-alpine);
+#   - `pdo` ya viene cargado en la imagen base (php:8.5-fpm-alpine);
 #     intentar instalarlo suelta un warning "already loaded" — lo omitimos.
 #   - `opcache` forma parte del binario CORE de PHP desde 8.5
 #     (RFC "Make OPcache a non-optional part of PHP"). Ya no es una

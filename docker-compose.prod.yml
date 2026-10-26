@@ -8,7 +8,7 @@
 # .github/workflows/images.yml (tags `sha-<commit>` y `latest`). DAINO_IMAGE_TAG
 # elige cuál se despliega, la misma para las tres.
 #
-# Ningún servicio publica puertos en el host: el dominio (https://daino.vout.tech)
+# Ningún servicio publica puertos en el host: el dominio (https://daino.vout.cloud)
 # se asigna en Coolify al servicio daino-web, puerto 80. MariaDB NO está aquí:
 # es la instancia compartida; DB_HOST es su nombre en la red de Docker (en
 # Coolify, activar "Connect To Predefined Network").

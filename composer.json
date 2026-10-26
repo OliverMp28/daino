@@ -5,7 +5,7 @@
     "license": "proprietary",
     "keywords": ["game", "pixijs", "audio-reactive", "oauth2"],
     "require": {
-        "php": "~8.5.3",
+        "php": "~8.5.12",
         "ext-pdo": "*",
         "ext-pdo_mysql": "*",
         "ext-json": "*",
@@ -25,7 +25,7 @@
     },
     "config": {
         "platform": {
-            "php": "8.5.3"
+            "php": "8.5.12"
         },
         "sort-packages": true,
         "optimize-autoloader": true,

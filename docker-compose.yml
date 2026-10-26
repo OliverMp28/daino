@@ -1,7 +1,7 @@
 # Docker Compose para desarrollo local de Daino.
 #
 # Servicios:
-#   - php      FPM (PHP 8.5.3) compilado desde docker/php/Dockerfile.
+#   - php      FPM (PHP 8.5.12) compilado desde docker/php/Dockerfile.
 #   - nginx    Servidor web fronting PHP-FPM, docroot en /public.
 #   - mariadb  Base de datos (MariaDB 11.4) con volumen persistente.
 #
@@ -16,7 +16,7 @@
 
 services:
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.30-alpine
     container_name: daino-nginx
     ports:
       - "${APP_PORT:-8080}:80"
@@ -32,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
-    image: daino-php:8.5.3
+    image: daino-php:8.5.12
     container_name: daino-php
     volumes:
       - ./:/var/www/html
@@ -107,8 +107,10 @@ services:
       MARIADB_DATABASE: ${DB_DATABASE:-daino}
       MARIADB_USER: ${DB_USER:-daino}
       MARIADB_PASSWORD: ${DB_PASSWORD:-secret}
+    # Solo desde este equipo (DataGrip, phpMyAdmin): root entra sin contraseña
+    # (MARIADB_ALLOW_EMPTY_ROOT_PASSWORD), así que no se publica a la red local.
     ports:
-      - "${DB_PORT_HOST:-3306}:3306"
+      - "127.0.0.1:${DB_PORT_HOST:-3306}:3306"
     volumes:
       - daino-db:/var/lib/mysql
     healthcheck:
