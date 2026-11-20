@@ -16,8 +16,11 @@
 # Versión exacta, la misma que docker/php/Dockerfile (desarrollo): builds
 # reproducibles, cada parche se sube a propósito. Vout usa un tag flotante
 # (8.5) con un mínimo; aquí ese mínimo es la versión fijada.
-# 8.5.12 corrige CVE-2026-109618 y CVE-2026-109619 (ejecución remota en FPM).
-ARG PHP_IMAGE=php:8.5.12-fpm-alpine
+# 8.5.13 corrige CVE-2026-129474, -129496, -129481 y -126714 (ejecución remota),
+# CVE-2026-129291, -129289 y -129292 (PHP-FPM) y CVE-2026-115560 (serializador de
+# sesión; se mantiene session.upload_progress.enabled = 0 en php.prod.ini).
+# Desde la 8.5.12: CVE-2026-109618 y CVE-2026-109619.
+ARG PHP_IMAGE=php:8.5.13-fpm-alpine
 
 # --- Assets: Vite + Tailwind con Bun -----------------------------------------
 FROM oven/bun:1.3.13-alpine AS assets
@@ -77,8 +80,9 @@ ENTRYPOINT ["daino-entrypoint"]
 CMD ["php-fpm"]
 
 # --- nginx ----------------------------------------------------------------------
-# 1.30: la rama estable con parches (la 1.27 dejó de recibirlos en abril de 2025).
-FROM nginx:1.30-alpine AS web
+# 1.30.7 exacta (rama estable 1.30; la 1.27 dejó de recibir parches en abril de 2025).
+# Como PHP: versión exacta y cada parche se sube a mano, aquí y en docker-compose.yml.
+FROM nginx:1.30.7-alpine AS web
 COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY public /var/www/html/public
 COPY --from=assets /src/public/build /var/www/html/public/build

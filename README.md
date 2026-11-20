@@ -8,7 +8,7 @@ Side-scroller web audio-reactivo: **cada nivel es una canción**. La duración d
 
 | Capa | Tecnología |
 |------|------------|
-| Runtime backend | PHP 8.5.12 (pineado, Alpine) + PDO |
+| Runtime backend | PHP 8.5.13 (pineado, Alpine) + PDO |
 | Servidor web | Nginx 1.27 |
 | Base de datos | MariaDB 11.4 |
 | Identidad | OAuth2 (Authorization Code + PKCE) contra el IdP **Vout** — sin login local |

@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1.7
 
 # Daino PHP-FPM (desarrollo). Versión exacta, la misma que la imagen
-# de producción (docker/production/Dockerfile): 8.5.12 corrige CVE-2026-109618 y
+# de producción (docker/production/Dockerfile): 8.5.13 corrige varias ejecuciones
+# remotas (CVE-2026-129474, -129496, -129481, -126714), tres fallos de FPM
+# (CVE-2026-129291, -129289, -129292) y la CVE-2026-115560 (sesión), que la
+# 8.5.12 no tenía; desde la 8.5.12 van también CVE-2026-109618 y
 # CVE-2026-109619. Alpine para imagen ligera. Sin tags flotantes (":8.5"): cada
 # parche de PHP se sube a mano en los dos Dockerfiles, en composer.json y en el
 # tag de la imagen de docker-compose.yml.
-FROM php:8.5.12-fpm-alpine
+FROM php:8.5.13-fpm-alpine
 
 LABEL org.opencontainers.image.title="Daino PHP-FPM"
 LABEL org.opencontainers.image.description="Runtime PHP para el backend de Daino (Resource Server contra Vout IdP)."

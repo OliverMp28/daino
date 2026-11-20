@@ -14,10 +14,10 @@ declare(strict_types=1);
  *   docker compose exec -T php composer clean:sessions
  *   docker compose exec -T php composer clean:sessions -- --all
  *
- * Razón: `composer.json` exige PHP `~8.5.12` (la de las imágenes Docker). Si
+ * Razón: `composer.json` exige PHP `~8.5.13` (la de las imágenes Docker). Si
  * se ejecuta en el host con otra versión (p. ej. PHP 8.5.0 de Windows),
  * Composer revienta con `platform_check` antes de invocar el script. El
- * contenedor `php` tiene 8.5.12 garantizado.
+ * contenedor `php` tiene 8.5.13 garantizado.
  *
  * No automatiza nada (sin cron). Si en algún momento necesitas GC continuo,
  * o subes session.gc_probability en bootstrap, o añades este script al

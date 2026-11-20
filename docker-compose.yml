@@ -1,7 +1,7 @@
 # Docker Compose para desarrollo local de Daino.
 #
 # Servicios:
-#   - php      FPM (PHP 8.5.12) compilado desde docker/php/Dockerfile.
+#   - php      FPM (PHP 8.5.13) compilado desde docker/php/Dockerfile.
 #   - nginx    Servidor web fronting PHP-FPM, docroot en /public.
 #   - mariadb  Base de datos (MariaDB 11.4) con volumen persistente.
 #
@@ -16,7 +16,7 @@
 
 services:
   nginx:
-    image: nginx:1.30-alpine
+    image: nginx:1.30.7-alpine
     container_name: daino-nginx
     ports:
       - "${APP_PORT:-8080}:80"
@@ -32,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
-    image: daino-php:8.5.12
+    image: daino-php:8.5.13
     container_name: daino-php
     volumes:
       - ./:/var/www/html
