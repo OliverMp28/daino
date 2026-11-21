@@ -61,7 +61,7 @@ daino/
 │   ├── Services/
 │   │   ├── VoutAuthService.php     # OAuth2 flow (authorize URL, exchange code, refresh)
 │   │   ├── JwtVerifier.php         # Valida JWT con lcobucci/jwt y JWKS
-│   │   ├── JwksCache.php           # Cacheo de /oauth/token/keys
+│   │   ├── JwksCache.php           # Cacheo de /oauth/jwks
 │   │   └── LevelGenerator.php      # (Opcional backend) — generación del seed
 │   │
 │   ├── Middleware/
@@ -266,7 +266,7 @@ DB_PASSWORD=secret
 VOUT_ISSUER=https://vout.example.com
 VOUT_AUTHORIZE_URL=https://vout.example.com/oauth/authorize
 VOUT_TOKEN_URL=https://vout.example.com/oauth/token
-VOUT_JWKS_URL=https://vout.example.com/oauth/token/keys
+VOUT_JWKS_URL=https://vout.example.com/oauth/jwks
 VOUT_USERINFO_URL=https://vout.example.com/api/v1/user/me
 VOUT_CLIENT_ID=                         # UUID entregado por Vout
 VOUT_CLIENT_SECRET=                     # opcional, solo si el cliente es confidential

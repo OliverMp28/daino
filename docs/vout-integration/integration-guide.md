@@ -610,7 +610,7 @@ Vout publica un script que hace todo lo de esta sección por ti. Lo cargas, le d
 
 Con eso tu juego ya funciona con el control facial. Las teclas y el ratón que el jugador maneja con la cara llegan a tu página como eventos de teclado y ratón normales (`keydown`, `keyup`, `mousedown`, `click`…), así que **tu código de controles de siempre funciona sin tocarlo**. Un gesto mantenido es una tecla mantenida: si en tu juego mantener el salto lo hace más alto, con la cara también.
 
-El SDK hace además lo que el navegador haría con una tecla real y un evento creado por código no hace: Enter y Espacio pulsan el botón que tiene el foco, Tab pasa al siguiente control y Escape cierra un `<dialog>` abierto. Así un menú hecho en HTML se puede recorrer con gestos. Las flechas no mueven el foco: si tu menú se navega con flechas, eso lo gestionas tú.
+El SDK hace además lo que el navegador haría con una tecla real y un evento creado por código no hace: Enter y Espacio pulsan el botón que tiene el foco, Tab pasa al siguiente control y Escape cierra un `<dialog>` abierto. Así un menú hecho en HTML se puede recorrer con gestos. Las flechas no mueven el foco: si tu menú se navega con flechas, eso lo gestionas tú. Antes de cada tecla el portal da el foco a tu iframe: algunos navegadores ignoran el `focus()` que hace un iframe de otro origen que no lo tiene, y sin él Tab no movería nada.
 
 | Opción | Para qué |
 | :--- | :--- |

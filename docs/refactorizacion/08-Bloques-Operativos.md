@@ -119,7 +119,7 @@ Tras retomar el proyecto y jugarlo, se abrió una segunda hoja de ruta que **atr
 
 ### Server-side
 - `app/Services/VoutAuthService.php` — wrapper sobre `league/oauth2-client` con provider personalizado (doc 07 §E.1). Genera URL de autorización con PKCE `S256`, intercambia `code` por tokens, refresca.
-- `app/Services/JwksCache.php` — caché PSR-16 de las claves públicas de Vout (`/oauth/token/keys`), TTL 1h, refresh forzado en `kid` desconocido (doc 07 §E.3).
+- `app/Services/JwksCache.php` — caché PSR-16 de las claves públicas de Vout (`/oauth/jwks`), TTL 1h, refresh forzado en `kid` desconocido (doc 07 §E.3).
 - `app/Services/JwtVerifier.php` — `lcobucci/jwt` 5.5: valida firma RS256, `iss`, `aud`, `exp` con leeway 60s (doc 07 §E.2).
 - `app/Controllers/AuthController.php` — métodos:
   - `login` (genera `state`+`code_verifier` en sesión, redirect a Vout).

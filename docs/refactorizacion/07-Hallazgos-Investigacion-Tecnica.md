@@ -263,7 +263,7 @@ Validar SIEMPRE: firma, `iss`, `aud`, `exp` con leeway 60s.
 
 ### E.3. JWKS caching (PSR-16)
 
-- Cachear las claves públicas de Vout obtenidas de `/oauth/token/keys`.
+- Cachear las claves públicas de Vout obtenidas de `/oauth/jwks`.
 - TTL recomendado: 1 hora.
 - Forzar refresh si llega un `kid` desconocido (rotación de claves).
 

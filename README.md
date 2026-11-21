@@ -9,7 +9,7 @@ Side-scroller web audio-reactivo: **cada nivel es una canción**. La duración d
 | Capa | Tecnología |
 |------|------------|
 | Runtime backend | PHP 8.5.13 (pineado, Alpine) + PDO |
-| Servidor web | Nginx 1.27 |
+| Servidor web | Nginx 1.30.7 |
 | Base de datos | MariaDB 11.4 |
 | Identidad | OAuth2 (Authorization Code + PKCE) contra el IdP **Vout** — sin login local |
 | Build frontend | Vite 8 + Tailwind v4 (`@tailwindcss/vite`) |
@@ -43,7 +43,7 @@ bun install
 bun run dev
 ```
 
-Abrir `http://localhost:8080` en el navegador. La página debería mostrar "Daino v2 — scaffolding OK" con estilos Tailwind aplicados.
+Abrir `http://localhost:8080` en el navegador (o el puerto que pongas en `APP_PORT` del `.env`). Para entrar con una cuenta hace falta Vout corriendo en local: ver `docs/vout-integration/integration-guide.md`.
 
 ## Estructura del proyecto
 
@@ -95,7 +95,7 @@ docker compose exec php composer require <pkg>
 
 # Frontend (en el host)
 bun install                   # instalar dependencias
-bun run dev                   # dev server en http://localhost:5173 con HMR
+bun run dev                   # dev server en http://localhost:5174 con HMR (VITE_DEV_PORT)
 bun run build                 # build de producción a public/build/
 ```
 
@@ -103,15 +103,15 @@ bun run build                 # build de producción a public/build/
 
 Daino puede correr en dos modos (detectados automáticamente en runtime):
 
-- **Standalone** — `http://localhost:8080` directo. Control por teclado/touch.
-- **Embebido en Vout** — cargado dentro de un `<iframe>` del portal Vout. Recibe comandos (gestos faciales) vía `postMessage`. La autenticación llega del parent mediante el handshake `READY` → `AUTH_TOKEN`.
+- **Standalone** — `http://localhost:8080` directo. Control por teclado/touch. Login con "Entrar con Vout" (OAuth2 + PKCE).
+- **Embebido en Vout** — cargado dentro de un `<iframe>` del portal Vout. Recibe comandos (gestos faciales) vía `postMessage`. La identidad llega del portal con el handshake `READY` → `VOUT_AUTH`, y los gestos como `VOUT_ACTION`, `VOUT_KEY` y `VOUT_POINTER` (protocolo completo en la guía de integración de Vout).
 
 ## Ramas del repo
 
 - `main` — Daino legacy (intocado hasta que la v2 esté jugable).
 - `legacy` — Puntero permanente al mismo HEAD que `main`, como marcador del código viejo.
 - `ramita` — WIP viejo heredado; no se toca.
-- `rewrite/v2` — **Rama activa** del nuevo Daino.
+- `rewrite/v2` — **Rama activa** del nuevo Daino. Es la que se despliega: `.github/workflows/images.yml` publica las imágenes de producción en GHCR con cada push a esta rama, y Coolify despliega `docker-compose.prod.yml` desde ella.
 
 ## Licencia
 
