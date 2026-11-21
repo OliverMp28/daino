@@ -8,6 +8,7 @@ docs/refactorizacion/04-Decisiones-Finales.md
 # Claude Code local state + project guide (contexto interno, no se publica)
 .claude/
 CLAUDE.md
+docs/refactorizacion/HISTORIAL-ESTADO.md
 
 # Env / secrets
 .env
