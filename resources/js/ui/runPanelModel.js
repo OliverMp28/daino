@@ -33,6 +33,7 @@ export const RUN_ACTION = Object.freeze({
  * @property {string} title
  * @property {Array<{ t: number, level?: number, climax?: boolean }>} [sections]
  * @property {boolean} [rotate]                Móvil en vertical: sugerir girarlo.
+ * @property {boolean} [guest]                 Dentro del portal sin cuenta (VOUT_GUEST).
  * @property {{ presses: number, biasMs: number, sigmaMs: number } | null} [timing]
  *           Precisión de las pulsaciones de la partida (systems/timingLog.js); solo en desarrollo.
  * @property {object | null} [perf]
@@ -76,6 +77,14 @@ export function runPanelView(run) {
         else if (prevPct > 0) note = `Tu mejor marca: ${prevPct} %.`;
     }
 
+    // Invitado del portal (VOUT_GUEST): su marca se queda en este navegador. Se le
+    // dice cuando hay algo que guardar (la primera marca, una mejor o completarlo),
+    // no en cada caída. El botón "Entrar" lo pone el portal encima del juego.
+    const firstMark = prevPct === 0 && pct > 0;
+    const signInHint = results && run.guest === true && (firstMark || pct > prevPct || (win && prevPct < 100))
+        ? 'Guardado solo en este navegador. Entra con tu cuenta de Vout para guardar tus récords y salir en el ranking.'
+        : null;
+
     const primary = run.mode === 'pause'
         ? { action: RUN_ACTION.RESUME, label: 'Reanudar', key: 'Esc' }
         : { action: RUN_ACTION.RETRY, label: win ? 'Otra vez' : 'Reintentar', key: 'Espacio' };
@@ -99,6 +108,7 @@ export function runPanelView(run) {
         percentLabel: `${pct} %`,
         newBest,
         note,
+        signInHint,
         /** Móvil en vertical: el panel ofrece ponerlo en horizontal (ui/screenLock.js). */
         rotate: run.rotate === true,
         bar: {

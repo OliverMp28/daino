@@ -52,7 +52,7 @@ import { closeAllModals, openSettingsModal } from './modals.js';
 import { catalogView, onCatalogView, openCatalog } from './catalog.js';
 import { createRouter } from './router.js';
 import { MENU } from './routeModel.js';
-import { isBridgeEmbedded } from '../iframe/bridge.js';
+import { isBridgeEmbedded, isBridgeGuest } from '../iframe/bridge.js';
 import { PLAY_REQUEST_EVENT, PREFETCH_REQUEST_EVENT } from './playRequests.js';
 import { showToast } from './toast.js';
 import { hideLoader, showLoader } from './loader.js';
@@ -734,6 +734,9 @@ function handleGameState(ev) {
         previousBest: previous,
         title: run.loaded.title,
         sections: run.sections,
+        // Invitado del portal: se le dice que su marca solo queda en este navegador.
+        // Si entrase a mitad de carga (no debería: el portal recarga), ya no lo es.
+        guest: isBridgeGuest() && getUser() === null,
         // En desarrollo, la precisión de la partida: con ella se calibra la dificultad.
         timing: import.meta.env.DEV ? (detail.timing ?? null) : null,
         // El rendimiento del intento (T05.4): en desarrollo, o con `?perf=1` (para

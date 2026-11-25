@@ -49,6 +49,7 @@ function describe({ type, data }) {
                 data.username ? `usuario ${String(data.username)}` : null,
             ].filter(Boolean).join(' · ');
         }
+        case 'VOUT_GUEST': return 'sin identidad';
         case 'VOUT_SESSION_END': return `motivo ${String(data.reason)}`;
         case 'VOUT_KEY': return `${String(data.code)} ${data.state === 'down' ? '↓' : data.state === 'up' ? '↑' : String(data.state)}`;
         case 'VOUT_POINTER': return `botón ${String(data.button)} ${data.state === 'down' ? '↓' : data.state === 'up' ? '↑' : String(data.state)}`;

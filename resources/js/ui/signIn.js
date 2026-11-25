@@ -16,7 +16,8 @@ import { el } from './kit.js';
  * @returns {Array<Node | string>}
  */
 export function signInNote(tail) {
-    if (isBridgeEmbedded()) return [`Entra en Vout con tu cuenta${tail}`];
+    // El botón "Entrar" lo pone el portal encima del juego (VOUT_GUEST).
+    if (isBridgeEmbedded()) return [`Entra con tu cuenta de Vout${tail}`];
     const link = el('a', 'daino-link', 'Inicia sesión');
     link.href = '/auth/login';
     link.dataset.interactive = 'true';

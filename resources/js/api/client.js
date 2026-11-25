@@ -29,7 +29,7 @@
 //   - El csrf_token también — viene en el mismo response que el access_token.
 //   - postMessage targetOrigin nunca "*" — eso lo cubre bridge.js, no aquí.
 
-import { isBridgeEmbedded, note as bridgeNote, onAuth as onBridgeAuth, onSessionEnd as onBridgeSessionEnd } from '../iframe/bridge.js';
+import { isBridgeEmbedded, note as bridgeNote, onAuth as onBridgeAuth, onGuest as onBridgeGuest, onSessionEnd as onBridgeSessionEnd } from '../iframe/bridge.js';
 
 /** Espera máxima al primer VOUT_AUTH antes de dejar arrancar la UI en anónimo. */
 const BRIDGE_TOKEN_WAIT_MS = 5000;
@@ -149,10 +149,16 @@ export function init() {
             // usuario quedaba a null y embebido no existían "Mis niveles" ni el
             // guardado de progreso). `init()` espera al primero hasta 5 s para
             // que la UI arranque ya con sesión si llega a tiempo; uno tardío se
-            // procesa igual y emite `daino:auth:login` cuando llegue.
+            // procesa igual y emite `daino:auth:login` cuando llegue. Si el
+            // portal dice `VOUT_GUEST` (se juega sin cuenta) no hay nada que
+            // esperar ni que preguntar al servidor: anónimo desde ya.
             onBridgeSessionEnd(dropBridgeSession);
             await new Promise((resolve) => {
                 const timer = setTimeout(resolve, BRIDGE_TOKEN_WAIT_MS);
+                onBridgeGuest(() => {
+                    clearTimeout(timer);
+                    resolve();
+                });
                 onBridgeAuth((auth) => {
                     void adoptBridgeAuth(auth).finally(() => {
                         clearTimeout(timer);

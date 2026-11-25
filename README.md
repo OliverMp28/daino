@@ -104,7 +104,7 @@ bun run build                 # build de producción a public/build/
 Daino puede correr en dos modos (detectados automáticamente en runtime):
 
 - **Standalone** — `http://localhost:8080` directo. Control por teclado/touch. Login con "Entrar con Vout" (OAuth2 + PKCE).
-- **Embebido en Vout** — cargado dentro de un `<iframe>` del portal Vout. Recibe comandos (gestos faciales) vía `postMessage`. La identidad llega del portal con el handshake `READY` → `VOUT_AUTH`, y los gestos como `VOUT_ACTION`, `VOUT_KEY` y `VOUT_POINTER` (protocolo completo en la guía de integración de Vout).
+- **Embebido en Vout** — cargado dentro de un `<iframe>` del portal Vout. Recibe comandos (gestos faciales) vía `postMessage`. La identidad llega del portal con el handshake `READY` → `VOUT_AUTH` (o `VOUT_GUEST` si se juega sin cuenta: las marcas se quedan en el navegador), y los gestos como `VOUT_ACTION`, `VOUT_KEY` y `VOUT_POINTER` (protocolo completo en la guía de integración de Vout).
 
 ## Ramas del repo
 

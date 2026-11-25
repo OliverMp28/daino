@@ -71,6 +71,17 @@ test('victoria: "Otra vez" delante, sin interruptor de reintento automático', (
     assert.equal(runPanelView({ ...base, kind: 'win', percentage: 100, previousBest: { points: 1, percentage: 100 } }).note, null);
 });
 
+test('invitado del portal (VOUT_GUEST): se le dice dónde queda su marca cuando hay algo que guardar, no en cada caída', () => {
+    const guest = { ...base, guest: true };
+    assert.match(runPanelView(guest).signInHint, /Entra con tu cuenta de Vout/, 'la primera marca');
+    assert.match(runPanelView({ ...guest, previousBest: { points: 1, percentage: 42 } }).signInHint, /solo en este navegador/, 'una mejor');
+    assert.equal(runPanelView({ ...guest, previousBest: { points: 1, percentage: 72 } }).signInHint, null, 'peor que su marca');
+    assert.notEqual(runPanelView({ ...guest, kind: 'win', percentage: 100, previousBest: { points: 1, percentage: 80 } }).signInHint, null, 'completarlo');
+    assert.equal(runPanelView({ ...guest, kind: 'win', percentage: 100, previousBest: { points: 1, percentage: 100 } }).signInHint, null);
+    assert.equal(runPanelView({ ...guest, mode: 'pause', kind: undefined }).signInHint, null, 'en la pausa, nada');
+    assert.equal(runPanelView(base).signInHint, null, 'con cuenta, o fuera del portal, nada');
+});
+
 test('pausa: Reanudar delante (Esc) y Reintentar, Niveles y Menú detrás; sugiere girar el móvil en vertical', () => {
     const v = runPanelView({ ...base, mode: 'pause', kind: undefined, percentage: 40 });
     assert.equal(v.heading, 'Pausa');

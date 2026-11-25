@@ -7,6 +7,7 @@
 //   Daino → portal   { type: 'READY', suggestedPreset: 'runner' }
 //   Daino → portal   { type: 'EXIT' }                           volver al catálogo
 //   portal → Daino   { type: 'VOUT_AUTH', token, expiresAt, voutId, username, debug? }
+//   portal → Daino   { type: 'VOUT_GUEST', debug? }             se juega sin cuenta (invitado)
 //   portal → Daino   { type: 'VOUT_SESSION_END', reason }       no habrá más renovaciones
 //
 //   Control facial (lo que el jugador hace con la cara, según SU mapeo de gestos):
@@ -22,11 +23,16 @@
 // iframe/remote.js; qué hace con la identidad, api/client.js.
 //
 // Cómo va:
-//   - `READY` se repite hasta que llega el primer `VOUT_AUTH`: si el iframe carga
-//     antes de que el portal escuche, uno solo se perdería. El portal contesta a
-//     cada `READY`, y enseña "El juego no responde" si no le llega ninguno. Se
-//     envía en cuanto arranca el script, antes de montar el motor: significa
-//     "puedo recibir la identidad", no "ya lo cargué todo".
+//   - `READY` se repite hasta que el portal contesta (`VOUT_AUTH` o `VOUT_GUEST`):
+//     si el iframe carga antes de que el portal escuche, uno solo se perdería. El
+//     portal contesta a cada `READY`, y enseña "El juego no responde" si no le
+//     llega ninguno. Se envía en cuanto arranca el script, antes de montar el
+//     motor: significa "puedo recibir la identidad", no "ya lo cargué todo".
+//   - `VOUT_GUEST`: el portal no tiene identidad que dar (Daino está en "cuenta
+//     opcional" y quien juega no ha entrado, no ha confirmado su correo o no
+//     quiso compartirla). No trae datos del jugador ni llegan token, renovaciones
+//     ni `VOUT_SESSION_END`; los gestos sí. Dentro de una misma carga no se pasa
+//     de invitado a jugador con cuenta: si entra, el portal recarga el iframe.
 //   - `VOUT_AUTH` llega otra vez cada vez que el portal renueva el token (unos
 //     minutos antes de que caduque). Siempre vale el último. Aquí no se renueva
 //     nada: dentro del iframe las cookies de Daino son de terceros.
@@ -40,8 +46,8 @@
 //     siempre lo que pulsa.
 //   - `at` (milisegundos Unix) dice cuándo ocurrió el gesto: entre la imagen de la
 //     cámara y el mensaje pasa el tiempo de analizarla.
-//   - `debug: true` en `VOUT_AUTH` (el usuario abrió el portal con `?voutdebug=1`)
-//     enciende la depuración: el portal carga el juego sin parámetros.
+//   - `debug: true` en `VOUT_AUTH` o `VOUT_GUEST` (el usuario abrió el portal con
+//     `?voutdebug=1`) enciende la depuración: el portal carga el juego sin parámetros.
 //
 // Restricciones (CLAUDE.md invariantes):
 //   - Solo se escucha al portal: `event.origin` exacto y `event.source` igual a
@@ -100,9 +106,12 @@ const TRACE_LIMIT = 400;
 
 /** @type {BridgeAuth | null}  La última identidad recibida; vive solo aquí. */
 let auth = null;
+/** El portal contestó con `VOUT_GUEST`: en esta carga se juega sin cuenta. */
+let guest = false;
 /** @type {((input: PortalInput) => string | null | void) | null} */
 let portalInput = null;
 const authListeners = new Set();
+const guestListeners = new Set();
 const sessionEndListeners = new Set();
 let allowedOrigin = null;
 let isEmbedded = false;
@@ -194,6 +203,9 @@ function dispatch(data) {
         case 'VOUT_AUTH': {
             if (typeof data.token !== 'string' || data.token.length === 0) return 'descartado: no trae token';
             const first = auth === null;
+            // El portal no debería pasar de invitado a cuenta en la misma carga
+            // (recarga el iframe); si lo hace, vale la identidad.
+            guest = false;
             auth = {
                 token: data.token,
                 expiresAt: Number.isFinite(data.expiresAt) && data.expiresAt > 0 ? data.expiresAt : 0,
@@ -207,6 +219,20 @@ function dispatch(data) {
                 try { fn(auth); } catch (err) { console.error('[bridge] listener VOUT_AUTH:', err); }
             }
             return first ? 'identidad recibida: se valida el token en el servidor' : 'token renovado';
+        }
+        case 'VOUT_GUEST': {
+            // Contesta a cada READY: pueden llegar varios. Con identidad ya dada,
+            // uno rezagado no la quita (eso lo dice VOUT_SESSION_END).
+            if (auth !== null) return 'ignorado: ya hay identidad';
+            stopAnnouncing();
+            if (data.debug === true) startTrace();
+            if (guest) return 'repetido: ya se juega sin cuenta';
+            guest = true;
+            console.info('[bridge] el portal no da identidad: se juega sin cuenta');
+            for (const fn of guestListeners) {
+                try { fn(); } catch (err) { console.error('[bridge] listener VOUT_GUEST:', err); }
+            }
+            return 'sin cuenta: se juega como invitado (las marcas, solo en este navegador)';
         }
         case 'VOUT_SESSION_END': {
             const reason = SESSION_END_REASONS.has(data.reason) ? data.reason : 'unknown';
@@ -261,7 +287,7 @@ function deliver(input) {
     }
 }
 
-/** `READY` ahora y cada medio segundo hasta el primer `VOUT_AUTH`. */
+/** `READY` ahora y cada medio segundo hasta que el portal contesta. */
 function announceReady() {
     const started = Date.now();
     const send = () => {
@@ -272,7 +298,7 @@ function announceReady() {
     };
     send();
     readyTimer = setInterval(() => {
-        if (auth !== null || Date.now() - started >= READY_GIVE_UP_MS) {
+        if (auth !== null || guest || Date.now() - started >= READY_GIVE_UP_MS) {
             stopAnnouncing();
             return;
         }
@@ -327,6 +353,25 @@ export function onAuth(fn) {
 }
 
 /**
+ * Suscribe a `VOUT_GUEST`: el portal no tiene identidad que dar y se juega sin
+ * cuenta. Avisa una vez por carga (ahora, si ya ocurrió). Devuelve la función
+ * para desuscribirse.
+ *
+ * @param {() => void} fn
+ * @returns {() => void}
+ */
+export function onGuest(fn) {
+    guestListeners.add(fn);
+    if (guest) queueMicrotask(() => { if (guestListeners.has(fn)) fn(); });
+    return () => guestListeners.delete(fn);
+}
+
+/** ¿El portal dijo que en esta carga se juega sin cuenta (`VOUT_GUEST`)? */
+export function isBridgeGuest() {
+    return guest;
+}
+
+/**
  * Suscribe a `VOUT_SESSION_END`: el portal intentó renovar y ya no puede (se cerró
  * la sesión de Vout, se retiró el acceso a Daino o el juego dejó de estar en el
  * portal). El aviso puede llegar bastante después de que ocurra: el portal se
@@ -375,7 +420,8 @@ export function setPortalInput(fn) {
  * ¿Se pidió la depuración desde Daino? `?voutdebug=1` en la dirección del juego la
  * enciende y queda recordada en este navegador (el portal carga Daino sin
  * parámetros); `?voutdebug=0` la apaga. Es el camino local. El normal es el del
- * portal: `/play/daino?voutdebug=1` hace que `VOUT_AUTH` traiga `debug: true`.
+ * portal: `/play/daino?voutdebug=1` hace que `VOUT_AUTH` (o `VOUT_GUEST`) traiga
+ * `debug: true`.
  *
  * @param {string} [search]
  * @param {Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null} [storage]
@@ -416,7 +462,8 @@ function startTrace() {
 
 /**
  * Avisa cuando la depuración se enciende: al arrancar (`startBridge({ debug })`)
- * o más tarde, si el portal la pide en `VOUT_AUTH`. Si ya lo está, avisa ahora.
+ * o más tarde, si el portal la pide en `VOUT_AUTH` o `VOUT_GUEST`. Si ya lo
+ * está, avisa ahora.
  *
  * @param {() => void} fn
  */
@@ -476,6 +523,7 @@ function record(dir, type, data, outcome, lagMs) {
 export function _resetForTests() {
     stopAnnouncing();
     auth = null;
+    guest = false;
     portalInput = null;
     allowedOrigin = null;
     isEmbedded = false;
@@ -483,5 +531,6 @@ export function _resetForTests() {
     trace = null;
     traceStartListeners.clear();
     authListeners.clear();
+    guestListeners.clear();
     sessionEndListeners.clear();
 }

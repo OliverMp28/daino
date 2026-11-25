@@ -138,7 +138,11 @@ function renderCard(view, handlers, fire) {
 
     const summary = el('p', 'daino-run__note', view.note ?? '');
     summary.id = `${DIALOG_ID}-summary`;
-    if (!view.note) summary.hidden = true;
+    // El aviso al invitado va en la misma nota (y en su hueco de la rejilla apaisada).
+    if (view.signInHint) {
+        summary.appendChild(el('span', view.note ? 'daino-run__hint daino-run__hint--after-note' : 'daino-run__hint', view.signInHint));
+    }
+    if (!view.note && !view.signInHint) summary.hidden = true;
     card.appendChild(summary);
     if (view.rotate) card.appendChild(rotateRow(summary));
 
