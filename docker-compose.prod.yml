@@ -18,10 +18,16 @@
 #
 # Analizador: ANALYZER_ENABLED (una sola variable, la leen PHP y el worker).
 # Sin la variable, apagado (lo mismo que entiende PHP).
-#   false → publicar es inmediato con el chart del navegador y el contenedor del
-#           analizador queda en pie sin hacer nada (~10 MB, sin CPU ni BD).
+#   false → publicar es inmediato con el chart del navegador y el servicio
+#           daino-analyzer ni se descarga ni se arranca (su imagen pesa 2,16 GB).
 #   true  → un nivel no es público hasta que el analizador lo procesa.
 # Encenderlo = cambiar la variable y volver a desplegar.
+#
+# Cómo se consigue con una sola variable: el perfil del servicio es
+# `analyzer-<ANALYZER_ENABLED>` y en Coolify se fija, una vez y para siempre,
+# COMPOSE_PROFILES=analyzer-true. Con false su perfil es `analyzer-false`, que
+# nadie activa. Por eso ANALYZER_ENABLED se escribe exactamente `true` o
+# `false` (PHP acepta también 1/on; el perfil no).
 
 x-db-env: &db-env
   DB_HOST: ${DB_HOST:?}
@@ -75,6 +81,9 @@ services:
 
   daino-analyzer:
     image: ghcr.io/olivermp28/daino-analyzer:${DAINO_IMAGE_TAG:-latest}
+    # Solo existe con ANALYZER_ENABLED=true (y COMPOSE_PROFILES=analyzer-true):
+    # ver la cabecera. Nadie depende de él: PHP funciona igual sin este servicio.
+    profiles: ["analyzer-${ANALYZER_ENABLED:-false}"]
     restart: unless-stopped
     command: ["worker"]
     # Solo variables de BD y del worker: nada de secretos OAuth ni APP_KEY.
