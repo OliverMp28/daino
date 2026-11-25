@@ -269,6 +269,7 @@ final class JwksCache
             'http' => [
                 'method' => 'GET',
                 'header' => "Accept: application/json\r\n",
+                'user_agent' => VoutAuthService::USER_AGENT,
                 'timeout' => 5,
                 'ignore_errors' => false,
             ],

@@ -25,6 +25,15 @@ use RuntimeException;
  */
 final class VoutAuthService
 {
+    /**
+     * User-Agent de las llamadas de Daino a Vout hechas con file_get_contents
+     * (JWKS y perfil). PHP no manda ninguno por defecto, y en producción esas
+     * llamadas pasan por Cloudflare, cuyo Browser Integrity Check (encendido de
+     * serie) desafía las peticiones sin User-Agent. El canje del código y el
+     * refresco van por Guzzle, que ya manda el suyo.
+     */
+    public const USER_AGENT = 'Daino/2 (servidor; +https://daino.vout.cloud)';
+
     /** @var \Closure(string, array<string, string>): string  ($url, $headers) → body */
     private \Closure $httpGet;
 
@@ -155,6 +164,7 @@ final class VoutAuthService
             'http' => [
                 'method'        => 'GET',
                 'header'        => $headerLines,
+                'user_agent'    => self::USER_AGENT,
                 'timeout'       => 10,
                 'ignore_errors' => false,
             ],

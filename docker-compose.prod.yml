@@ -17,6 +17,7 @@
 # Environment Variables). La lista y su sentido, en .env.production.example.
 #
 # Analizador: ANALYZER_ENABLED (una sola variable, la leen PHP y el worker).
+# Sin la variable, apagado (lo mismo que entiende PHP).
 #   false → publicar es inmediato con el chart del navegador y el contenedor del
 #           analizador queda en pie sin hacer nada (~10 MB, sin CPU ni BD).
 #   true  → un nivel no es público hasta que el analizador lo procesa.
@@ -64,7 +65,7 @@ services:
       VOUT_SCOPES: ${VOUT_SCOPES:-user:read}
       VOUT_ORIGIN: ${VOUT_ORIGIN:?}
       UPLOAD_MAX_SIZE_MB: ${UPLOAD_MAX_SIZE_MB:-10}
-      ANALYZER_ENABLED: ${ANALYZER_ENABLED:-true}
+      ANALYZER_ENABLED: ${ANALYZER_ENABLED:-false}
       DAINO_MIGRATE_ON_START: ${DAINO_MIGRATE_ON_START:-true}
     volumes:
       - daino-sessions:/var/www/html/storage/sessions
@@ -79,7 +80,7 @@ services:
     # Solo variables de BD y del worker: nada de secretos OAuth ni APP_KEY.
     environment:
       <<: *db-env
-      ANALYZER_ENABLED: ${ANALYZER_ENABLED:-true}
+      ANALYZER_ENABLED: ${ANALYZER_ENABLED:-false}
       # 1 vCPU: un hilo de PyTorch. Más hilos no aceleran y quitan CPU al resto.
       ANALYZER_TORCH_THREADS: ${ANALYZER_TORCH_THREADS:-1}
       ANALYZER_JOB_TIMEOUT_SECONDS: ${ANALYZER_JOB_TIMEOUT_SECONDS:-900}
